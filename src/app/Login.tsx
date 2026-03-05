@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { supabase } from "../Lib/supabaseClient"; // use ../lib if you renamed Lib -> lib
+import { signIn } from "../services/auth"; // use ../lib if you renamed Lib -> lib
 
 export default function Login() {
   const [email, setEmail] = useState("");

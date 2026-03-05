@@ -1,4 +1,6 @@
+import React from "react";
 import { createBrowserRouter } from "react-router-dom";
+
 import { RootLayout } from "./pages/RootLayout";
 import { Dashboard } from "./pages/Dashboard";
 import { Agents } from "./pages/Agents";
@@ -13,20 +15,20 @@ import Login from "./Login";
 export const router = createBrowserRouter([
   {
     path: "/login",
-    Component: Login,
+    element: <Login />,
   },
   {
     path: "/",
-    Component: RootLayout,
+    element: <RootLayout />,
     children: [
-      { index: true, Component: Dashboard },
-      { path: "agents", Component: Agents },
-      { path: "transactions", Component: Transactions },
-      { path: "transactions/new", Component: NewTransaction },
-      { path: "transactions/:id", Component: TransactionDetail },
-      { path: "analytics", Component: Analytics },
-      { path: "offices", Component: Offices },
-      { path: "settings", Component: SettingsPage },
+      { index: true, element: <Dashboard /> },
+      { path: "agents", element: <Agents /> },
+      { path: "transactions", element: <Transactions /> },
+      { path: "transactions/new", element: <NewTransaction /> },
+      { path: "transactions/:id", element: <TransactionDetail /> },
+      { path: "analytics", element: <Analytics /> },
+      { path: "offices", element: <Offices /> },
+      { path: "settings", element: <SettingsPage /> },
     ],
   },
 ]);
