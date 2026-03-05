@@ -1,0 +1,114 @@
+import { Bell, ChevronDown, Settings, User } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/select";
+import { Button } from "../ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "../ui/dropdown-menu";
+import { Avatar, AvatarFallback } from "../ui/avatar";
+
+interface Office {
+  id: string;
+  name: string;
+}
+
+interface DashboardHeaderProps {
+  offices: Office[];
+  selectedOffice: string;
+  onOfficeChange: (officeId: string) => void;
+  userName?: string;
+  notificationCount?: number;
+}
+
+export function DashboardHeader({
+  offices,
+  selectedOffice,
+  onOfficeChange,
+  userName = "Admin User",
+  notificationCount = 0,
+}: DashboardHeaderProps) {
+  return (
+    <header className="bg-white border-b border-slate-200 px-6 py-3">
+      <div className="flex items-center justify-between">
+        {/* Left: Office Selector */}
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-slate-600">Office:</span>
+            <Select value={selectedOffice} onValueChange={onOfficeChange}>
+              <SelectTrigger className="w-[240px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {offices.map((office) => (
+                  <SelectItem key={office.id} value={office.id}>
+                    {office.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        {/* Right: Actions & User Menu */}
+        <div className="flex items-center gap-3">
+          {/* Notifications */}
+          <Button variant="ghost" size="icon" className="relative">
+            <Bell className="h-5 w-5" />
+            {notificationCount > 0 && (
+              <span className="absolute top-0 right-0 h-4 w-4 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">
+                {notificationCount > 9 ? "9+" : notificationCount}
+              </span>
+            )}
+          </Button>
+
+          {/* Settings */}
+          <Button variant="ghost" size="icon">
+            <Settings className="h-5 w-5" />
+          </Button>
+
+          {/* User Menu */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" className="flex items-center gap-2">
+                <Avatar className="h-8 w-8">
+                  <AvatarFallback className="bg-slate-200 text-slate-700">
+                    {userName
+                      .split(" ")
+                      .map((n) => n[0])
+                      .join("")}
+                  </AvatarFallback>
+                </Avatar>
+                <span className="text-sm">{userName}</span>
+                <ChevronDown className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuLabel>My Account</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem>
+                <User className="mr-2 h-4 w-4" />
+                Profile
+              </DropdownMenuItem>
+              <DropdownMenuItem>
+                <Settings className="mr-2 h-4 w-4" />
+                Settings
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem>Log out</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+    </header>
+  );
+}
