@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
   ArrowRight,
@@ -13,6 +13,7 @@ import {
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Input } from "../components/ui/input";
+import { addStoredTransaction } from "../../lib/transactionStorage";
 import { Label } from "../components/ui/label";
 
 interface TransactionData {
@@ -65,20 +66,25 @@ export function NewTransaction() {
   };
 
   const handleSubmit = () => {
-    // Generate a mock transaction ID
-    const transactionId = `TXN-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
-    
-    // In a real app, this would save to backend
-    console.log("Creating transaction:", {
+    const transactionId = `TXN-${Date.now()}-${Math.random()
+      .toString(36)
+      .substr(2, 9)
+      .toUpperCase()}`;
+  
+    const intakeEmail = `${transactionId.toLowerCase()}@docs.btq.app`;
+  
+    const newTransaction = {
       id: transactionId,
-      ...transactionData,
+      type: transactionData?.transactionType || "Other",
       status: "Pre-Contract",
+      propertyIdentifier: transactionData?.identifier || "",
+      primaryClientName: transactionData?.primaryClientName || "",
+      primaryClientEmail: transactionData?.primaryClientEmail || "",
+      intakeEmail,
       createdAt: new Date().toISOString(),
-    });
-    
-    // Navigate to the transaction detail page
-    navigate(`/transactions/${transactionId}`);
-  };
+      updatedAt: new Date().toISOString(),
+      data: transactionData,
+    };
 
   const isStepValid = () => {
     switch (currentStep) {
@@ -384,4 +390,5 @@ export function NewTransaction() {
       </div>
     </div>
   );
+};
 }

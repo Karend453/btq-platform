@@ -29,6 +29,7 @@ export const router = createBrowserRouter([
       { path: "analytics", element: <Analytics /> },
       { path: "offices", element: <Offices /> },
       { path: "settings", element: <SettingsPage /> },
+
     ],
   },
 ]);
