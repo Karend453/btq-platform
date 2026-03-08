@@ -281,22 +281,37 @@ export function TransactionDetail() {
   };
 
   // Look up transaction or use default
-  const mockTransaction = id && mockTransactionDatabase[id] 
-    ? mockTransactionDatabase[id]
-    : id 
-    ? null 
-    : {
-        id: "TXN-123",
-        identifier: "123 Main Street, Chicago, IL 60601",
-        type: "Purchase",
-        status: "Pre-Contract",
-        clientName: "John Smith",
-        clientEmail: "john.smith@email.com",
-        assignedAgent: "Sarah Johnson",
-        office: "Downtown Chicago Office",
-        intakeEmail: "txn-123@docs.btq.app",
-        createdAt: new Date().toISOString(),
-      };
+  const storedTransaction = id ? getStoredTransactionById(id) : null;
+
+const mockTransaction = id && mockTransactionDatabase[id]
+  ? mockTransactionDatabase[id]
+  : storedTransaction
+  ? {
+      id: storedTransaction.id,
+      identifier: storedTransaction.propertyIdentifier,
+      type: storedTransaction.type,
+      status: storedTransaction.status,
+      clientName: storedTransaction.primaryClientName,
+      clientEmail: storedTransaction.primaryClientEmail,
+      assignedAgent: "Unassigned",
+      office: "New Transaction",
+      intakeEmail: storedTransaction.intakeEmail,
+      createdAt: storedTransaction.createdAt,
+    }
+  : id
+  ? null
+  : {
+      id: "TXN-123",
+      identifier: "123 Main Street, Chicago, IL 60601",
+      type: "Purchase",
+      status: "Pre-Contract",
+      clientName: "John Smith",
+      clientEmail: "john.smith@email.com",
+      assignedAgent: "Sarah Johnson",
+      office: "Downtown Chicago Office",
+      intakeEmail: "txn-123@docs.btq.app",
+      createdAt: new Date().toISOString(),
+    };
 
   // Get assigned agent name from transaction
   const assignedAgentName = mockTransaction?.assignedAgent || "Sarah Johnson";

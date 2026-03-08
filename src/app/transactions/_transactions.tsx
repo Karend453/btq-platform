@@ -1,3 +1,4 @@
+import { getStoredTransactions } from "../../lib/transactionStorage";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Search, Plus, AlertCircle, FileX, Archive } from "lucide-react";
@@ -37,9 +38,28 @@ export default function TransactionsPage() {
     async function load() {
       setLoading(true);
       try {
-        // listTransactions() returns WorkItem[] from services (via adapter).
         const data = (await listTransactions()) as unknown as WorkItem[];
-        if (!cancelled) setRows(data);
+        const stored = getStoredTransactions();
+      
+        const mappedStored: WorkItem[] = stored.map((txn) => ({
+          id: txn.id,
+          identifier: txn.propertyIdentifier,
+          type: txn.type,
+          owner: txn.primaryClientName,
+          organizationName: "New Transaction",
+          organizationId: "local",
+          status: "active" as StatusType,
+          statusLabel: txn.status,
+          dueDate: txn.createdAt,
+          lastActivity: "Just created",
+          isArchived: false,
+          archivedAt: null,
+          archivedBy: null,
+          missingCount: 0,
+          rejectedCount: 0,
+        }));
+      
+        if (!cancelled) setRows([...mappedStored, ...data]);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -133,7 +153,7 @@ export default function TransactionsPage() {
             {showArchived ? "Hide Archived" : "Show Archived"}
           </Button>
 
-          <Button onClick={() => console.log("New transaction")}>
+         <Button onClick={() => navigate("/transactions/new")} variant="default">
             <Plus style={{ width: 16, height: 16, marginRight: 8 }} />
             New
           </Button>
