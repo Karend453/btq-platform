@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
@@ -70,21 +70,25 @@ export function NewTransaction() {
       .toString(36)
       .substr(2, 9)
       .toUpperCase()}`;
-  
+
     const intakeEmail = `${transactionId.toLowerCase()}@docs.btq.app`;
-  
+
     const newTransaction = {
       id: transactionId,
-      type: transactionData?.transactionType || "Other",
+      type: transactionData.type || "Other",
       status: "Pre-Contract",
-      propertyIdentifier: transactionData?.identifier || "",
-      primaryClientName: transactionData?.primaryClientName || "",
-      primaryClientEmail: transactionData?.primaryClientEmail || "",
+      propertyIdentifier: transactionData.identifier || "",
+      primaryClientName: transactionData.clientName || "",
+      primaryClientEmail: transactionData.clientEmail || "",
       intakeEmail,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       data: transactionData,
     };
+
+    addStoredTransaction(newTransaction);
+    navigate(`/transactions/${transactionId}`);
+  };
 
   const isStepValid = () => {
     switch (currentStep) {
@@ -390,5 +394,4 @@ export function NewTransaction() {
       </div>
     </div>
   );
-};
 }
