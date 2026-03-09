@@ -207,10 +207,12 @@ export function TransactionDetail() {
   });
 
   // Transaction-level operational fields
-  const [transactionStatus, setTransactionStatus] = useState<"Pre-Contract" | "Under Contract" | "Closed" | "Archived">("Pre-Contract");
-  const [assignedAdmin, setAssignedAdmin] = useState("Karen Admin");
-  const [closingDate, setClosingDate] = useState<string>("2026-03-08"); // Mock: 5 days out (triggers needs attention)
-  const [contractDate, setContractDate] = useState<string>("2026-03-01"); // Mock: 2 days ago
+  const [transactionStatus, setTransactionStatus] = useState<
+  "Pre-Contract" | "Under Contract" | "Closed"
+>("Pre-Contract");
+  const [assignedAdmin, setAssignedAdmin] = useState("");
+  const [closingDate, setClosingDate] = useState<string>("");
+  const [contractDate, setContractDate] = useState<string>("");
 
   // Mock current user role (controllable via dropdown)
   const [currentUserRole, setCurrentUserRole] = useState<"Admin" | "Agent">("Admin");
@@ -317,74 +319,31 @@ const mockTransaction = id && mockTransactionDatabase[id]
   const assignedAgentName = mockTransaction?.assignedAgent || "Sarah Johnson";
 
   // Document Inbox
-  const [inboxDocuments, setInboxDocuments] = useState<InboxDocument[]>([
-    {
-      id: "inbox-1",
-      filename: "Property_Disclosure_Form.pdf",
-      receivedAt: new Date(Date.now() - 30 * 60 * 1000), // 30 min ago
-      isAttached: false,
-    },
-    {
-      id: "inbox-2",
-      filename: "Title_Search_Report.pdf",
-      receivedAt: new Date(Date.now() - 2 * 60 * 60 * 1000), // 2 hours ago
-      isAttached: false,
-    },
-    {
-      id: "inbox-3",
-      filename: "Inspection_Report_Final.pdf",
-      receivedAt: new Date(Date.now() - 5 * 60 * 60 * 1000), // 5 hours ago
-      isAttached: false,
-    },
-    {
-      id: "inbox-4",
-      filename: "HOA_Bylaws_2025.pdf",
-      receivedAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000), // 1 day ago
-      isAttached: false,
-    },
-    {
-      id: "inbox-5",
-      filename: "Wire_Transfer_Instructions.pdf",
-      receivedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000), // 2 days ago
-      isAttached: false,
-    },
-  ]);
+  const [inboxDocuments, setInboxDocuments] = useState<InboxDocument[]>([]);
 
   // Mock checklist items with suggested attachments
   const [checklistItems, setChecklistItems] = useState<ChecklistItem[]>([
     {
       id: "1",
       name: "Purchase Agreement",
-      status: "complete",
-      updatedAt: "2 hours ago",
+      status: "pending",
+      updatedAt: "Not submitted",
       requirement: "required",
-      reviewStatus: "complete",
+      reviewStatus: "pending",
       notes: [],
       comments: [],
       version: 1,
-      attachedDocument: {
-        id: "attached-1",
-        filename: "Purchase_Agreement_Signed.pdf",
-        version: 2,
-        updatedAt: new Date(Date.now() - 31 * 60 * 1000), // 31 min ago
-      },
     },
     {
       id: "2",
       name: "Pre-Approval Letter",
-      status: "complete",
-      updatedAt: "3 hours ago",
+      status: "pending",
+      updatedAt: "Not submitted",
       requirement: "required",
-      reviewStatus: "complete",
+      reviewStatus: "pending",
       notes: [],
       comments: [],
       version: 1,
-      attachedDocument: {
-        id: "attached-2",
-        filename: "Pre_Approval_Letter.pdf",
-        version: 1,
-        updatedAt: new Date(Date.now() - 3 * 60 * 60 * 1000), // 3 hours ago
-      },
     },
     {
       id: "3",
@@ -394,41 +353,8 @@ const mockTransaction = id && mockTransactionDatabase[id]
       requirement: "required",
       reviewStatus: "pending",
       notes: [],
-      comments: [
-        {
-          id: "comment-3-1",
-          authorRole: "Agent",
-          authorName: "Sarah Johnson",
-          createdAt: new Date(Date.now() - 4 * 60 * 60 * 1000), // 4 hours ago
-          message: "I've requested this from the seller's agent. Should have it by end of day.",
-          visibility: "Shared",
-          type: "Comment",
-        },
-        {
-          id: "comment-3-2",
-          authorRole: "Admin",
-          authorName: "Admin User",
-          createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000), // 2 hours ago
-          message: "Thanks. This is a high priority item - closing is next week.",
-          visibility: "Shared",
-          type: "Comment",
-        },
-        {
-          id: "comment-3-3",
-          authorRole: "Admin",
-          authorName: "Admin User",
-          createdAt: new Date(Date.now() - 1 * 60 * 60 * 1000), // 1 hour ago
-          message: "Internal note: Need to escalate if not received by tomorrow.",
-          visibility: "Internal",
-          type: "Comment",
-        },
-      ],
+      comments: [],
       version: 1,
-      suggestedDocument: {
-        id: "inbox-1",
-        filename: "Property_Disclosure_Form.pdf",
-        confidence: "high",
-      },
     },
     {
       id: "4",
@@ -440,11 +366,6 @@ const mockTransaction = id && mockTransactionDatabase[id]
       notes: [],
       comments: [],
       version: 1,
-      suggestedDocument: {
-        id: "inbox-3",
-        filename: "Inspection_Report_Final.pdf",
-        confidence: "low",
-      },
     },
     {
       id: "5",
@@ -456,88 +377,28 @@ const mockTransaction = id && mockTransactionDatabase[id]
       notes: [],
       comments: [],
       version: 1,
-      suggestedDocument: {
-        id: "inbox-2",
-        filename: "Title_Search_Report.pdf",
-        confidence: "high",
-      },
     },
     {
       id: "6",
       name: "Insurance Certificate",
-      status: "rejected",
-      updatedAt: "1 day ago",
+      status: "pending",
+      updatedAt: "Not submitted",
       requirement: "required",
-      reviewStatus: "rejected",
+      reviewStatus: "pending",
       notes: [],
-      comments: [
-        {
-          id: "comment-6-1",
-          authorRole: "Agent",
-          authorName: "Sarah Johnson",
-          createdAt: new Date(Date.now() - 36 * 60 * 60 * 1000), // 36 hours ago
-          message: "Uploaded the insurance certificate from the buyer. Please review when you get a chance.",
-          visibility: "Shared",
-          type: "Comment",
-        },
-        {
-          id: "comment-6-2",
-          authorRole: "Admin",
-          authorName: "Admin User",
-          createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000), // 24 hours ago
-          message: "Rejected: Missing signature on page 2. Please resubmit with all required signatures.",
-          visibility: "Shared",
-          type: "StatusChange",
-        },
-        {
-          id: "comment-6-3",
-          authorRole: "Agent",
-          authorName: "Sarah Johnson",
-          createdAt: new Date(Date.now() - 12 * 60 * 60 * 1000), // 12 hours ago
-          message: "Got it - I've reached out to the insurance company for a signed version. Will upload as soon as I receive it.",
-          visibility: "Shared",
-          type: "Comment",
-        },
-        {
-          id: "comment-6-4",
-          authorRole: "Admin",
-          authorName: "Admin User",
-          createdAt: new Date(Date.now() - 6 * 60 * 60 * 1000), // 6 hours ago
-          message: "Internal: Called insurance company directly to expedite. Should have by EOD.",
-          visibility: "Internal",
-          type: "Comment",
-        },
-        {
-          id: "comment-6-5",
-          authorRole: "Admin",
-          authorName: "Admin User",
-          createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000), // 2 hours ago
-          message: "Please ensure the signature is on page 2, bottom right corner. This is required by the underwriter.",
-          visibility: "Shared",
-          type: "Comment",
-          unread: {
-            Agent: true,
-          },
-        },
-      ],
+      comments: [],
       version: 1,
     },
     {
       id: "7",
       name: "Earnest Money Deposit Receipt",
-      status: "complete",
-      updatedAt: "1 day ago",
+      status: "pending",
+      updatedAt: "Not submitted",
       requirement: "required",
-      reviewStatus: "complete",
+      reviewStatus: "pending",
       notes: [],
       comments: [],
       version: 1,
-      attachedDocument: {
-        id: "attached-3",
-        filename: "Earnest_Money_Receipt.pdf",
-        version: 1,
-        updatedAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000), // 1 day ago
-      },
     },
     {
       id: "8",
@@ -545,30 +406,25 @@ const mockTransaction = id && mockTransactionDatabase[id]
       status: "pending",
       updatedAt: "Not submitted",
       requirement: "optional",
-      reviewStatus: "waived",
+      reviewStatus: "pending",
       notes: [],
-      comments: [
-        {
-          id: "comment-8-1",
-          authorRole: "Admin",
-          authorName: "Admin User",
-          createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000), // 2 days ago
-          message: "Waived: Property is not in an HOA. This document is not applicable.",
-          visibility: "Shared",
-          type: "StatusChange",
-        },
-      ],
+      comments: [],
       version: 1,
     },
   ]);
 
   // Seed activity log on mount
   useEffect(() => {
-    const now = new Date();
-    const seedActivities: ActivityLogEntry[] = [
+    if (!mockTransaction) return;
+  
+    const createdAt = mockTransaction.createdAt
+      ? new Date(mockTransaction.createdAt)
+      : new Date();
+  
+    setActivityLog([
       {
         id: "act-1",
-        timestamp: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000),
+        timestamp: createdAt,
         actor: "System",
         category: "system",
         type: "TRANSACTION_CREATED",
@@ -576,88 +432,15 @@ const mockTransaction = id && mockTransactionDatabase[id]
       },
       {
         id: "act-2",
-        timestamp: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000 + 1000),
+        timestamp: new Date(createdAt.getTime() + 1000),
         actor: "System",
         category: "system",
         type: "CHECKLIST_APPLIED",
-        message: "Purchase checklist applied",
-        meta: { checklistType: "Purchase" },
+        message: `${mockTransaction.type} checklist applied`,
+        meta: { checklistType: mockTransaction.type },
       },
-      {
-        id: "act-2a",
-        timestamp: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000 + 2000),
-        actor: "Admin",
-        category: "transaction",
-        type: "ADMIN_ASSIGNED",
-        message: "Assigned Admin changed: (none) → Karen Admin",
-        meta: { to: "Karen Admin" },
-      },
-      {
-        id: "act-3",
-        timestamp: new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000),
-        actor: "Agent",
-        category: "docs",
-        type: "DOC_RECEIVED",
-        message: 'Document received: "Purchase Agreement.pdf"',
-        meta: { docName: "Purchase Agreement.pdf" },
-      },
-      {
-        id: "act-4",
-        timestamp: new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000 + 3600000),
-        actor: "Admin",
-        category: "docs",
-        type: "DOC_REVIEWED",
-        message: 'Admin approved "Purchase Agreement"',
-        meta: { docName: "Purchase Agreement" },
-      },
-      {
-        id: "act-5",
-        timestamp: new Date(now.getTime() - 1 * 24 * 60 * 60 * 1000),
-        actor: "Agent",
-        category: "docs",
-        type: "DOC_RECEIVED",
-        message: 'Document received: "Earnest Money Deposit Receipt.pdf"',
-        meta: { docName: "Earnest Money Deposit Receipt.pdf" },
-      },
-      {
-        id: "act-6",
-        timestamp: new Date(now.getTime() - 1 * 24 * 60 * 60 * 1000 + 3600000),
-        actor: "Admin",
-        category: "docs",
-        type: "DOC_REVIEWED",
-        message: 'Admin approved "Earnest Money Deposit Receipt"',
-        meta: { docName: "Earnest Money Deposit Receipt" },
-      },
-      {
-        id: "act-7",
-        timestamp: new Date(now.getTime() - 1 * 24 * 60 * 60 * 1000 + 7200000),
-        actor: "Admin",
-        category: "docs",
-        type: "DOC_REJECTED",
-        message: 'Admin rejected "Insurance Certificate": missing signature',
-        meta: { docName: "Insurance Certificate", reason: "missing signature" },
-      },
-      {
-        id: "act-8",
-        timestamp: new Date(now.getTime() - 1 * 24 * 60 * 60 * 1000 + 7300000),
-        actor: "Admin",
-        category: "docs",
-        type: "AGENT_NOTIFIED",
-        message: 'Agent notified to review: "Insurance Certificate"',
-        meta: { docName: "Insurance Certificate" },
-      },
-      {
-        id: "act-9",
-        timestamp: new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000),
-        actor: "Admin",
-        category: "docs",
-        type: "DOC_WAIVED",
-        message: 'Admin waived "HOA Addendum": not applicable (no HOA)',
-        meta: { docName: "HOA Addendum", reason: "not applicable (no HOA)" },
-      },
-    ];
-    setActivityLog(seedActivities);
-  }, []);
+    ]);
+  }, [mockTransaction]);
 
   const addActivityEntry = (entry: Omit<ActivityLogEntry, "id" | "timestamp">) => {
     const newEntry: ActivityLogEntry = {

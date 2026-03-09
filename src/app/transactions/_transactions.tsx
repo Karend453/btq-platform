@@ -1,4 +1,4 @@
-import { getStoredTransactions } from "../../lib/transactionStorage";
+import { getStoredTransactions, mapStoredTransactionToListItem } from "../../lib/transactionStorage";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Search, Plus, AlertCircle, FileX, Archive } from "lucide-react";
@@ -40,24 +40,9 @@ export default function TransactionsPage() {
       try {
         const data = (await listTransactions()) as unknown as WorkItem[];
         const stored = getStoredTransactions();
-      
-        const mappedStored: WorkItem[] = stored.map((txn) => ({
-          id: txn.id,
-          identifier: txn.propertyIdentifier,
-          type: txn.type,
-          owner: txn.primaryClientName,
-          organizationName: "New Transaction",
-          organizationId: "local",
-          status: "active" as StatusType,
-          statusLabel: txn.status,
-          dueDate: txn.createdAt,
-          lastActivity: "Just created",
-          isArchived: false,
-          archivedAt: null,
-          archivedBy: null,
-          missingCount: 0,
-          rejectedCount: 0,
-        }));
+const mappedStored = stored.map(
+  (txn) => mapStoredTransactionToListItem(txn) as WorkItem
+);
       
         if (!cancelled) setRows([...mappedStored, ...data]);
       } finally {
