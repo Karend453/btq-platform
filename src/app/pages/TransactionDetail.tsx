@@ -208,9 +208,9 @@ export function TransactionDetail() {
 
   // Transaction-level operational fields
   const [transactionStatus, setTransactionStatus] = useState<"Pre-Contract" | "Under Contract" | "Closed" | "Archived">("Pre-Contract");
-  const [assignedAdmin, setAssignedAdmin] = useState("Karen Admin");
-  const [closingDate, setClosingDate] = useState<string>("2026-03-08"); // Mock: 5 days out (triggers needs attention)
-  const [contractDate, setContractDate] = useState<string>("2026-03-01"); // Mock: 2 days ago
+  const [assignedAdmin, setAssignedAdmin] = useState<string>("");
+  const [closingDate, setClosingDate] = useState<string>("");
+  const [contractDate, setContractDate] = useState<string>("");
 
   // Mock current user role (controllable via dropdown)
   const [currentUserRole, setCurrentUserRole] = useState<"Admin" | "Agent">("Admin");
@@ -319,9 +319,8 @@ const mockTransaction = id && mockTransactionDatabase[id]
   // Document Inbox
   const [inboxDocuments, setInboxDocuments] = useState<InboxDocument[]>([]);
 
-  // Mock checklist items with suggested attachments
-  const [checklistItems, setChecklistItems] = useState<ChecklistItem[]>([
-  ]);
+  // Checklist items
+  const [checklistItems, setChecklistItems] = useState<ChecklistItem[]>([]);
 
   const addActivityEntry = (entry: Omit<ActivityLogEntry, "id" | "timestamp">) => {
     const newEntry: ActivityLogEntry = {
@@ -331,6 +330,33 @@ const mockTransaction = id && mockTransactionDatabase[id]
     };
     setActivityLog((prev) => [newEntry, ...prev]);
   };
+  useEffect(() => {
+    if (!mockTransaction || typeof mockTransaction === "string") return;
+  
+    setActivityLog((prev) => {
+      const alreadyHasCreatedEntry = prev.some(
+        (entry) => entry.type === "TRANSACTION_CREATED"
+      );
+  
+      if (alreadyHasCreatedEntry) return prev;
+  
+      const createdAt = mockTransaction.createdAt
+        ? new Date(mockTransaction.createdAt)
+        : new Date();
+  
+      return [
+        {
+          id: `act-created-${mockTransaction.id}`,
+          timestamp: createdAt,
+          actor: "System",
+          category: "system",
+          type: "TRANSACTION_CREATED",
+          message: "Transaction created",
+        },
+        ...prev,
+      ];
+    });
+  }, [mockTransaction]);
 
   const handleCopyEmail = () => {
     navigator.clipboard.writeText(mockTransaction.intakeEmail);
