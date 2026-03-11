@@ -32,7 +32,7 @@ import {
   Download,
 } from "lucide-react";
 import { Button } from "../components/ui/button";
-import { getStoredTransactionById } from "../../lib/transactionStorage";
+import { getStoredTransactionById, updateStoredTransaction } from "../../lib/transactionStorage";
 import { Badge } from "../components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import {
@@ -131,7 +131,7 @@ interface ActivityLogEntry {
   id: string;
   timestamp: Date;
   actor: "System" | "Agent" | "Admin";
-  category: "docs" | "forms" | "system";
+  category: "docs" | "forms" | "system" | "transaction";
   type: string;
   message: string;
   meta?: {
@@ -141,7 +141,6 @@ interface ActivityLogEntry {
     [key: string]: any;
   };
 }
-
 type ActivityFilter = "all" | "docs" | "forms" | "system" | "transaction";
 type InboxFilter = "all" | "unattached" | "recent";
 
@@ -280,12 +279,10 @@ export function TransactionDetail() {
     },
   };
 
-  // Look up transaction or use default
-  const storedTransaction = id ? getStoredTransactionById(id) : null;
+// // Look up transaction or use default
+const storedTransaction = id ? getStoredTransactionById(id) : null;
 
-const mockTransaction = id && mockTransactionDatabase[id]
-  ? mockTransactionDatabase[id]
-  : storedTransaction
+const mockTransaction = storedTransaction
   ? {
       id: storedTransaction.id,
       identifier: storedTransaction.propertyIdentifier,
@@ -297,27 +294,45 @@ const mockTransaction = id && mockTransactionDatabase[id]
       office: "New Transaction",
       intakeEmail: storedTransaction.intakeEmail,
       createdAt: storedTransaction.createdAt,
+      assignedAdmin: storedTransaction.assignedAdmin || "",
+      closingDate: storedTransaction.closingDate || "",
+      contractDate: storedTransaction.contractDate || "",
     }
+  : id && mockTransactionDatabase[id]
+  ? mockTransactionDatabase[id]
   : id
   ? null
   : {
-      id: "TXN-123",
-      identifier: "123 Main Street, Chicago, IL 60601",
-      type: "Purchase",
+      id: "NEW",
+      identifier: "",
+      type: "Sale",
       status: "Pre-Contract",
-      clientName: "John Smith",
-      clientEmail: "john.smith@email.com",
-      assignedAgent: "Sarah Johnson",
-      office: "Downtown Chicago Office",
-      intakeEmail: "txn-123@docs.btq.app",
+      clientName: "",
+      clientEmail: "",
+      assignedAgent: "Unassigned",
+      office: "New Transaction",
+      intakeEmail: "",
       createdAt: new Date().toISOString(),
+      assignedAdmin: "",
+      closingDate: "",
+      contractDate: "",
     };
-
   // Get assigned agent name from transaction
   const assignedAgentName = mockTransaction?.assignedAgent || "Sarah Johnson";
 
-  // Document Inbox
-  const [inboxDocuments, setInboxDocuments] = useState<InboxDocument[]>([]);
+  useEffect(() => {
+    if (!mockTransaction || typeof mockTransaction === "string") return;
+  
+    setTransactionStatus(
+      (mockTransaction.status as typeof transactionStatus) || "Pre-Contract"
+    );
+    setAssignedAdmin(mockTransaction.assignedAdmin || "");
+    setClosingDate(mockTransaction.closingDate || "");
+    setContractDate(mockTransaction.contractDate || "");
+  }, [id]);
+
+// Document Inbox
+const [inboxDocuments, setInboxDocuments] = useState<InboxDocument[]>([]);
 
   // Checklist items
   const [checklistItems, setChecklistItems] = useState<ChecklistItem[]>([]);
@@ -1004,7 +1019,6 @@ const mockTransaction = id && mockTransactionDatabase[id]
 
   // Transaction field change handlers
   const handleStatusChange = (newStatus: typeof transactionStatus) => {
-    // Validate if trying to close
     if (newStatus === "Closed") {
       const validation = canCloseTransaction();
       if (!validation.allowed) {
@@ -1012,10 +1026,18 @@ const mockTransaction = id && mockTransactionDatabase[id]
         return;
       }
     }
-
+  
     const oldStatus = transactionStatus;
-    setTransactionStatus(newStatus);
-    
+setTransactionStatus(newStatus);
+
+console.log("STATUS HANDLER FIRED", { id, oldStatus, newStatus });
+
+if (id) {
+  updateStoredTransaction(id, {
+    status: newStatus,
+  });
+}
+  
     addActivityEntry({
       actor: currentUserRole,
       category: "transaction",
@@ -1026,14 +1048,23 @@ const mockTransaction = id && mockTransactionDatabase[id]
         to: newStatus,
       },
     });
-    
+  
     toast.success(`Status updated to ${newStatus}`);
   };
 
   const handleAssignedAdminChange = (newAdmin: string) => {
     const oldAdmin = assignedAdmin;
+  
+    console.log("Assigned admin change fired", { id, oldAdmin, newAdmin });
+  
     setAssignedAdmin(newAdmin);
-    
+  
+    if (id) {
+      updateStoredTransaction(id, {
+        assignedAdmin: newAdmin,
+      });
+    }
+  
     addActivityEntry({
       actor: currentUserRole,
       category: "transaction",
@@ -1044,13 +1075,19 @@ const mockTransaction = id && mockTransactionDatabase[id]
         to: newAdmin,
       },
     });
-    
+  
     toast.success(`Admin assigned: ${newAdmin}`);
   };
 
   const handleClosingDateChange = (newDate: string) => {
     setClosingDate(newDate);
-    
+  
+    if (id) {
+      updateStoredTransaction(id, {
+        closingDate: newDate,
+      });
+    }
+  
     addActivityEntry({
       actor: currentUserRole,
       category: "transaction",
@@ -1061,13 +1098,19 @@ const mockTransaction = id && mockTransactionDatabase[id]
         field: "closing",
       },
     });
-    
+  
     toast.success("Closing date updated");
   };
 
   const handleContractDateChange = (newDate: string) => {
     setContractDate(newDate);
-    
+  
+    if (id) {
+      updateStoredTransaction(id, {
+        contractDate: newDate,
+      });
+    }
+  
     addActivityEntry({
       actor: currentUserRole,
       category: "transaction",
@@ -1078,7 +1121,7 @@ const mockTransaction = id && mockTransactionDatabase[id]
         field: "contract",
       },
     });
-    
+  
     toast.success("Contract date updated");
   };
 
@@ -1667,9 +1710,9 @@ const mockTransaction = id && mockTransactionDatabase[id]
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Karen Admin">Karen Admin</SelectItem>
-                    <SelectItem value="Tina Review">Tina Review</SelectItem>
-                    <SelectItem value="Jordan Ops">Jordan Ops</SelectItem>
+                  <SelectItem value="Admin">Admin</SelectItem>
+                 <SelectItem value="Compliance">Compliance</SelectItem>
+                 <SelectItem value="Final Review">Final Review</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
