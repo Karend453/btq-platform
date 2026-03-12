@@ -13,7 +13,7 @@ import {
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Input } from "../components/ui/input";
-import { addStoredTransaction } from "../../lib/transactionStorage";
+import { createTransaction } from "../../services/transactions";
 import { Label } from "../components/ui/label";
 
 interface TransactionData {
@@ -47,7 +47,7 @@ export function NewTransaction() {
     { value: "Other", label: "Other", description: "Custom transaction type" },
   ];
 
-  // Generate mock intake email based on identifier
+  // Generate intake email based on identifier
   const generateIntakeEmail = () => {
     const randomId = Math.floor(Math.random() * 10000);
     return `txn-${randomId}@docs.btq.app`;
@@ -65,29 +65,25 @@ export function NewTransaction() {
     }
   };
 
-  const handleSubmit = () => {
-    const transactionId = `TXN-${Date.now()}-${Math.random()
-      .toString(36)
-      .substr(2, 9)
-      .toUpperCase()}`;
-
-    const intakeEmail = `${transactionId.toLowerCase()}@docs.btq.app`;
-
-    const newTransaction = {
-      id: transactionId,
+  const handleSubmit = async () => {
+    console.log("handleSubmit fired");
+    const created = await createTransaction({
+      identifier: transactionData.identifier || "",
       type: transactionData.type || "Other",
-      status: "Pre-Contract",
-      propertyIdentifier: transactionData.identifier || "",
-      primaryClientName: transactionData.clientName || "",
-      primaryClientEmail: transactionData.clientEmail || "",
-      intakeEmail,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      data: transactionData,
-    };
-
-    addStoredTransaction(newTransaction);
-    navigate(`/transactions/${transactionId}`);
+      agent: transactionData.clientName || "",
+      status: "success",
+      statusLabel: "Pre-Contract",
+      closingDate: "",
+      lastActivity: "Just created",
+      office: "Charlotte",
+    });
+  
+    if (!created) {
+      console.error("Failed to create transaction");
+      return;
+    }
+  
+    navigate(`/transactions/${created.id}`);
   };
 
   const isStepValid = () => {

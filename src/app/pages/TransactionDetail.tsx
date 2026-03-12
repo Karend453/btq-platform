@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { getTransaction } from "../../services/transactions";
 import { useParams, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -215,6 +216,9 @@ export function TransactionDetail() {
   const [currentUserRole, setCurrentUserRole] = useState<"Admin" | "Agent">("Admin");
   const currentUserName = currentUserRole === "Admin" ? "Admin User" : "Sarah Johnson";
 
+  const [loadedTransaction, setLoadedTransaction] = useState<any | null>(null);
+const [loadingTransaction, setLoadingTransaction] = useState(true);
+
   // Mock transaction database lookup
   const mockTransactionDatabase: Record<string, any> = {
     "TXN-2401": {
@@ -280,29 +284,25 @@ export function TransactionDetail() {
   };
 
 // // Look up transaction or use default
-const storedTransaction = id ? getStoredTransactionById(id) : null;
-
-const mockTransaction = storedTransaction
+const mockTransaction = loadedTransaction
   ? {
-      id: storedTransaction.id,
-      identifier: storedTransaction.propertyIdentifier,
-      type: storedTransaction.type,
-      status: storedTransaction.status,
-      clientName: storedTransaction.primaryClientName,
-      clientEmail: storedTransaction.primaryClientEmail,
-      assignedAgent: "Unassigned",
-      office: "New Transaction",
-      intakeEmail: storedTransaction.intakeEmail,
-      createdAt: storedTransaction.createdAt,
-      assignedAdmin: storedTransaction.assignedAdmin || "",
-      closingDate: storedTransaction.closingDate || "",
-      contractDate: storedTransaction.contractDate || "",
+      id: loadedTransaction.id,
+      identifier: loadedTransaction.identifier,
+      type: loadedTransaction.type,
+      status: loadedTransaction.statusLabel || "Pre-Contract",
+      clientName: loadedTransaction.owner || "",
+      clientEmail: "",
+      assignedAgent: loadedTransaction.owner || "Unassigned",
+      office: loadedTransaction.organizationName || "New Transaction",
+      intakeEmail: "",
+      createdAt: new Date().toISOString(),
+      assignedAdmin: "",
+      closingDate: loadedTransaction.dueDate || "",
+      contractDate: "",
     }
-  : id && mockTransactionDatabase[id]
-  ? mockTransactionDatabase[id]
-  : id
-  ? null
-  : {
+    : id
+      ? null
+      : {
       id: "NEW",
       identifier: "",
       type: "Sale",
@@ -319,6 +319,23 @@ const mockTransaction = storedTransaction
     };
   // Get assigned agent name from transaction
   const assignedAgentName = mockTransaction?.assignedAgent || "Sarah Johnson";
+
+  useEffect(() => {
+    async function loadTransaction() {
+      setLoadingTransaction(true);
+  
+      if (!id) {
+        setLoadingTransaction(false);
+        return;
+      }
+  
+      const txn = await getTransaction(id);
+      setLoadedTransaction(txn);
+      setLoadingTransaction(false);
+    }
+  
+    loadTransaction();
+  }, [id]);
 
   useEffect(() => {
     if (!mockTransaction || typeof mockTransaction === "string") return;
@@ -1506,6 +1523,16 @@ if (id) {
   const filteredInboxDocuments = getFilteredInboxDocuments();
 
   // If transaction not found, show error state
+  if (loadingTransaction) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-slate-50 p-6 min-h-screen">
+        <div className="bg-white rounded-lg shadow-lg p-8 text-center">
+          Loading transaction...
+        </div>
+      </div>
+    );
+  }
+  
   if (!mockTransaction) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center bg-slate-50 p-6 min-h-screen">
