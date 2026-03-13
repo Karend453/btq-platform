@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTerminology } from "../../hooks/useTerminology";
 import { useNavigate } from "react-router-dom";
 import { Search, Plus, AlertCircle, FileX, Archive } from "lucide-react";
 
@@ -22,6 +23,7 @@ import type { WorkItem } from "../../types/workItem";
 type StatusFilter = "all" | StatusType;
 
 export default function TransactionsPage() {
+  const { terms } = useTerminology();
   const navigate = useNavigate();
 
   const [loading, setLoading] = useState(true);
@@ -97,8 +99,9 @@ if (!cancelled) setRows(data);
         }}
       >
         <div>
-          <h2 style={{ fontSize: 22, fontWeight: 700 }}>Transactions</h2>
-
+        <h2 style={{ fontSize: 22, fontWeight: 700 }}>
+  {terms ? terms.record_label_plural : "Transactions"}
+</h2>
           <div
             style={{
               marginTop: 8,

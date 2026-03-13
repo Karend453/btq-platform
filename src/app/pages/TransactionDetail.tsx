@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { getTransaction } from "../../services/transactions";
+import { getTransaction, updateTransaction } from "../../services/transactions";
 import { useParams, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -33,7 +33,6 @@ import {
   Download,
 } from "lucide-react";
 import { Button } from "../components/ui/button";
-import { getStoredTransactionById, updateStoredTransaction } from "../../lib/transactionStorage";
 import { Badge } from "../components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import {
@@ -1035,7 +1034,7 @@ const [inboxDocuments, setInboxDocuments] = useState<InboxDocument[]>([]);
   })();
 
   // Transaction field change handlers
-  const handleStatusChange = (newStatus: typeof transactionStatus) => {
+  const handleStatusChange = async (newStatus: typeof transactionStatus) => {
     if (newStatus === "Closed") {
       const validation = canCloseTransaction();
       if (!validation.allowed) {
@@ -1050,9 +1049,16 @@ setTransactionStatus(newStatus);
 console.log("STATUS HANDLER FIRED", { id, oldStatus, newStatus });
 
 if (id) {
-  updateStoredTransaction(id, {
+  const updated = await updateTransaction(id, {
     status: newStatus,
+    statusLabel: newStatus,
   });
+
+  console.log("status handler updated:", updated);
+
+  if (updated) {
+    setLoadedTransaction(updated);
+  }
 }
   
     addActivityEntry({
@@ -1069,7 +1075,8 @@ if (id) {
     toast.success(`Status updated to ${newStatus}`);
   };
 
-  const handleAssignedAdminChange = (newAdmin: string) => {
+  const handleAssignedAdminChange = async (newAdmin: string) => {
+
     const oldAdmin = assignedAdmin;
   
     console.log("Assigned admin change fired", { id, oldAdmin, newAdmin });
@@ -1077,7 +1084,7 @@ if (id) {
     setAssignedAdmin(newAdmin);
   
     if (id) {
-      updateStoredTransaction(id, {
+      await updateTransaction(id, {
         assignedAdmin: newAdmin,
       });
     }
@@ -1096,11 +1103,11 @@ if (id) {
     toast.success(`Admin assigned: ${newAdmin}`);
   };
 
-  const handleClosingDateChange = (newDate: string) => {
+  const handleClosingDateChange = async (newDate: string) => {
     setClosingDate(newDate);
   
     if (id) {
-      updateStoredTransaction(id, {
+      await updateTransaction(id, {
         closingDate: newDate,
       });
     }
@@ -1119,11 +1126,11 @@ if (id) {
     toast.success("Closing date updated");
   };
 
-  const handleContractDateChange = (newDate: string) => {
+  const handleContractDateChange = async (newDate: string) => {
     setContractDate(newDate);
   
     if (id) {
-      updateStoredTransaction(id, {
+      await updateTransaction(id, {
         contractDate: newDate,
       });
     }

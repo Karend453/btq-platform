@@ -102,6 +102,47 @@ export async function createTransaction(input: CreateTransactionInput): Promise<
 
   return data ? toWorkItem(data as TransactionRow) : null;
 }
+type UpdateTransactionInput = {
+  status?: string;
+  statusLabel?: string;
+  closingDate?: string;
+  assignedAdmin?: string;
+  contractDate?: string;
+};
+
+export async function updateTransaction(
+  id: string,
+  input: UpdateTransactionInput
+): Promise<WorkItem | null> {
+  const payload: Record<string, unknown> = {};
+
+  if (input.status !== undefined) payload.status = input.status;
+  if (input.statusLabel !== undefined) payload.statuslabel = input.statusLabel;
+  if (input.closingDate !== undefined) payload.closingdate = input.closingDate;
+  if (input.assignedAdmin !== undefined) payload.assignedadmin = input.assignedAdmin;
+  if (input.contractDate !== undefined) payload.contractdate = input.contractDate;
+
+  console.log("updateTransaction id:", id);
+  console.log("updateTransaction input:", input);
+  console.log("updateTransaction payload:", payload);
+
+  const { data, error } = await supabase
+    .from("transactions")
+    .update(payload)
+    .eq("id", id)
+    .select("*")
+    .single();
+
+  console.log("updateTransaction data:", data);
+  console.log("updateTransaction error:", error);
+
+  if (error) {
+    console.error("Failed to update transaction", error);
+    return null;
+  }
+
+  return data ? toWorkItem(data as TransactionRow) : null;
+}
 
 export async function getTransaction(id: string): Promise<WorkItem | null> {
   const { data, error } = await supabase
