@@ -1,22 +1,30 @@
 // src/services/transactions.ts
 
 import { WorkItem, WorkItemStatus } from "../types/workItem";
+import { supabase } from "../lib/supabaseClient";
 
-type TransactionRow = {
+
+export type TransactionRow = {
   id: string;
-  identifier: string;
-  type: string;
-  agent: string;
-  status: string;
-  statuslabel: string;
-  closingdate: string;
-  missingdocs: number;
-  rejecteddocs: number;
-  lastactivity: string;
-  office: string;
-  isarchived: boolean;
+  identifier: string | null;
+  type: string | null;
+  office: string | null;
+  status: string | null;
+  assignedadmin: string | null;
+  contractdate: string | null;
+  closingdate: string | null;
+  checklisttype: string | null;
+  saleprice: number | null;
+  sellernames: string | null;
+  buyernames: string | null;
+  listagent: string | null;
+  buyeragent: string | null;
+  listcommissionpercent: string | null;
+  buyercommissionpercent: string | null;
+  listcommissionamount: string | null;
+  buyercommissionamount: string | null;
+  isarchived: boolean | null;
   archivedat: string | null;
-  archivedby: { name: string; role: string } | null;
 };
 
 
@@ -27,38 +35,37 @@ function toWorkItem(row: TransactionRow): WorkItem {
     ? (row.status as WorkItemStatus)
     : "info";
 
-  return {
-    id: row.id,
-    identifier: row.identifier,
-    type: row.type,
-    owner: row.agent,
-    status,
-    statusLabel: row.statuslabel,
-    dueDate: row.closingdate,
-    missingCount: row.missingdocs,
-    rejectedCount: row.rejecteddocs,
-    lastActivity: row.lastactivity,
-    organizationId: `org_${row.office.toLowerCase().replace(/\s+/g, "_")}`,
-    organizationName: row.office,
-    isArchived: row.isarchived,
-    archivedt: row.archivedat,
-    archivedBy: row.archivedby,
-  };
+    return {
+      id: row.id,
+      identifier: row.identifier ?? row.id,
+      type: row.type ?? "",
+      owner: row.assignedadmin ?? "",
+      status,
+      statusLabel: row.status ?? "",
+      dueDate: row.closingdate ?? "",
+      missingCount: 0,
+      rejectedCount: 0,
+      lastActivity: "",
+      organizationId: `org_${(row.office ?? "unknown").toLowerCase().replace(/\s+/g, "_")}`,
+      organizationName: row.office ?? "",
+      isArchived: row.isarchived ?? false,
+      archivedBy: null,
+    };
 }
   
-  import { supabase } from "../lib/supabaseClient";
-
-export async function listTransactions(): Promise<WorkItem[]> {
+export async function getTransaction(id: string): Promise<TransactionRow | null> {
   const { data, error } = await supabase
     .from("transactions")
-    .select("*");
+    .select("*")
+    .eq("id", id)
+    .single();
 
   if (error) {
-    console.error("Failed to load transactions", error);
-    return [];
+    console.error("Failed to load transaction", error);
+    return null;
   }
 
-  return (data ?? []).map((row) => toWorkItem(row as TransactionRow));
+  return data as TransactionRow;
 }
 
 type CreateTransactionInput = {
@@ -102,37 +109,55 @@ export async function createTransaction(input: CreateTransactionInput): Promise<
 
   return data ? toWorkItem(data as TransactionRow) : null;
 }
-type UpdateTransactionInput = {
-  type?: string;
-  office?: string;
-  status?: string;
-  assignedadmin?: string;
-  contractdate?: string;
-  closingdate?: string;
+export type UpdateTransactionInput = {
+  type?: string | null;
+  office?: string | null;
+  status?: string | null;
+  admin?: string | null;
+  contractDate?: string | null;
+  closingDate?: string | null;
+
+  sellerNames?: string | null;
+  buyerNames?: string | null;
+  salePrice?: number | null;
+  checklistType?: string | null;
+
+  listAgent?: string | null;
+  buyerAgent?: string | null;
+  listCommissionPercent?: string | null;
+  buyerCommissionPercent?: string | null;
+  listCommissionAmount?: string | null;
+  buyerCommissionAmount?: string | null;
 };
 
 export async function updateTransaction(
   id: string,
   input: UpdateTransactionInput
-): Promise<WorkItem | null> {
-  const payload: Record<string, unknown> = {};
-
-  if (input.type !== undefined) payload.type = input.type;
-if (input.office !== undefined) payload.office = input.office;
-if (input.status !== undefined) payload.status = input.status;
-if (input.assignedadmin !== undefined) payload.assignedadmin = input.assignedadmin;
-if (input.contractdate !== undefined) payload.contractdate = input.contractdate;
-if (input.closingdate !== undefined) payload.closingdate = input.closingdate;
-
-  console.log("updateTransaction id:", id);
-  console.log("updateTransaction input:", input);
-  console.log("updateTransaction payload:", payload);
-
+) {
   const { data, error } = await supabase
     .from("transactions")
-    .update(payload)
+    .update({
+      type: input.type,
+      office: input.office,
+      status: input.status,
+      assignedadmin: input.admin,
+      contractdate: input.contractDate,
+      closingdate: input.closingDate,
+
+      sellernames: input.sellerNames,
+      buyernames: input.buyerNames,
+      saleprice: input.salePrice,
+      checklisttype: input.checklistType,
+
+      listagent: input.listAgent,
+      buyeragent: input.buyerAgent,
+      listcommissionpercent: input.listCommissionPercent,
+      buyercommissionpercent: input.buyerCommissionPercent,
+      listcommissionamount: input.listCommissionAmount,
+      buyercommissionamount: input.buyerCommissionAmount,
+    })
     .eq("id", id)
-    .select("*")
+    .select()
     .single();
 
   console.log("updateTransaction data:", data);
@@ -143,20 +168,17 @@ if (input.closingdate !== undefined) payload.closingdate = input.closingdate;
     return null;
   }
 
-  return data ? toWorkItem(data as TransactionRow) : null;
+  return data as TransactionRow;
 }
-
-export async function getTransaction(id: string): Promise<WorkItem | null> {
+export async function listTransactions(): Promise<WorkItem[]> {
   const { data, error } = await supabase
     .from("transactions")
-    .select("*")
-    .eq("id", id)
-    .maybeSingle();
+    .select("*");
 
   if (error) {
-    console.error("Failed to load transaction", error);
-    return null;
+    console.error("Failed to load transactions", error);
+    return [];
   }
 
-  return data ? toWorkItem(data) : null;
+  return (data ?? []).map((row) => toWorkItem(row as TransactionRow));
 }

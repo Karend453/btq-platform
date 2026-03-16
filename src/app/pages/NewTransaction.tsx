@@ -8,7 +8,6 @@ import {
   FileText,
   Users,
   CheckCircle2,
-  Plus,
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -20,7 +19,7 @@ interface TransactionData {
   type: "Purchase" | "Listing" | "Lease" | "Other" | "";
   identifier: string;
   clientName: string;
-  clientEmail: string;
+  officeId: string;
 }
 
 export function NewTransaction() {
@@ -30,13 +29,13 @@ export function NewTransaction() {
     type: "",
     identifier: "",
     clientName: "",
-    clientEmail: "",
+    officeId: "",
   });
 
   const steps = [
     { number: 1, title: "Transaction Type", icon: FileText },
-    { number: 2, title: "Identifier", icon: Home },
-    { number: 3, title: "Primary Client", icon: Users },
+    { number: 2, title: "Address / Identifier", icon: Home },
+    { number: 3, title: "Client & Office", icon: Users },
     { number: 4, title: "Review & Confirm", icon: CheckCircle2 },
   ];
 
@@ -45,6 +44,12 @@ export function NewTransaction() {
     { value: "Listing", label: "Listing", description: "Seller representation" },
     { value: "Lease", label: "Lease", description: "Rental transaction" },
     { value: "Other", label: "Other", description: "Custom transaction type" },
+  ];
+
+  const officeOptions = [
+    { id: "downtown", name: "Downtown" },
+    { id: "east-side", name: "East Side" },
+    { id: "miami", name: "Miami" },
   ];
 
   // Generate intake email based on identifier
@@ -68,14 +73,10 @@ export function NewTransaction() {
   const handleSubmit = async () => {
     console.log("handleSubmit fired");
     const created = await createTransaction({
-      identifier: transactionData.identifier || "",
-      type: transactionData.type || "Other",
-      agent: transactionData.clientName || "",
-      status: "success",
-      statusLabel: "Pre-Contract",
-      closingDate: "",
-      lastActivity: "Just created",
-      office: "Charlotte",
+      identifier: transactionData.identifier,
+      type: transactionData.type,
+      clientName: transactionData.clientName,
+      officeId: transactionData.officeId,
     });
   
     if (!created) {
@@ -95,7 +96,7 @@ export function NewTransaction() {
       case 3:
         return (
           transactionData.clientName.trim() !== "" &&
-          transactionData.clientEmail.trim() !== ""
+          transactionData.officeId.trim() !== ""
         );
       case 4:
         return true;
@@ -253,52 +254,49 @@ export function NewTransaction() {
               </div>
             )}
 
-            {/* Step 3: Primary Client */}
-            {currentStep === 3 && (
-              <div className="space-y-4">
-                <div>
-                  <Label htmlFor="clientName">Client Name</Label>
-                  <Input
-                    id="clientName"
-                    placeholder="e.g., John Smith"
-                    value={transactionData.clientName}
-                    onChange={(e) =>
-                      setTransactionData({
-                        ...transactionData,
-                        clientName: e.target.value,
-                      })
-                    }
-                    className="mt-1.5"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="clientEmail">Client Email</Label>
-                  <Input
-                    id="clientEmail"
-                    type="email"
-                    placeholder="e.g., john.smith@email.com"
-                    value={transactionData.clientEmail}
-                    onChange={(e) =>
-                      setTransactionData({
-                        ...transactionData,
-                        clientEmail: e.target.value,
-                      })
-                    }
-                    className="mt-1.5"
-                  />
-                </div>
-                <div className="pt-2">
-                  <Button variant="outline" disabled>
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add Additional Signer
-                  </Button>
-                  <p className="text-xs text-slate-500 mt-2">
-                    Additional signers can be added after creating the transaction
-                  </p>
-                </div>
-              </div>
-            )}
+            {/* Step 3: Client & Office */}
+{currentStep === 3 && (
+  <div className="space-y-4">
+    <div>
+      <Label htmlFor="clientName">Client Name</Label>
+      <Input
+        id="clientName"
+        placeholder="e.g., John Smith"
+        value={transactionData.clientName}
+        onChange={(e) =>
+          setTransactionData({
+            ...transactionData,
+            clientName: e.target.value,
+          })
+        }
+        className="mt-1.5"
+      />
+    </div>
 
+    <div>
+      <Label htmlFor="officeId">Office</Label>
+      <select
+        id="officeId"
+        value={transactionData.officeId}
+        onChange={(e) =>
+          setTransactionData({
+            ...transactionData,
+            officeId: e.target.value,
+          })
+        }
+        className="mt-1.5 flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+      >
+        <option value="">Select an office</option>
+        {officeOptions.map((office) => (
+          <option key={office.id} value={office.id}>
+            {office.name}
+          </option>
+        ))}
+      </select>
+    </div>
+
+  </div>
+)}
             {/* Step 4: Review & Confirm */}
             {currentStep === 4 && (
               <div className="space-y-6">
@@ -341,7 +339,7 @@ export function NewTransaction() {
                       {transactionData.clientName}
                     </div>
                     <div className="text-sm text-slate-600 mt-1">
-                      {transactionData.clientEmail}
+                      {transactionData.officeId}
                     </div>
                   </div>
 
