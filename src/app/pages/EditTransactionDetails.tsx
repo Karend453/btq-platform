@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { getTransaction } from "../../services/transactions";
+import { getTransaction, updateTransaction } from "../../services/transactions";
 
 type FormData = {
   listAgent: string;
@@ -96,8 +96,32 @@ export default function EditTransactionDetails() {
   };
 
   const handleSave = async () => {
-    // save to Supabase next
-    navigate(`/transactions/${id}`);
+    console.log("SAVE CLICKED");
+    console.log("id:", id);
+    console.log("formData:", formData);
+  
+    if (!id) {
+      console.log("No id, stopping save");
+      return;
+    }
+  
+    try {
+      const result = await updateTransaction(id, {
+        type: formData.type,
+        office: formData.office,
+        status: formData.status,
+        assignedadmin: formData.admin,
+        contractdate: formData.contractDate,
+        closingdate: formData.closingDate,
+      });
+  
+      console.log("updateTransaction result:", result);
+  
+      navigate(`/transactions/${id}`);
+    } catch (error) {
+      console.error("Failed to save transaction details:", error);
+      alert("Failed to save transaction details.");
+    }
   };
 
   if (isLoading) {

@@ -44,6 +44,9 @@ export default function TransactionDetailLite() {
         <h2 style={{ fontSize: 22, fontWeight: 700 }}>
           {item?.identifier ?? id ?? "Transaction"}
         </h2>
+        <Button onClick={() => navigate(`/transactions/${id}/edit`)}>
+  Edit Transaction Details
+</Button>
       </div>
 
       {loading ? (

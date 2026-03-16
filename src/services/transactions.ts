@@ -41,7 +41,7 @@ function toWorkItem(row: TransactionRow): WorkItem {
     organizationId: `org_${row.office.toLowerCase().replace(/\s+/g, "_")}`,
     organizationName: row.office,
     isArchived: row.isarchived,
-    archivedAt: row.archivedat,
+    archivedt: row.archivedat,
     archivedBy: row.archivedby,
   };
 }
@@ -103,11 +103,12 @@ export async function createTransaction(input: CreateTransactionInput): Promise<
   return data ? toWorkItem(data as TransactionRow) : null;
 }
 type UpdateTransactionInput = {
+  type?: string;
+  office?: string;
   status?: string;
-  statusLabel?: string;
-  closingDate?: string;
-  assignedAdmin?: string;
-  contractDate?: string;
+  assignedadmin?: string;
+  contractdate?: string;
+  closingdate?: string;
 };
 
 export async function updateTransaction(
@@ -116,11 +117,12 @@ export async function updateTransaction(
 ): Promise<WorkItem | null> {
   const payload: Record<string, unknown> = {};
 
-  if (input.status !== undefined) payload.status = input.status;
-  if (input.statusLabel !== undefined) payload.statuslabel = input.statusLabel;
-  if (input.closingDate !== undefined) payload.closingdate = input.closingDate;
-  if (input.assignedAdmin !== undefined) payload.assignedadmin = input.assignedAdmin;
-  if (input.contractDate !== undefined) payload.contractdate = input.contractDate;
+  if (input.type !== undefined) payload.type = input.type;
+if (input.office !== undefined) payload.office = input.office;
+if (input.status !== undefined) payload.status = input.status;
+if (input.assignedadmin !== undefined) payload.assignedadmin = input.assignedadmin;
+if (input.contractdate !== undefined) payload.contractdate = input.contractdate;
+if (input.closingdate !== undefined) payload.closingdate = input.closingdate;
 
   console.log("updateTransaction id:", id);
   console.log("updateTransaction input:", input);
