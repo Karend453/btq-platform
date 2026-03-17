@@ -2,7 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import React from "react";
 import { Button } from "../components/ui/button";
 import { getTransaction, type TransactionRow } from "../../services/transactions";
-import TransactionOverviewSection from "./Elements/TransactionOverviewSection";
+import TransactionOverview from "./sections/TransactionOverview";
+import TransactionInbox from "./sections/TransactionInbox";
+import TransactionControls from "./sections/TransactionControls";
+import GeneratedIntakeEmail from "./sections/GeneratedIntakeEmail";
+import TransactionActivity from "./sections/TransactionActivity";
+import type { ChecklistItem, InboxDocument } from "./sections/TransactionInbox";
+import type { ArchiveMetadata, TransactionStatus } from "./sections/TransactionControls";
+import type { ActivityLogEntry, ActivityFilter } from "./sections/TransactionActivity";
 
 function handleSave() {
   window.location.href = "/transactions";
@@ -93,6 +100,16 @@ export default function TransactionDetailsPage() {
 
   const [loading, setLoading] = useState(true);
   const [transaction, setTransaction] = useState<TransactionRow | null>(null);
+  const [inboxDocuments, setInboxDocuments] = useState<InboxDocument[]>([]);
+  const [checklistItems, setChecklistItems] = useState<ChecklistItem[]>([]);
+
+  const [transactionStatus, setTransactionStatus] = useState<TransactionStatus>("Pre-Contract");
+  const [assignedAdmin, setAssignedAdmin] = useState<string | null>(null);
+  const [closingDate, setClosingDate] = useState<string | null>(null);
+  const [contractDate, setContractDate] = useState<string | null>(null);
+  const [archiveMetadata, setArchiveMetadata] = useState<ArchiveMetadata | null>(null);
+  const [activityLog, setActivityLog] = useState<ActivityLogEntry[]>([]);
+  const [activityFilter, setActivityFilter] = useState<ActivityFilter>("all");
 
   function handleEdit() {
     window.location.href = `/transactions/${id}/edit`;
@@ -113,6 +130,14 @@ export default function TransactionDetailsPage() {
 
         if (!cancelled) {
           setTransaction(data);
+          if (data) {
+            const s = data.status as string;
+            const valid: TransactionStatus[] = ["Pre-Contract", "Under Contract", "Closed", "Archived"];
+            setTransactionStatus(valid.includes(s as TransactionStatus) ? (s as TransactionStatus) : "Pre-Contract");
+            setAssignedAdmin(data.assignedadmin ?? null);
+            setClosingDate(data.closingdate ?? null);
+            setContractDate(data.contractdate ?? null);
+          }
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -135,6 +160,72 @@ export default function TransactionDetailsPage() {
     } catch {
       alert("Copy failed");
     }
+  }
+
+  const isReadOnly = transactionStatus === "Archived";
+
+  function handleStatusChange(status: TransactionStatus) {
+    setTransactionStatus(status);
+  }
+
+  function handleAssignedAdminChange(admin: string) {
+    setAssignedAdmin(admin);
+  }
+
+  function handleClosingDateChange(date: string) {
+    setClosingDate(date);
+  }
+
+  function handleContractDateChange(date: string) {
+    setContractDate(date);
+  }
+
+  function handleOpenArchiveModal() {
+    if (transactionStatus !== "Closed") return;
+    const confirmed = window.confirm(
+      "Archive this transaction? It will become read-only. Download the Archive Package for your records."
+    );
+    if (!confirmed) return;
+    const txn = transaction as TransactionRow & { identifier?: string; office?: string; agent?: string };
+    setArchiveMetadata({
+      archivedAt: new Date(),
+      archivedBy: { name: "Current User", role: "Admin" },
+      archiveReceipt: {
+        transactionSummary: {
+          identifier: txn?.identifier ?? "Unknown",
+          id: id ?? "Unknown",
+          office: txn?.office ?? "Unknown Office",
+          assignedAgent: txn?.agent ?? "—",
+          status: "Closed",
+        },
+        documentSummary: {
+          requiredComplete: checklistItems.filter((i) => i.requirement === "required" && i.reviewStatus === "complete").length,
+          requiredWaived: checklistItems.filter((i) => i.requirement === "required" && i.reviewStatus === "waived").length,
+          optionalComplete: checklistItems.filter((i) => i.requirement === "optional" && i.reviewStatus === "complete").length,
+          totalDocuments: checklistItems.length,
+        },
+        activityLogCount: 0,
+      },
+      archivedActivityLog: [],
+    });
+    setTransactionStatus("Archived");
+  }
+
+  function handleDownloadArchivePackage() {
+    const pkg = {
+      transaction: { id, status: transactionStatus, closingDate, contractDate, assignedAdmin },
+      archivedMetadata: archiveMetadata,
+      archivedAt: new Date().toISOString(),
+    };
+    const blob = new Blob([JSON.stringify(pkg, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `archive-${id}-${Date.now()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
 
   if (loading) {
@@ -182,7 +273,7 @@ export default function TransactionDetailsPage() {
   return (
     <div style={{ padding: 24, background: "#f8fafc", minHeight: "100vh" }}>
       <div style={{ maxWidth: 1200, margin: "0 auto", display: "grid", gap: 32 }}>
-        <TransactionOverviewSection
+        <TransactionOverview
           row={row}
           title={title}
           clientValue={clientValue}
@@ -194,7 +285,43 @@ export default function TransactionDetailsPage() {
           onEdit={handleEdit}
           onCopyIntakeEmail={handleCopy}
         />
-  
+
+        <TransactionControls
+          transactionStatus={transactionStatus}
+          assignedAdmin={assignedAdmin}
+          closingDate={closingDate}
+          contractDate={contractDate}
+          checklistItems={checklistItems}
+          isReadOnly={isReadOnly}
+          currentUserRole="Admin"
+          archiveMetadata={archiveMetadata}
+          onStatusChange={handleStatusChange}
+          onAssignedAdminChange={handleAssignedAdminChange}
+          onClosingDateChange={handleClosingDateChange}
+          onContractDateChange={handleContractDateChange}
+          onOpenArchiveModal={handleOpenArchiveModal}
+          onDownloadArchivePackage={handleDownloadArchivePackage}
+          onViewArchivedActivityLog={() => {}}
+        />
+
+        <GeneratedIntakeEmail intakeEmail={row.intake_email} />
+
+        <TransactionInbox
+          transactionId={id}
+          inboxDocuments={inboxDocuments}
+          onInboxDocumentsChange={setInboxDocuments}
+          checklistItems={checklistItems}
+          onChecklistItemsChange={setChecklistItems}
+        />
+
+
+
+        <TransactionActivity
+          activityEntries={activityLog}
+          currentActivityFilter={activityFilter}
+          onActivityFilterChange={setActivityFilter}
+        />
+
         <div
           style={{
             border: "1px solid #e2e8f0",
@@ -213,35 +340,6 @@ export default function TransactionDetailsPage() {
               marginBottom: 6,
             }}
           >
-            Checklist Workspace
-          </div>
-  
-          <div
-            style={{
-              fontSize: 14,
-              color: "#64748b",
-              marginBottom: 20,
-            }}
-          >
-            Checklist items and required actions for this transaction
-          </div>
-  
-          <div
-            style={{
-              border: "1px dashed #cbd5e1",
-              borderRadius: 16,
-              padding: 24,
-              background: "#f8fafc",
-              minHeight: 220,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "#64748b",
-              fontSize: 15,
-              textAlign: "center",
-            }}
-          >
-            Checklist content will appear here
           </div>
         </div>
       </div>
