@@ -1,7 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
+import React from "react";
 import { Button } from "../components/ui/button";
 import { getTransaction, type TransactionRow } from "../../services/transactions";
+import TransactionOverviewSection from "./Elements/TransactionOverviewSection";
 
+function handleSave() {
+  window.location.href = "/transactions";
+}
+
+function handleLaunchZipForms() {
+  alert("ZipForms launch coming soon");
+}
 
 function formatCurrency(value?: number | string | null) {
   if (value === null || value === undefined || value === "") return "—";
@@ -29,18 +38,6 @@ function formatDate(value?: string | null) {
     day: "numeric",
     year: "numeric",
   });
-}
-
-function getImportantDate(transaction: TransactionRow): ImportantDateResult {
-  if (transaction.closingdate) {
-    return { label: "Closing", value: transaction.closingdate };
-  }
-
-  if (transaction.contractdate) {
-    return { label: "Contract", value: transaction.contractdate };
-  }
-
-  return { label: "Important Date", value: null };
 }
 
 function SummaryField({
@@ -88,7 +85,7 @@ function SummaryField({
   );
 }
 
-export default function TransactionDetailLite() {
+export default function TransactionDetailsPage() {
   const id = useMemo(() => {
     const parts = window.location.pathname.split("/").filter(Boolean);
     return parts[parts.length - 1] ?? "";
@@ -96,6 +93,10 @@ export default function TransactionDetailLite() {
 
   const [loading, setLoading] = useState(true);
   const [transaction, setTransaction] = useState<TransactionRow | null>(null);
+
+  function handleEdit() {
+    window.location.href = `/transactions/${id}/edit`;
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -180,7 +181,20 @@ export default function TransactionDetailLite() {
 
   return (
     <div style={{ padding: 24, background: "#f8fafc", minHeight: "100vh" }}>
-      <div style={{ maxWidth: 1200, margin: "0 auto", display: "grid", gap: 24 }}>
+      <div style={{ maxWidth: 1200, margin: "0 auto", display: "grid", gap: 32 }}>
+        <TransactionOverviewSection
+          row={row}
+          title={title}
+          clientValue={clientValue}
+          officeValue={officeValue}
+          formatDate={formatDate}
+          formatCurrency={formatCurrency}
+          onSave={handleSave}
+          onLaunchZipForms={handleLaunchZipForms}
+          onEdit={handleEdit}
+          onCopyIntakeEmail={handleCopy}
+        />
+  
         <div
           style={{
             border: "1px solid #e2e8f0",
@@ -188,137 +202,49 @@ export default function TransactionDetailLite() {
             background: "#ffffff",
             padding: 24,
             boxShadow: "0 1px 2px rgba(15, 23, 42, 0.04)",
+            marginTop: 16,
           }}
         >
           <div
             style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "flex-start",
-              gap: 16,
-              flexWrap: "wrap",
+              fontSize: 20,
+              fontWeight: 700,
+              color: "#0f172a",
+              marginBottom: 6,
+            }}
+          >
+            Checklist Workspace
+          </div>
+  
+          <div
+            style={{
+              fontSize: 14,
+              color: "#64748b",
               marginBottom: 20,
             }}
           >
-            <div style={{ display: "grid", gap: 12 }}>
-            <Button variant="outline" onClick={() => (window.location.href = "/transactions")}>
-  Save
-</Button>
-
-              <div>
-                <h1
-                  style={{
-                    fontSize: 28,
-                    fontWeight: 700,
-                    color: "#0f172a",
-                    margin: 0,
-                  }}
-                >
-                  {title}
-                </h1>
-                <div
-                  style={{
-                    marginTop: 6,
-                    fontSize: 14,
-                    color: "#64748b",
-                  }}
-                >
-                  Transaction snapshot
-                </div>
-              </div>
-            </div>
-
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <Button onClick={() => alert("ZipForms launch coming soon")}>
-                Launch ZipForms
-              </Button>
-
-              {row.intake_email ? (
-                <Button variant="outline" onClick={() => handleCopy(row.intake_email)}>
-                  Copy Intake Email
-                </Button>
-              ) : null}
-
-              <Button
-                variant="outline"
-                onClick={() => {
-                  window.location.href = `/transactions/${id}/edit`;
-                }}
-              >
-                Edit Transaction Details
-              </Button>
-            </div>
+            Checklist items and required actions for this transaction
           </div>
-
+  
           <div
             style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-              gap: 16,
-              marginBottom: 16,
+              border: "1px dashed #cbd5e1",
+              borderRadius: 16,
+              padding: 24,
+              background: "#f8fafc",
+              minHeight: 220,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "#64748b",
+              fontSize: 15,
+              textAlign: "center",
             }}
           >
-            <SummaryField label="Client" value={clientValue} />
-            <SummaryField label="Type" value={row.type || "—"} />
-            <SummaryField label="Checklist Type" value={row.checklisttype || "—"} />
-            <SummaryField label="Office" value={officeValue} />
-          </div>
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-              gap: 16,
-            }}
-          >
-            <SummaryField label="Status" value={row.status || "—"} />
-<SummaryField label="Assigned Admin" value={row.assignedadmin || "—"} />
-<SummaryField
-  label="Closing Date"
-  value={row.closingdate ? formatDate(row.closingdate) : "—"}
-/>
-<SummaryField label="Sale Price" value={formatCurrency(row.saleprice)} />
-<div
-  style={{
-    border: "1px solid #e2e8f0",
-    borderRadius: 14,
-    padding: 16,
-    background: "#f8fafc",
-    gridColumn: "span 2",
-  }}
->
-  <div
-    style={{
-      fontSize: 12,
-      fontWeight: 700,
-      letterSpacing: "0.06em",
-      textTransform: "uppercase",
-      color: "#64748b",
-      marginBottom: 6,
-    }}
-  >
-    BTQ Intake Email
-  </div>
-
-  <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-    <div style={{ fontSize: 15, fontWeight: 600 }}>
-      {row.intake_email || "—"}
-    </div>
-
-    {row.intake_email && (
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => handleCopy(row.intake_email)}
-      >
-        Copy
-      </Button>
-    )}
-  </div>
-</div>
+            Checklist content will appear here
           </div>
         </div>
       </div>
     </div>
   );
-}
+  }

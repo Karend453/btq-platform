@@ -8,7 +8,7 @@ import { Transactions } from "./pages/Transactions";
 import { Analytics } from "./pages/Analytics";
 import { Offices } from "./pages/Offices";
 import { SettingsPage } from "./pages/SettingsPage";
-import TransactionDetail from "./pages/TransactionDetailLite";
+import TransactionDetail from "./transactions/TransactionDetailsPage";
 import { NewTransaction } from "./pages/NewTransaction";
 import Login from "./Login";
 
