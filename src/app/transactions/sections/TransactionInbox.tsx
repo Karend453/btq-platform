@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import {
   FileText,
@@ -47,6 +47,8 @@ export interface ChecklistItem {
   notes: unknown[];
   comments: unknown[];
   version: number;
+  /** Section/group title for visual grouping (from template). */
+  sectionTitle?: string;
   attachedDocument?: {
     id: string;
     filename: string;
@@ -78,6 +80,11 @@ export type TransactionInboxProps = {
     meta?: Record<string, unknown>;
   }) => void;
   currentUserRole?: "Admin" | "Agent";
+  /** When provided, attach drawer can be opened from outside (e.g. Checklist) */
+  attachDrawerOpen?: boolean;
+  attachTargetItem?: ChecklistItem | null;
+  onAttachDrawerOpenChange?: (open: boolean) => void;
+  onAttachTargetChange?: (item: ChecklistItem | null) => void;
 };
 
 function formatRelativeTime(date: Date) {
@@ -104,19 +111,51 @@ export default function TransactionInbox({
   onChecklistItemsChange,
   addActivityEntry,
   currentUserRole = "Admin",
+  attachDrawerOpen: controlledAttachDrawerOpen,
+  attachTargetItem: controlledAttachTargetItem,
+  onAttachDrawerOpenChange,
+  onAttachTargetChange,
 }: TransactionInboxProps) {
-  const [isAttachDrawerOpen, setIsAttachDrawerOpen] = useState(false);
-  const [attachTargetItem, setAttachTargetItem] = useState<ChecklistItem | null>(null);
+  const [internalAttachDrawerOpen, setInternalAttachDrawerOpen] = useState(false);
+  const [internalAttachTargetItem, setInternalAttachTargetItem] = useState<ChecklistItem | null>(null);
   const [selectedDocumentForAttach, setSelectedDocumentForAttach] = useState<string | null>(null);
   const [inboxFilter, setInboxFilter] = useState<InboxFilter>("all");
   const [inboxSearchQuery, setInboxSearchQuery] = useState("");
+
+  const isControlled = controlledAttachDrawerOpen !== undefined && onAttachDrawerOpenChange !== undefined;
+  const isAttachDrawerOpen = isControlled ? controlledAttachDrawerOpen : internalAttachDrawerOpen;
+  const attachTargetItem = isControlled ? (controlledAttachTargetItem ?? null) : internalAttachTargetItem;
+
+  const setAttachDrawerOpen = (open: boolean) => {
+    if (isControlled) {
+      onAttachDrawerOpenChange?.(open);
+    } else {
+      setInternalAttachDrawerOpen(open);
+    }
+  };
+
+  const setAttachTargetItem = (item: ChecklistItem | null) => {
+    if (isControlled) {
+      onAttachTargetChange?.(item);
+    } else {
+      setInternalAttachTargetItem(item);
+    }
+  };
+
+  useEffect(() => {
+    if (isControlled && controlledAttachDrawerOpen && controlledAttachTargetItem) {
+      setSelectedDocumentForAttach(null);
+      setInboxSearchQuery("");
+      setInboxFilter("unattached");
+    }
+  }, [isControlled, controlledAttachDrawerOpen, controlledAttachTargetItem]);
 
   const handleOpenAttachDrawer = (fromItem?: ChecklistItem) => {
     setAttachTargetItem(fromItem || null);
     setSelectedDocumentForAttach(null);
     setInboxSearchQuery("");
     setInboxFilter("unattached");
-    setIsAttachDrawerOpen(true);
+    setAttachDrawerOpen(true);
   };
 
   const handleAttachDocument = () => {
@@ -169,11 +208,15 @@ export default function TransactionInbox({
     );
 
     onInboxDocumentsChange(
-      inboxDocuments.map((doc) =>
-        doc.id === inboxDoc.id
-          ? { ...doc, isAttached: true, attachedToItemId: attachTargetItem.id }
-          : doc
-      )
+      inboxDocuments.map((doc) => {
+        if (doc.id === inboxDoc.id) {
+          return { ...doc, isAttached: true, attachedToItemId: attachTargetItem.id };
+        }
+        if (isReplacement && attachTargetItem.attachedDocument?.id === doc.id) {
+          return { ...doc, isAttached: false, attachedToItemId: undefined };
+        }
+        return doc;
+      })
     );
 
     if (addActivityEntry) {
@@ -223,7 +266,7 @@ export default function TransactionInbox({
         ? `Replaced document on "${attachTargetItem.name}" (v${newVersion})`
         : `Attached "${inboxDoc.filename}" to "${attachTargetItem.name}" (v${newVersion})`
     );
-    setIsAttachDrawerOpen(false);
+    setAttachDrawerOpen(false);
     setAttachTargetItem(null);
     setSelectedDocumentForAttach(null);
   };
@@ -341,7 +384,13 @@ export default function TransactionInbox({
       </Card>
 
       {/* Attach Document Drawer */}
-      <Sheet open={isAttachDrawerOpen} onOpenChange={setIsAttachDrawerOpen}>
+      <Sheet
+        open={isAttachDrawerOpen}
+        onOpenChange={(open) => {
+          setAttachDrawerOpen(open);
+          if (!open) setAttachTargetItem(null);
+        }}
+      >
         <SheetContent side="right" className="w-full sm:max-w-lg overflow-y-auto">
           <SheetHeader>
             <SheetTitle>Attach a Document</SheetTitle>
@@ -508,7 +557,10 @@ export default function TransactionInbox({
           <SheetFooter>
             <Button
               variant="outline"
-              onClick={() => setIsAttachDrawerOpen(false)}
+              onClick={() => {
+                setAttachDrawerOpen(false);
+                setAttachTargetItem(null);
+              }}
             >
               Cancel
             </Button>

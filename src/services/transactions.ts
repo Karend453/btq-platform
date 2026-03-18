@@ -7,6 +7,7 @@ import { supabase } from "../lib/supabaseClient";
 export type TransactionRow = {
   id: string;
   identifier: string | null;
+  clientname: string | null;
   type: string | null;
   office: string | null;
   status: string | null;
@@ -14,6 +15,7 @@ export type TransactionRow = {
   contractdate: string | null;
   closingdate: string | null;
   checklisttype: string | null;
+  checklist_template_id: string | null;
   saleprice: number | null;
   sellernames: string | null;
   buyernames: string | null;
@@ -71,29 +73,18 @@ export async function getTransaction(id: string): Promise<TransactionRow | null>
 type CreateTransactionInput = {
   identifier: string;
   type: string;
-  agent: string;
-  status?: string;
-  statusLabel?: string;
-  closingDate?: string;
-  lastActivity?: string;
-  office?: string;
+  clientName: string;
+  officeId: string;
 };
 
 export async function createTransaction(input: CreateTransactionInput): Promise<WorkItem | null> {
   const payload = {
     identifier: input.identifier,
     type: input.type,
-    agent: input.agent,
-    status: input.status ?? "success",
-    statuslabel: input.statusLabel ?? "Active",
-    closingdate: input.closingDate ?? "",
-    missingdocs: 0,
-    rejecteddocs: 0,
-    lastactivity: input.lastActivity ?? "Just created",
-    office: input.office ?? "Charlotte",
+    clientname: input.clientName,
+    office: input.officeId,
     isarchived: false,
     archivedat: null,
-    archivedby: null,
   };
 
   const { data, error } = await supabase
@@ -121,6 +112,7 @@ export type UpdateTransactionInput = {
   buyerNames?: string | null;
   salePrice?: number | null;
   checklistType?: string | null;
+  checklistTemplateId?: string | null;
 
   listAgent?: string | null;
   buyerAgent?: string | null;
@@ -148,6 +140,7 @@ export async function updateTransaction(
       buyernames: input.buyerNames,
       saleprice: input.salePrice,
       checklisttype: input.checklistType,
+      checklist_template_id: input.checklistTemplateId,
 
       listagent: input.listAgent,
       buyeragent: input.buyerAgent,
