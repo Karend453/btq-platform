@@ -137,9 +137,36 @@ export async function attachDocumentToChecklistItem(
     return true;
   }
 
+  const { data: current, error: fetchError } = await supabase
+    .from("checklist_items")
+    .select("document_id, reviewstatus")
+    .eq("id", checklistItemId)
+    .single();
+
+  if (fetchError) {
+    console.error("[attachDocumentToChecklistItem] load checklist row failed:", fetchError);
+    return false;
+  }
+
+  const hadPreviousDocument =
+    current?.document_id != null && String(current.document_id).trim() !== "";
+
+  const patch: Record<string, unknown> = { document_id: documentId };
+
+  // Replacement after admin decision: move back to pending review (matches Checklist / Inbox UI).
+  // Without this, only document_id was persisted and reviewstatus stayed rejected/complete.
+  if (hadPreviousDocument) {
+    const r = String(current?.reviewstatus ?? "pending").toLowerCase();
+    if (r === "rejected" || r === "complete") {
+      patch.reviewstatus = "pending";
+      patch.status = "pending";
+      patch.reviewnote = null;
+    }
+  }
+
   const { error } = await supabase
     .from("checklist_items")
-    .update({ document_id: documentId })
+    .update(patch)
     .eq("id", checklistItemId)
     .select("id, document_id")
     .single();
