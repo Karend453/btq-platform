@@ -1,5 +1,4 @@
 import React from "react";
-import { toast } from "sonner";
 import {
   FileText,
   Paperclip,
@@ -21,8 +20,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../components/ui/select";
+import { toast } from "sonner";
 import type { ChecklistItem, InboxDocument } from "./TransactionInbox";
 import type { ChecklistTemplate } from "../../../services/checklistTemplates";
+import { getSignedUrl, attachDocumentToChecklistItem } from "../../../services/transactionDocuments";
 
 function formatRelativeTime(date: Date) {
   const now = new Date();
@@ -160,7 +161,7 @@ export default function Checklist({
   ).length;
   const totalCount = checklistItems.length;
 
-  const handleAttachSuggested = (item: ChecklistItem) => {
+  const handleAttachSuggested = async (item: ChecklistItem) => {
     if (!item.suggestedDocument) return;
 
     const inboxDoc = inboxDocuments.find((doc) => doc.id === item.suggestedDocument?.id);
@@ -170,6 +171,17 @@ export default function Checklist({
     const previousVersion = item.attachedDocument?.version;
     const newVersion = isReplacement ? item.attachedDocument!.version + 1 : 1;
     const previousStatus = item.reviewStatus;
+    const previousDocId = item.attachedDocument?.id;
+
+    // Persist to DB first
+    const attached = await attachDocumentToChecklistItem(inboxDoc.id, item.id);
+    if (!attached) {
+      toast.error("Failed to save attachment");
+      return;
+    }
+    if (isReplacement && previousDocId) {
+      await attachDocumentToChecklistItem(previousDocId, null);
+    }
 
     let newReviewStatus = item.reviewStatus;
     let statusAutoReset = false;
@@ -189,6 +201,7 @@ export default function Checklist({
               attachedDocument: {
                 id: inboxDoc.id,
                 filename: inboxDoc.filename,
+                storage_path: inboxDoc.storage_path,
                 version: newVersion,
                 updatedAt: new Date(),
                 previousVersion: isReplacement ? previousVersion : undefined,
@@ -259,6 +272,12 @@ export default function Checklist({
   };
 
   const hasChecklist = !!checklistTemplateId;
+
+  const handleViewAttachedDocument = async (storagePath: string) => {
+    const url = await getSignedUrl(storagePath);
+    if (url) window.open(url, "_blank");
+    else toast.error("Could not open document");
+  };
 
   console.log("Checklist debug", {
   checklistTemplateId,
@@ -379,16 +398,27 @@ export default function Checklist({
                   <div className="text-sm text-slate-600">{item.updatedAt}</div>
                   {item.attachedDocument && (
                     <div className="mt-2 space-y-1">
-                      <div className="p-2 bg-slate-100 rounded border border-slate-200">
-                        <div className="flex items-center gap-1.5 text-xs text-slate-700">
+                      <div className="p-2 bg-slate-100 rounded border border-slate-200 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 text-xs text-slate-700 min-w-0">
                           <Paperclip className="h-3 w-3 flex-shrink-0" />
                           <span className="font-medium">Attached:</span>
-                          <span className="text-slate-900 font-medium">{item.attachedDocument.filename}</span>
+                          <span className="text-slate-900 font-medium truncate">{item.attachedDocument.filename}</span>
                           <span className="text-slate-400">•</span>
                           <span>Version: {item.attachedDocument.version}</span>
                           <span className="text-slate-400">•</span>
                           <span>Last updated: {formatRelativeTime(item.attachedDocument.updatedAt)}</span>
                         </div>
+                        {item.attachedDocument.storage_path && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="flex-shrink-0 h-7 text-xs"
+                            onClick={() => handleViewAttachedDocument(item.attachedDocument!.storage_path)}
+                          >
+                            <Eye className="h-3 w-3 mr-1" />
+                            View
+                          </Button>
+                        )}
                       </div>
                       {item.attachedDocument.previousVersion &&
                         item.attachedDocument.version > 1 &&
@@ -496,7 +526,7 @@ export default function Checklist({
                     )}
                   </Button>
                 )}
-                {currentUserRole === "Admin" && !isReadOnly && onOpenReviewModal && (
+                {currentUserRole === "Admin" && !isReadOnly && onOpenReviewModal && item.attachedDocument && (
                   <Button
                     variant="outline"
                     size="sm"

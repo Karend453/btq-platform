@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import React from "react";
 import { toast } from "sonner";
-import { MessageSquare, Save, Archive, AlertTriangle } from "lucide-react";
+import { MessageSquare, Save, Archive, AlertTriangle, ExternalLink } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
 import { Label } from "../components/ui/label";
@@ -24,6 +24,8 @@ import {
   SheetTitle,
 } from "../components/ui/sheet";
 import { getTransaction, updateTransaction, type TransactionRow } from "../../services/transactions";
+import { fetchDocumentsByTransactionId, getSignedUrl } from "../../services/transactionDocuments";
+import { fetchCommentsByTransactionId, insertComment } from "../../services/checklistItemComments";
 import { getCurrentUser } from "../../services/auth";
 import {
   fetchChecklistTemplates,
@@ -49,6 +51,9 @@ type CommentShape = {
   visibility: "Internal" | "Shared";
   type?: "Comment" | "StatusChange" | "System";
   unread?: { Admin?: boolean; Agent?: boolean };
+  // Optional for structured review comments
+  pageNumber?: number;
+  locationNote?: string;
 };
 function handleSave() {
   window.location.href = "/transactions";
@@ -186,6 +191,17 @@ export default function TransactionDetailsPage() {
   const [reviewNote, setReviewNote] = useState("");
   const [waivedReason, setWaivedReason] = useState("");
   const [notifyAgent, setNotifyAgent] = useState(true);
+  // Review workspace document preview
+  const [reviewDocUrl, setReviewDocUrl] = useState<string | null>(null);
+  const [reviewDocUrlLoading, setReviewDocUrlLoading] = useState(false);
+  const [reviewDocUrlError, setReviewDocUrlError] = useState(false);
+  // Review workspace comment form
+  const [reviewCommentText, setReviewCommentText] = useState("");
+  const [reviewRejectionPage, setReviewRejectionPage] = useState<string>("");
+  const [reviewRejectionLocation, setReviewRejectionLocation] = useState("");
+  const [showRejectionLocationInputs, setShowRejectionLocationInputs] = useState(false);
+
+  const reviewCommentsEndRef = useRef<HTMLDivElement>(null);
 
   const [currentUserName, setCurrentUserName] = useState<string>("Current User");
   const currentUserRole = "Admin" as "Admin" | "Agent";
@@ -227,17 +243,18 @@ export default function TransactionDetailsPage() {
     setNotifyAgentOnComment(true);
   }
 
-  function handlePostComment() {
+  async function handlePostComment() {
     if (!commentsTargetItem || !newCommentText.trim()) {
       toast.error("Please enter a comment");
       return;
     }
+    if (!id) return;
     const comments = (commentsTargetItem.comments ?? []) as CommentShape[];
-    const newComment: CommentShape = {
-      id: `comment-${commentsTargetItem.id}-${Date.now()}`,
+    const saved = await insertComment({
+      transactionId: id,
+      checklistItemId: commentsTargetItem.id,
       authorRole: currentUserRole,
       authorName: currentUserName,
-      createdAt: new Date(),
       message: newCommentText.trim(),
       visibility: commentVisibility,
       type: "Comment",
@@ -245,8 +262,12 @@ export default function TransactionDetailsPage() {
         Admin: currentUserRole === "Agent",
         Agent: currentUserRole === "Admin" && commentVisibility === "Shared",
       },
-    };
-    const updatedComments = [...comments, newComment];
+    });
+    if (!saved) {
+      toast.error("Failed to save comment");
+      return;
+    }
+    const updatedComments = [...comments, saved];
     setChecklistItems((prev) =>
       prev.map((i) =>
         i.id === commentsTargetItem.id ? { ...i, comments: updatedComments } : i
@@ -274,17 +295,34 @@ export default function TransactionDetailsPage() {
     toast.success("Comment posted");
   }
 
-  function handleOpenReviewModal(item: ChecklistItem) {
+  async function handleOpenReviewModal(item: ChecklistItem) {
     setSelectedItem(item);
     setReviewRequirement(item.requirement);
     setReviewStatus(item.reviewStatus);
     setReviewNote("");
     setWaivedReason("");
     setNotifyAgent(true);
+    setReviewCommentText("");
+    setReviewRejectionPage("");
+    setReviewRejectionLocation("");
+    setShowRejectionLocationInputs(false);
+    setReviewDocUrl(null);
+    setReviewDocUrlError(false);
     setIsReviewModalOpen(true);
+
+    if (item.attachedDocument?.storage_path) {
+      setReviewDocUrlLoading(true);
+      const url = await getSignedUrl(item.attachedDocument.storage_path);
+      setReviewDocUrlLoading(false);
+      if (url) {
+        setReviewDocUrl(url);
+      } else {
+        setReviewDocUrlError(true);
+      }
+    }
   }
 
-  function handleSaveReview() {
+  async function handleSaveReview() {
     if (!selectedItem) return;
     if (reviewStatus === "rejected" && !reviewNote.trim()) {
       toast.error("Please provide a reason for rejection");
@@ -300,31 +338,45 @@ export default function TransactionDetailsPage() {
       );
       return;
     }
+    if (!id) return;
 
     const comments = (selectedItem.comments ?? []) as CommentShape[];
     const updatedComments = [...comments];
     if (reviewStatus === "rejected" && reviewNote.trim()) {
-      updatedComments.push({
-        id: `comment-${selectedItem.id}-${Date.now()}`,
+      const pageNum = reviewRejectionPage.trim() ? parseInt(reviewRejectionPage, 10) : undefined;
+      const saved = await insertComment({
+        transactionId: id,
+        checklistItemId: selectedItem.id,
         authorRole: "Admin",
         authorName: currentUserName,
-        createdAt: new Date(),
-        message: `Rejected: ${reviewNote.trim()}`,
+        message: reviewNote.trim(),
         visibility: "Shared",
         type: "StatusChange",
+        pageNumber: pageNum !== undefined && !Number.isNaN(pageNum) ? pageNum : undefined,
+        locationNote: reviewRejectionLocation.trim() || undefined,
         unread: { Agent: true },
       });
+      if (!saved) {
+        toast.error("Failed to save comment");
+        return;
+      }
+      updatedComments.push(saved);
     } else if (reviewStatus === "waived" && waivedReason.trim()) {
-      updatedComments.push({
-        id: `comment-${selectedItem.id}-${Date.now()}`,
+      const saved = await insertComment({
+        transactionId: id,
+        checklistItemId: selectedItem.id,
         authorRole: "Admin",
         authorName: currentUserName,
-        createdAt: new Date(),
         message: `Waived: ${waivedReason.trim()}`,
         visibility: "Shared",
         type: "StatusChange",
         unread: { Agent: true },
       });
+      if (!saved) {
+        toast.error("Failed to save comment");
+        return;
+      }
+      updatedComments.push(saved);
     }
 
     setChecklistItems((prev) =>
@@ -416,6 +468,66 @@ export default function TransactionDetailsPage() {
     toast.success("Review saved successfully");
     setIsReviewModalOpen(false);
     setSelectedItem(null);
+    setReviewDocUrl(null);
+  }
+
+  async function handlePostReviewComment() {
+    if (!selectedItem || !reviewCommentText.trim()) {
+      toast.error("Please enter a comment");
+      return;
+    }
+    if (!id) return;
+    const comments = (selectedItem.comments ?? []) as CommentShape[];
+    const saved = await insertComment({
+      transactionId: id,
+      checklistItemId: selectedItem.id,
+      authorRole: currentUserRole,
+      authorName: currentUserName,
+      message: reviewCommentText.trim(),
+      visibility: "Shared",
+      type: "Comment",
+      unread: {
+        Admin: currentUserRole === "Agent",
+        Agent: currentUserRole === "Admin",
+      },
+    });
+    if (!saved) {
+      toast.error("Failed to save comment");
+      return;
+    }
+    const updatedComments = [...comments, saved];
+    setChecklistItems((prev) =>
+      prev.map((i) =>
+        i.id === selectedItem.id ? { ...i, comments: updatedComments } : i
+      )
+    );
+    setSelectedItem({ ...selectedItem, comments: updatedComments });
+    if (commentsTargetItem?.id === selectedItem.id) {
+      setCommentsTargetItem({ ...selectedItem, comments: updatedComments });
+    }
+    addActivityEntry({
+      actor: currentUserRole,
+      category: "docs",
+      type: "COMMENT_ADDED",
+      message: `${currentUserRole} added a comment on "${selectedItem.name}"`,
+      meta: { checklistItem: selectedItem.name },
+    });
+    setReviewCommentText("");
+    toast.success("Comment posted");
+    setTimeout(() => reviewCommentsEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+  }
+
+  function handleOpenReviewDocInNewTab() {
+    if (reviewDocUrl) {
+      window.open(reviewDocUrl, "_blank");
+    } else if (selectedItem?.attachedDocument?.storage_path) {
+      getSignedUrl(selectedItem.attachedDocument.storage_path).then((url) => {
+        if (url) window.open(url, "_blank");
+        else toast.error("Could not open document");
+      });
+    } else {
+      toast.error("No document to open");
+    }
   }
 
   function handleEdit() {
@@ -459,6 +571,17 @@ export default function TransactionDetailsPage() {
   }, [id]);
 
   useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    async function loadDocuments() {
+      const docs = await fetchDocumentsByTransactionId(id);
+      if (!cancelled) setInboxDocuments(docs);
+    }
+    loadDocuments();
+    return () => { cancelled = true; };
+  }, [id]);
+
+  useEffect(() => {
     let cancelled = false;
     getCurrentUser().then((user) => {
       if (!cancelled) {
@@ -490,19 +613,42 @@ export default function TransactionDetailsPage() {
   }, []);
 
   useEffect(() => {
-    if (!checklistTemplateId) {
-      setChecklistItems([]);
+    if (!checklistTemplateId || !id) {
+      if (!checklistTemplateId) setChecklistItems([]);
       return;
     }
     const templateId = checklistTemplateId;
+    const transactionId = id;
     let cancelled = false;
     async function loadChecklist() {
-      const items = await fetchChecklistItemsByTemplateId(templateId);
-      if (!cancelled) setChecklistItems(items);
+      const [items, commentsByItem] = await Promise.all([
+        fetchChecklistItemsByTemplateId(templateId),
+        fetchCommentsByTransactionId(transactionId),
+      ]);
+      if (!cancelled) {
+        const merged = items.map((item) => {
+          const attached = inboxDocuments.find((d) => d.attachedToItemId === item.id);
+          const itemComments = commentsByItem.get(item.id) ?? [];
+          return {
+            ...item,
+            attachedDocument: attached
+              ? {
+                  id: attached.id,
+                  filename: attached.filename,
+                  storage_path: attached.storage_path,
+                  version: 1,
+                  updatedAt: attached.receivedAt,
+                }
+              : undefined,
+            comments: itemComments,
+          };
+        });
+        setChecklistItems(merged);
+      }
     }
     loadChecklist();
     return () => { cancelled = true; };
-  }, [checklistTemplateId]);
+  }, [checklistTemplateId, inboxDocuments, id]);
 
   async function handleCopy(text?: string | null) {
     if (!text) return;
@@ -714,211 +860,338 @@ export default function TransactionDetailsPage() {
           onActivityFilterChange={setActivityFilter}
         />
 
-        {/* Admin Review Modal */}
-        <Dialog open={isReviewModalOpen} onOpenChange={setIsReviewModalOpen}>
-          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>Review Document</DialogTitle>
-              <DialogDescription>
-                Review and update the status of &quot;{selectedItem?.name}&quot;
-              </DialogDescription>
+        {/* Admin Review Workspace — split-view document + comments */}
+        <Dialog
+          open={isReviewModalOpen}
+          onOpenChange={(open) => {
+            setIsReviewModalOpen(open);
+            if (!open) {
+              setSelectedItem(null);
+              setReviewDocUrl(null);
+            }
+          }}
+        >
+          <DialogContent
+            fullScreen
+            overlayClassName="z-[9998]"
+            className="w-screen h-screen max-w-none max-h-none rounded-none border-0 p-0 m-0 flex flex-col overflow-hidden z-[9999] bg-white [&>button:last-child]:hidden"
+          >
+            <DialogHeader className="flex-shrink-0 flex flex-row items-center justify-between px-4 py-3 border-b border-slate-200 bg-white">
+              <div>
+                <DialogTitle>Review Document — {selectedItem?.name}</DialogTitle>
+                <DialogDescription>
+                  Document preview and comments side by side
+                </DialogDescription>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsReviewModalOpen(false)}
+                className="flex-shrink-0 font-medium ring-1 ring-slate-300"
+              >
+                Close
+              </Button>
             </DialogHeader>
 
             {selectedItem && (
-              <div className="space-y-6 py-4">
-                <div>
-                  <Label className="text-sm font-medium text-slate-700">Document Name</Label>
-                  <div className="mt-1.5 text-lg font-semibold text-slate-900">{selectedItem.name}</div>
-                </div>
-
-                <div>
-                  <Label className="text-sm font-medium text-slate-700 mb-2 block">Requirement Level</Label>
-                  <div className="flex gap-3">
-                    <button
-                      onClick={() => setReviewRequirement("required")}
-                      className={`flex-1 px-4 py-3 rounded-lg border-2 text-sm font-medium transition-all ${
-                        reviewRequirement === "required"
-                          ? "border-blue-600 bg-blue-50 text-blue-900"
-                          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
-                      }`}
+              <div className="flex-1 flex min-h-0">
+                {/* Left: Document preview — 65% */}
+                <div className="w-[65%] h-full overflow-y-auto flex flex-col flex-shrink-0 border-r-2 border-slate-300 bg-slate-100">
+                  <div className="flex-shrink-0 flex items-center justify-between px-4 py-2 bg-white border-b border-slate-200">
+                    <span className="text-sm font-medium text-slate-700 truncate">
+                      {selectedItem.attachedDocument?.filename ?? "Document"}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleOpenReviewDocInNewTab}
+                      className="flex-shrink-0"
                     >
-                      <div className="font-semibold">Required</div>
-                      <div className="text-xs mt-1 opacity-70">Must be provided</div>
-                    </button>
-                    <button
-                      onClick={() => setReviewRequirement("optional")}
-                      className={`flex-1 px-4 py-3 rounded-lg border-2 text-sm font-medium transition-all ${
-                        reviewRequirement === "optional"
-                          ? "border-slate-600 bg-slate-50 text-slate-900"
-                          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
-                      }`}
-                    >
-                      <div className="font-semibold">Optional</div>
-                      <div className="text-xs mt-1 opacity-70">Nice to have</div>
-                    </button>
+                      <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+                      Open in new tab
+                    </Button>
+                  </div>
+                  <div className="flex-1 min-h-0 overflow-auto p-4">
+                    {reviewDocUrlLoading && (
+                      <div className="flex items-center justify-center h-full text-slate-500">
+                        Loading document…
+                      </div>
+                    )}
+                    {reviewDocUrlError && (
+                      <div className="flex flex-col items-center justify-center h-full gap-3 text-slate-600">
+                        <AlertTriangle className="h-12 w-12 text-amber-500" />
+                        <p>Could not load document preview.</p>
+                        <Button variant="outline" onClick={handleOpenReviewDocInNewTab}>
+                          <ExternalLink className="h-4 w-4 mr-2" />
+                          Open in new tab
+                        </Button>
+                      </div>
+                    )}
+                    {reviewDocUrl && !reviewDocUrlLoading && !reviewDocUrlError && (
+                      <div className="bg-white rounded-lg shadow-sm overflow-hidden h-full min-h-[400px]">
+                        {selectedItem.attachedDocument?.filename?.toLowerCase().endsWith(".pdf") ? (
+                          <iframe
+                            src={reviewDocUrl}
+                            title={selectedItem.attachedDocument?.filename ?? "Document"}
+                            className="w-full h-full border-0"
+                          />
+                        ) : /\.(jpg|jpeg|png|gif|webp)$/i.test(selectedItem.attachedDocument?.filename ?? "") ? (
+                          <img
+                            src={reviewDocUrl}
+                            alt={selectedItem.attachedDocument?.filename ?? "Document"}
+                            className="max-w-full h-auto object-contain"
+                          />
+                        ) : (
+                          <div className="flex flex-col items-center justify-center h-full gap-3 p-8 text-slate-600">
+                            <p>Preview not available for this file type.</p>
+                            <Button variant="outline" onClick={handleOpenReviewDocInNewTab}>
+                              <ExternalLink className="h-4 w-4 mr-2" />
+                              Open in new tab
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {!selectedItem.attachedDocument && (
+                      <div className="flex items-center justify-center h-full text-slate-500">
+                        No document attached
+                      </div>
+                    )}
                   </div>
                 </div>
 
-                <div>
-                  <Label className="text-sm font-medium text-slate-700 mb-2 block">Review Status</Label>
-                  {!selectedItem.attachedDocument && (
-                    <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-2">
-                      <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
-                      <p className="text-xs text-amber-800">
-                        <strong>No attachment:</strong> This item cannot be marked as &quot;Pending Review&quot; or
-                        &quot;Complete&quot; without an attached document. Please attach a document first or mark as
-                        &quot;Waived&quot;.
-                      </p>
-                    </div>
-                  )}
-                  <div className="grid grid-cols-2 gap-3">
-                    <button
-                      onClick={() => {
-                        if (!selectedItem.attachedDocument) {
-                          toast.error("Cannot set to Pending Review without an attachment");
-                          return;
-                        }
-                        setReviewStatus("pending");
-                        setNotifyAgent(false);
-                      }}
-                      disabled={!selectedItem.attachedDocument}
-                      className={`px-4 py-3 rounded-lg border-2 text-sm font-medium transition-all ${
-                        reviewStatus === "pending"
-                          ? "border-amber-600 bg-amber-50 text-amber-900"
-                          : !selectedItem.attachedDocument
-                            ? "border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed"
-                            : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
-                      }`}
-                    >
-                      Pending Review
-                    </button>
-                    <button
-                      onClick={() => {
-                        if (!selectedItem.attachedDocument) {
-                          toast.error("Cannot mark as Complete without an attachment");
-                          return;
-                        }
-                        setReviewStatus("complete");
-                        setNotifyAgent(false);
-                      }}
-                      disabled={!selectedItem.attachedDocument}
-                      className={`px-4 py-3 rounded-lg border-2 text-sm font-medium transition-all ${
-                        reviewStatus === "complete"
-                          ? "border-emerald-600 bg-emerald-50 text-emerald-900"
-                          : !selectedItem.attachedDocument
-                            ? "border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed"
-                            : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
-                      }`}
-                    >
-                      Complete
-                    </button>
-                    <button
-                      onClick={() => {
-                        setReviewStatus("rejected");
-                        setNotifyAgent(true);
-                      }}
-                      className={`px-4 py-3 rounded-lg border-2 text-sm font-medium transition-all ${
-                        reviewStatus === "rejected"
-                          ? "border-red-600 bg-red-50 text-red-900"
-                          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
-                      }`}
-                    >
-                      Rejected
-                    </button>
-                    <button
-                      onClick={() => {
-                        setReviewStatus("waived");
-                        setNotifyAgent(false);
-                      }}
-                      className={`px-4 py-3 rounded-lg border-2 text-sm font-medium transition-all ${
-                        reviewStatus === "waived"
-                          ? "border-slate-600 bg-slate-50 text-slate-900"
-                          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
-                      }`}
-                    >
-                      Waived / Not Required
-                    </button>
-                  </div>
-                </div>
-
-                {reviewStatus === "rejected" && (
-                  <div>
-                    <Label htmlFor="reviewNote" className="text-sm font-medium text-slate-700">
-                      Rejection Reason <span className="text-red-600">*</span>
-                    </Label>
-                    <Textarea
-                      id="reviewNote"
-                      placeholder="Explain what needs to be fixed..."
-                      value={reviewNote}
-                      onChange={(e) => setReviewNote(e.target.value)}
-                      className="mt-1.5 min-h-[100px]"
-                    />
-                  </div>
-                )}
-
-                {reviewStatus === "waived" && (
-                  <div>
-                    <Label htmlFor="waivedReason" className="text-sm font-medium text-slate-700">
-                      Waived Reason <span className="text-red-600">*</span>
-                    </Label>
-                    <Input
-                      id="waivedReason"
-                      placeholder="e.g., Property is not in an HOA"
-                      value={waivedReason}
-                      onChange={(e) => setWaivedReason(e.target.value)}
-                      className="mt-1.5"
-                    />
-                  </div>
-                )}
-
-                {reviewStatus === "rejected" && (
-                  <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-lg">
-                    <Checkbox
-                      id="notifyAgent"
-                      checked={notifyAgent}
-                      onCheckedChange={(checked) => setNotifyAgent(checked === true)}
-                      className="mt-0.5"
-                    />
-                    <div className="flex-1">
-                      <label htmlFor="notifyAgent" className="text-sm font-medium text-slate-900 cursor-pointer">
-                        Notify Agent
-                      </label>
-                      <p className="text-xs text-slate-600 mt-1">
-                        Send notification to the assigned agent about this rejection
-                      </p>
-                    </div>
-                  </div>
-                )}
-
-                {(() => {
-                  const statusChangeComments = (selectedItem.comments as CommentShape[]).filter(
-                    (c) => c.type === "StatusChange"
-                  );
-                  return statusChangeComments.length > 0 ? (
+                {/* Right: Status + Comments — 35% */}
+                <div className="w-[35%] h-full overflow-y-auto flex-shrink-0 flex flex-col border-l border-[#e5e7eb] bg-white">
+                  <div className="p-4 space-y-4 border-b border-slate-200">
                     <div>
-                      <Label className="text-sm font-medium text-slate-700 mb-2 block">Previous Status Changes</Label>
-                      <div className="space-y-2 max-h-[200px] overflow-y-auto">
-                        {statusChangeComments.map((comment) => (
-                          <div key={comment.id} className="p-3 bg-slate-50 rounded-lg border border-slate-200">
-                            <div className="flex items-center gap-2 text-xs text-slate-600 mb-1">
-                              <span className="font-medium">{comment.authorName}</span>
+                      <Label className="text-sm font-medium text-slate-700 mb-2 block">Requirement</Label>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setReviewRequirement("required")}
+                          className={`flex-1 px-3 py-2 rounded-lg border-2 text-sm font-medium ${
+                            reviewRequirement === "required"
+                              ? "border-blue-600 bg-blue-50 text-blue-900"
+                              : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                          }`}
+                        >
+                          Required
+                        </button>
+                        <button
+                          onClick={() => setReviewRequirement("optional")}
+                          className={`flex-1 px-3 py-2 rounded-lg border-2 text-sm font-medium ${
+                            reviewRequirement === "optional"
+                              ? "border-slate-600 bg-slate-50 text-slate-900"
+                              : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                          }`}
+                        >
+                          Optional
+                        </button>
+                      </div>
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <Label className="text-sm font-medium text-slate-700">Status</Label>
+                        <span className="text-xs font-medium text-slate-500">
+                          Current: <span className="text-slate-700 capitalize">{reviewStatus}</span>
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          onClick={() => { setReviewStatus("pending"); setNotifyAgent(false); }}
+                          disabled={!selectedItem.attachedDocument}
+                          className={`px-3 py-2 rounded-lg border-2 text-sm font-medium ${
+                            reviewStatus === "pending"
+                              ? "border-amber-600 bg-amber-50 text-amber-900"
+                              : !selectedItem.attachedDocument
+                                ? "border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed"
+                                : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                          }`}
+                        >
+                          Pending
+                        </button>
+                        <button
+                          onClick={() => {
+                            setReviewStatus("complete");
+                            setNotifyAgent(false);
+                            toast.success("Status set to Complete");
+                          }}
+                          disabled={!selectedItem.attachedDocument}
+                          className={`px-3 py-2 rounded-lg border-2 text-sm font-medium ${
+                            reviewStatus === "complete"
+                              ? "border-emerald-600 bg-emerald-50 text-emerald-900"
+                              : !selectedItem.attachedDocument
+                                ? "border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed"
+                                : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                          }`}
+                        >
+                          Complete
+                        </button>
+                        <button
+                          onClick={() => { setReviewStatus("rejected"); setNotifyAgent(true); }}
+                          className={`px-3 py-2 rounded-lg border-2 text-sm font-medium ${
+                            reviewStatus === "rejected"
+                              ? "border-red-600 bg-red-50 text-red-900"
+                              : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                          }`}
+                        >
+                          Rejected
+                        </button>
+                        <button
+                          onClick={() => { setReviewStatus("waived"); setNotifyAgent(false); }}
+                          className={`px-3 py-2 rounded-lg border-2 text-sm font-medium ${
+                            reviewStatus === "waived"
+                              ? "border-slate-600 bg-slate-50 text-slate-900"
+                              : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                          }`}
+                        >
+                          Waived
+                        </button>
+                      </div>
+                    </div>
+                    {reviewStatus === "rejected" && (
+                      <div>
+                        <Label htmlFor="reviewNote" className="text-sm font-medium text-slate-700">
+                          Rejection Reason <span className="text-red-600">*</span>
+                        </Label>
+                        <Textarea
+                          id="reviewNote"
+                          placeholder="Explain what needs to be fixed..."
+                          value={reviewNote}
+                          onChange={(e) => setReviewNote(e.target.value)}
+                          className="mt-1.5 min-h-[80px]"
+                        />
+                        {!showRejectionLocationInputs ? (
+                          <button
+                            type="button"
+                            onClick={() => setShowRejectionLocationInputs(true)}
+                            className="mt-2 text-xs text-slate-500 hover:text-slate-700 underline underline-offset-2"
+                          >
+                            Add location (optional)
+                          </button>
+                        ) : (
+                          <div className="grid grid-cols-2 gap-2 mt-2">
+                            <div>
+                              <Label htmlFor="reviewRejectionPage" className="text-xs text-slate-500">
+                                Page (optional)
+                              </Label>
+                              <Input
+                                id="reviewRejectionPage"
+                                type="number"
+                                min={1}
+                                placeholder="e.g. 3"
+                                value={reviewRejectionPage}
+                                onChange={(e) => setReviewRejectionPage(e.target.value)}
+                                className="mt-0.5 h-8"
+                              />
+                            </div>
+                            <div>
+                              <Label htmlFor="reviewRejectionLocation" className="text-xs text-slate-500">
+                                Location (optional)
+                              </Label>
+                              <Input
+                                id="reviewRejectionLocation"
+                                placeholder="e.g. Section 3.2"
+                                value={reviewRejectionLocation}
+                                onChange={(e) => setReviewRejectionLocation(e.target.value)}
+                                className="mt-0.5 h-8"
+                              />
+                            </div>
+                          </div>
+                        )}
+                        <div className="flex items-start gap-2 mt-2">
+                          <Checkbox
+                            id="notifyAgent"
+                            checked={notifyAgent}
+                            onCheckedChange={(checked) => setNotifyAgent(checked === true)}
+                          />
+                          <label htmlFor="notifyAgent" className="text-sm text-slate-700 cursor-pointer">
+                            Notify Agent
+                          </label>
+                        </div>
+                      </div>
+                    )}
+                    {reviewStatus === "waived" && (
+                      <div>
+                        <Label htmlFor="waivedReason" className="text-sm font-medium text-slate-700">
+                          Waived Reason <span className="text-red-600">*</span>
+                        </Label>
+                        <Input
+                          id="waivedReason"
+                          placeholder="e.g., Property is not in an HOA"
+                          value={waivedReason}
+                          onChange={(e) => setWaivedReason(e.target.value)}
+                          className="mt-1.5"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Comments thread */}
+                  <div className="flex-1 p-5 space-y-4 min-h-0 overflow-y-auto">
+                    <Label className="text-sm font-medium text-slate-700">Comments</Label>
+                    <div className="space-y-4">
+                      {(selectedItem.comments?.length ?? 0) === 0 && (
+                        <p className="text-sm text-slate-500 py-2">No comments yet.</p>
+                      )}
+                      {((selectedItem.comments ?? []) as CommentShape[])
+                        .filter((c) => currentUserRole === "Admin" || c.visibility === "Shared")
+                        .map((comment) => (
+                          <div
+                            key={comment.id}
+                            className="p-4 bg-white rounded-lg border border-slate-200 shadow-sm hover:border-slate-300 transition-colors"
+                          >
+                            {(comment.pageNumber ?? comment.locationNote) && (
+                              <div className="flex flex-wrap gap-1.5 mb-2">
+                                {comment.pageNumber && (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                                    Page {comment.pageNumber}
+                                  </span>
+                                )}
+                                {comment.locationNote && (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-700">
+                                    {comment.locationNote}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600 mb-2">
+                              <span className="font-medium text-slate-800">{comment.authorName}</span>
                               <Badge className="bg-slate-600 text-white border-0 text-xs h-4 px-1.5">
                                 {comment.authorRole}
                               </Badge>
-                              <span className="text-slate-400">•</span>
-                              <span>{formatRelativeTime(comment.createdAt)}</span>
+                              <span className="text-slate-400">{formatRelativeTime(comment.createdAt)}</span>
                             </div>
-                            <p className="text-sm text-slate-900">{comment.message}</p>
+                            <p className="text-sm text-slate-900 leading-relaxed">{comment.message}</p>
                           </div>
                         ))}
-                      </div>
+                      <div ref={reviewCommentsEndRef} />
                     </div>
-                  ) : null;
-                })()}
+
+                    {/* Add comment form */}
+                    <div className="mt-6 p-4 rounded-lg border-2 border-dashed border-slate-200 bg-slate-50 space-y-3">
+                      <Label className="text-sm font-medium text-slate-700">Add comment</Label>
+                      <Textarea
+                        placeholder="Type your comment..."
+                        value={reviewCommentText}
+                        onChange={(e) => setReviewCommentText(e.target.value)}
+                        rows={3}
+                        className="resize-none"
+                      />
+                      <Button
+                        onClick={handlePostReviewComment}
+                        disabled={!reviewCommentText.trim()}
+                        className="w-full"
+                      >
+                        <MessageSquare className="h-4 w-4 mr-2" />
+                        Post Comment
+                      </Button>
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
 
-            <DialogFooter>
+            <div className="flex-shrink-0 flex justify-end gap-2 px-4 py-3 border-t border-slate-200 bg-slate-50">
               <Button variant="outline" onClick={() => setIsReviewModalOpen(false)}>
                 Cancel
               </Button>
@@ -926,7 +1199,7 @@ export default function TransactionDetailsPage() {
                 <Save className="h-4 w-4 mr-2" />
                 Save Review
               </Button>
-            </DialogFooter>
+            </div>
           </DialogContent>
         </Dialog>
 

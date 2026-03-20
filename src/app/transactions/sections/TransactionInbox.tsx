@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import {
   FileText,
@@ -7,6 +7,8 @@ import {
   Search,
   X,
   Filter,
+  Upload,
+  Eye,
 } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
@@ -28,10 +30,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../components/ui/select";
+import { uploadDocument, getSignedUrl, attachDocumentToChecklistItem } from "../../../services/transactionDocuments";
 
 export interface InboxDocument {
   id: string;
   filename: string;
+  storage_path: string;
   receivedAt: Date;
   isAttached: boolean;
   attachedToItemId?: string;
@@ -52,6 +56,7 @@ export interface ChecklistItem {
   attachedDocument?: {
     id: string;
     filename: string;
+    storage_path: string;
     version: number;
     updatedAt: Date;
     previousVersion?: number;
@@ -104,7 +109,7 @@ function formatRelativeTime(date: Date) {
 }
 
 export default function TransactionInbox({
-  transactionId: _transactionId,
+  transactionId,
   inboxDocuments,
   onInboxDocumentsChange,
   checklistItems,
@@ -121,6 +126,8 @@ export default function TransactionInbox({
   const [selectedDocumentForAttach, setSelectedDocumentForAttach] = useState<string | null>(null);
   const [inboxFilter, setInboxFilter] = useState<InboxFilter>("all");
   const [inboxSearchQuery, setInboxSearchQuery] = useState("");
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isControlled = controlledAttachDrawerOpen !== undefined && onAttachDrawerOpenChange !== undefined;
   const isAttachDrawerOpen = isControlled ? controlledAttachDrawerOpen : internalAttachDrawerOpen;
@@ -158,7 +165,7 @@ export default function TransactionInbox({
     setAttachDrawerOpen(true);
   };
 
-  const handleAttachDocument = () => {
+  const handleAttachDocument = async () => {
     if (!selectedDocumentForAttach) {
       toast.error("Please select a document to attach");
       return;
@@ -176,6 +183,20 @@ export default function TransactionInbox({
     const previousVersion = attachTargetItem.attachedDocument?.version;
     const newVersion = isReplacement ? attachTargetItem.attachedDocument!.version + 1 : 1;
     const previousStatus = attachTargetItem.reviewStatus;
+    const previousDocId = attachTargetItem.attachedDocument?.id;
+
+    // [DEBUG] Attach flow
+    console.log("[handleAttachDocument] document id:", inboxDoc.id, "selected checklist item id:", attachTargetItem.id);
+
+    // Persist to DB first
+    const attached = await attachDocumentToChecklistItem(inboxDoc.id, attachTargetItem.id);
+    if (!attached) {
+      toast.error("Failed to save attachment");
+      return;
+    }
+    if (isReplacement && previousDocId) {
+      await attachDocumentToChecklistItem(previousDocId, null);
+    }
 
     let newReviewStatus = attachTargetItem.reviewStatus;
     let statusAutoReset = false;
@@ -195,6 +216,7 @@ export default function TransactionInbox({
               attachedDocument: {
                 id: inboxDoc.id,
                 filename: inboxDoc.filename,
+                storage_path: inboxDoc.storage_path,
                 version: newVersion,
                 updatedAt: new Date(),
                 previousVersion: isReplacement ? previousVersion : undefined,
@@ -271,9 +293,41 @@ export default function TransactionInbox({
     setSelectedDocumentForAttach(null);
   };
 
+  const handleUploadFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    // [DEBUG] Temporary logging to trace 400 error
+    console.log("[handleUploadFile] transactionId:", transactionId);
+    console.log("[handleUploadFile] file:", file?.name ?? "(no file)");
+    if (!file || !transactionId) return;
+
+    setIsUploading(true);
+    try {
+      const doc = await uploadDocument(transactionId, file);
+      if (doc) {
+        onInboxDocumentsChange([doc, ...inboxDocuments]);
+        toast.success(`Uploaded "${file.name}"`);
+      } else {
+        toast.error("Upload failed");
+      }
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   const unattachedDocuments = inboxDocuments.filter((doc) => !doc.isAttached);
   const unattachedCount = unattachedDocuments.length;
   const previewInboxDocs = unattachedDocuments.slice(0, 3);
+
+  const handleViewDocument = async (doc: InboxDocument) => {
+    if (!doc.storage_path) {
+      toast.error("Document path not available");
+      return;
+    }
+    const url = await getSignedUrl(doc.storage_path);
+    if (url) window.open(url, "_blank");
+    else toast.error("Could not open document");
+  };
 
   const getFilteredInboxDocuments = () => {
     let filtered = inboxDocuments;
@@ -312,6 +366,22 @@ export default function TransactionInbox({
               </Badge>
             </div>
             <div className="flex gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif"
+                onChange={handleUploadFile}
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!transactionId || isUploading}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Upload className="h-4 w-4 mr-2" />
+                {isUploading ? "Uploading…" : "Upload"}
+              </Button>
               <Button
                 variant="outline"
                 size="sm"
@@ -359,6 +429,14 @@ export default function TransactionInbox({
                     <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200 text-xs">
                       Unattached
                     </Badge>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleViewDocument(doc)}
+                    >
+                      <Eye className="h-3 w-3 mr-1.5" />
+                      View
+                    </Button>
                     <Button
                       variant="outline"
                       size="sm"
@@ -465,7 +543,7 @@ export default function TransactionInbox({
                   Attach to checklist item
                 </Label>
                 <Select
-                  value={attachTargetItem?.id}
+                  value=""
                   onValueChange={(value) => {
                     const item = checklistItems.find((i) => i.id === value);
                     setAttachTargetItem(item || null);
@@ -510,16 +588,18 @@ export default function TransactionInbox({
                   </div>
                 ) : (
                   filteredInboxDocuments.map((doc) => (
-                    <button
+                    <div
                       key={doc.id}
-                      onClick={() => setSelectedDocumentForAttach(doc.id)}
-                      className={`w-full text-left p-3 rounded-lg border-2 transition-all ${
+                      className={`w-full p-3 rounded-lg border-2 transition-all flex items-start gap-3 ${
                         selectedDocumentForAttach === doc.id
                           ? "border-blue-600 bg-blue-50"
                           : "border-slate-200 bg-white hover:border-slate-300"
                       }`}
                     >
-                      <div className="flex items-start gap-3">
+                      <button
+                        onClick={() => setSelectedDocumentForAttach(doc.id)}
+                        className="flex-1 min-w-0 text-left flex items-start gap-3"
+                      >
                         <FileText
                           className={`h-5 w-5 flex-shrink-0 ${
                             selectedDocumentForAttach === doc.id
@@ -546,8 +626,19 @@ export default function TransactionInbox({
                             </Badge>
                           )}
                         </div>
-                      </div>
-                    </button>
+                      </button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleViewDocument(doc);
+                        }}
+                      >
+                        <Eye className="h-3 w-3 mr-1.5" />
+                        View
+                      </Button>
+                    </div>
                   ))
                 )}
               </div>
