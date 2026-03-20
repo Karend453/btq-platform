@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import {
   FileText,
   Paperclip,
@@ -24,6 +24,15 @@ import { toast } from "sonner";
 import type { ChecklistItem, InboxDocument } from "./TransactionInbox";
 import type { ChecklistTemplate } from "../../../services/checklistTemplates";
 import { getSignedUrl, attachDocumentToChecklistItem } from "../../../services/transactionDocuments";
+import {
+  getDocumentState,
+  getTransactionClosingReadiness,
+} from "../../../lib/documents/documentEngine";
+import {
+  checklistItemToEngineDocument,
+  buildEngineUser,
+} from "../../../lib/documents/adapter";
+import type { DocumentStatus } from "../../../lib/documents/types";
 
 function formatRelativeTime(date: Date) {
   const now = new Date();
@@ -41,17 +50,18 @@ function formatRelativeTime(date: Date) {
   }
 }
 
-function getChecklistIcon(reviewStatus: string) {
-  switch (reviewStatus) {
-    case "complete":
+function getChecklistIcon(status: DocumentStatus, waived?: boolean) {
+  if (waived) return <CheckCircle2 className="h-5 w-5 text-slate-400" />;
+  switch (status) {
+    case "ACCEPTED":
       return <CheckCircle2 className="h-5 w-5 text-emerald-600" />;
-    case "rejected":
+    case "REJECTED":
       return <XCircle className="h-5 w-5 text-red-600" />;
-    case "waived":
-      return <XCircle className="h-5 w-5 text-slate-400" />;
-    case "pending":
-    default:
+    case "SUBMITTED":
       return <Clock className="h-5 w-5 text-amber-600" />;
+    case "NOT_SUBMITTED":
+    default:
+      return <Clock className="h-5 w-5 text-slate-400" />;
   }
 }
 
@@ -67,30 +77,37 @@ function getRequirementBadge(requirement: string) {
   );
 }
 
-function getReviewStatusBadge(reviewStatus: string) {
-  switch (reviewStatus) {
-    case "complete":
+function getReviewStatusBadge(status: DocumentStatus, waived?: boolean) {
+  if (waived) {
+    return (
+      <Badge className="bg-slate-50 text-slate-700 border-slate-300 border">
+        Waived / Not Required
+      </Badge>
+    );
+  }
+  switch (status) {
+    case "ACCEPTED":
       return (
         <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 border">
           Complete
         </Badge>
       );
-    case "rejected":
+    case "REJECTED":
       return (
         <Badge className="bg-red-50 text-red-700 border-red-200 border">
           Rejected
         </Badge>
       );
-    case "pending":
+    case "SUBMITTED":
       return (
         <Badge className="bg-amber-50 text-amber-700 border-amber-200 border">
           Pending Review
         </Badge>
       );
-    case "waived":
+    case "NOT_SUBMITTED":
       return (
-        <Badge className="bg-slate-50 text-slate-700 border-slate-300 border">
-          Waived / Not Required
+        <Badge className="bg-slate-50 text-slate-600 border-slate-300 border">
+          Not Submitted
         </Badge>
       );
     default:
@@ -115,6 +132,14 @@ function hasUnreadComments(
   });
 }
 
+export type TransactionContextForChecklist = {
+  id: string;
+  officeId: string;
+  agentUserId?: string | null;
+  assignedAdminUserId?: string | null;
+  closingDate?: string | null;
+};
+
 export type ChecklistProps = {
   checklistTemplateId: string | null;
   checklistTemplates: ChecklistTemplate[];
@@ -125,6 +150,8 @@ export type ChecklistProps = {
   onChecklistItemsChange: (items: ChecklistItem[]) => void;
   inboxDocuments: InboxDocument[];
   onInboxDocumentsChange: (docs: InboxDocument[]) => void;
+  transactionContext?: TransactionContextForChecklist | null;
+  currentUserId?: string;
   currentUserRole?: "Admin" | "Agent";
   isReadOnly?: boolean;
   addActivityEntry?: (entry: {
@@ -133,6 +160,8 @@ export type ChecklistProps = {
     type: string;
     message: string;
     meta?: Record<string, unknown>;
+    documentId?: string | null;
+    checklistItemId?: string | null;
   }) => void;
   onOpenAttachDrawer?: (item?: ChecklistItem) => void;
   onOpenComments?: (item: ChecklistItem) => void;
@@ -149,6 +178,8 @@ export default function Checklist({
   onChecklistItemsChange,
   inboxDocuments,
   onInboxDocumentsChange,
+  transactionContext,
+  currentUserId = "",
   currentUserRole = "Admin",
   isReadOnly = false,
   addActivityEntry,
@@ -156,9 +187,94 @@ export default function Checklist({
   onOpenComments,
   onOpenReviewModal,
 }: ChecklistProps) {
-  const completedCount = checklistItems.filter(
-    (item) => item.reviewStatus === "complete"
-  ).length;
+  const engineUser = buildEngineUser({
+    id: currentUserId,
+    roles: [currentUserRole === "Admin" ? "ADMIN" : "AGENT"],
+    officeIds: transactionContext ? [transactionContext.officeId ?? ""] : [],
+  });
+  const engineTxn = transactionContext
+    ? {
+        id: transactionContext.id,
+        officeId: transactionContext.officeId,
+        agentUserId: transactionContext.agentUserId ?? null,
+        assignedAdminUserId: transactionContext.assignedAdminUserId ?? null,
+        closingDate: transactionContext.closingDate ?? null,
+      }
+    : null;
+
+  const AUDIT_TX = "133d5fd0-6298-4e57-822e-345ad812a0f1";
+  useEffect(() => {
+    if (!transactionContext || transactionContext.id !== AUDIT_TX || checklistItems.length === 0) return;
+    const target =
+      checklistItems.find(
+        (i) =>
+          (i.documentId || i.attachedDocument) &&
+          (i.reviewStatus === "pending" || i.reviewStatus === "rejected")
+      ) ?? checklistItems[0];
+    const eu = buildEngineUser({
+      id: currentUserId,
+      roles: [currentUserRole === "Admin" ? "ADMIN" : "AGENT"],
+      officeIds: transactionContext ? [transactionContext.officeId ?? ""] : [],
+    });
+    const et = transactionContext
+      ? {
+          id: transactionContext.id,
+          officeId: transactionContext.officeId,
+          agentUserId: transactionContext.agentUserId ?? null,
+          assignedAdminUserId: transactionContext.assignedAdminUserId ?? null,
+          closingDate: transactionContext.closingDate ?? null,
+        }
+      : null;
+    const engineDoc = checklistItemToEngineDocument(
+      target,
+      transactionContext.id,
+      transactionContext.officeId ?? "",
+      { assignedAdminUserId: transactionContext.assignedAdminUserId ?? null }
+    );
+    const docState = getDocumentState(engineDoc, eu, et);
+    const showReviewActionsAudit =
+      docState.canReview &&
+      !!target.attachedDocument &&
+      (docState.currentActionOwner === "ADMIN" ||
+        (!!transactionContext.assignedAdminUserId &&
+          !!currentUserId &&
+          transactionContext.assignedAdminUserId === currentUserId));
+    console.log("[BTQ checklist review audit]", {
+      checklistItemId: target.id,
+      name: target.name,
+      rawDbBacked: {
+        status: target.status,
+        reviewStatus: target.reviewStatus,
+        reviewnote: target.reviewNote,
+        documentId: target.documentId,
+      },
+      attachedDocument: target.attachedDocument,
+      docState,
+      canReview: docState.canReview,
+      currentActionOwner: docState.currentActionOwner,
+      showReviewActions: showReviewActionsAudit,
+      assignedAdminUserId: transactionContext.assignedAdminUserId,
+      currentUserId,
+      currentUserRole,
+    });
+  }, [
+    transactionContext?.id,
+    transactionContext?.officeId,
+    transactionContext?.assignedAdminUserId,
+    transactionContext?.agentUserId,
+    transactionContext?.closingDate,
+    checklistItems,
+    currentUserId,
+    currentUserRole,
+  ]);
+
+  const engineDocs = checklistItems.map((item) =>
+    checklistItemToEngineDocument(item, transactionContext?.id ?? "", transactionContext?.officeId ?? "", {
+      assignedAdminUserId: transactionContext?.assignedAdminUserId ?? null,
+    })
+  );
+  const closingReadiness = getTransactionClosingReadiness(engineDocs);
+  const completedCount = closingReadiness.acceptedRequiredCount + (closingReadiness.waivedRequiredCount ?? 0);
   const totalCount = checklistItems.length;
 
   const handleAttachSuggested = async (item: ChecklistItem) => {
@@ -235,6 +351,8 @@ export default function Checklist({
             previousVersion,
             newVersion,
           },
+          documentId: inboxDoc.id,
+          checklistItemId: item.id,
         });
       } else {
         addActivityEntry({
@@ -247,6 +365,8 @@ export default function Checklist({
             checklistItem: item.name,
             version: newVersion,
           },
+          documentId: inboxDoc.id,
+          checklistItemId: item.id,
         });
       }
       if (statusAutoReset) {
@@ -260,6 +380,7 @@ export default function Checklist({
             previousStatus,
             newStatus: "pending",
           },
+          checklistItemId: item.id,
         });
       }
     }
@@ -278,14 +399,6 @@ export default function Checklist({
     if (url) window.open(url, "_blank");
     else toast.error("Could not open document");
   };
-
-  console.log("Checklist debug", {
-  checklistTemplateId,
-  checklistTemplates,
-  checklistTemplatesLength: checklistTemplates.length,
-  isLoadingTemplates,
-  isSavingChecklist,
-});
 
   return (
     <Card>
@@ -359,8 +472,25 @@ export default function Checklist({
         ) : (
         <div className="space-y-3">
           {checklistItems.map((item, index) => {
+            const engineDoc = checklistItemToEngineDocument(
+              item,
+              transactionContext?.id ?? "",
+              transactionContext?.officeId ?? "",
+              { assignedAdminUserId: transactionContext?.assignedAdminUserId ?? null }
+            );
+            const docState = getDocumentState(engineDoc, engineUser, engineTxn);
             const prevSection = index > 0 ? checklistItems[index - 1].sectionTitle : undefined;
             const showSectionHeader = item.sectionTitle && item.sectionTitle !== prevSection;
+            // canReview can be true for assigned admin while getCurrentActionOwner is still AGENT
+            // (e.g. REJECTED → agent turn, or engine/UI attachment timing). Still allow Review for
+            // the transaction's assigned admin when they have authority and a file is attached.
+            const showReviewActions =
+              docState.canReview &&
+              !!item.attachedDocument &&
+              (docState.currentActionOwner === "ADMIN" ||
+                (!!transactionContext?.assignedAdminUserId &&
+                  !!currentUserId &&
+                  transactionContext.assignedAdminUserId === currentUserId));
             return (
               <React.Fragment key={item.id}>
                 {showSectionHeader && (
@@ -372,7 +502,7 @@ export default function Checklist({
                   className="flex items-center justify-between p-4 bg-slate-50 rounded-lg border border-slate-200 hover:border-slate-300 transition-colors"
                 >
               <div className="flex items-center gap-3 flex-1">
-                {getChecklistIcon(item.reviewStatus)}
+                {getChecklistIcon(docState.status, item.reviewStatus === "waived")}
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="font-medium text-slate-900">
@@ -389,13 +519,12 @@ export default function Checklist({
                         Suggested {item.suggestedDocument.confidence === "high" ? "(High confidence)" : "(Low confidence)"}
                       </Badge>
                     )}
-                    {!item.attachedDocument && !item.suggestedDocument && (
+                    {item.requirement === "required" && !item.attachedDocument && !item.suggestedDocument && (
                       <Badge variant="outline" className="bg-slate-50 text-slate-500 border-slate-300 text-xs">
                         Needs attachment
                       </Badge>
                     )}
                   </div>
-                  <div className="text-sm text-slate-600">{item.updatedAt}</div>
                   {item.attachedDocument && (
                     <div className="mt-2 space-y-1">
                       <div className="p-2 bg-slate-100 rounded border border-slate-200 flex items-center justify-between gap-2">
@@ -456,7 +585,7 @@ export default function Checklist({
                     const latestStatusComment = statusChangeComments[0];
 
                     return latestStatusComment &&
-                      (item.reviewStatus === "rejected" || item.reviewStatus === "waived") ? (
+                      (docState.status === "REJECTED" || item.reviewStatus === "waived") ? (
                       <div className="mt-2 flex items-start gap-1.5 text-xs text-slate-600 bg-slate-100 px-2 py-1.5 rounded border border-slate-200">
                         <MessageSquare className="h-3 w-3 mt-0.5 flex-shrink-0" />
                         <span className="line-clamp-1 flex-1">
@@ -476,7 +605,7 @@ export default function Checklist({
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                {getReviewStatusBadge(item.reviewStatus)}
+                {getReviewStatusBadge(docState.status, item.reviewStatus === "waived")}
                 {item.suggestedDocument && !isReadOnly && (
                   <Button
                     variant="outline"
@@ -526,7 +655,7 @@ export default function Checklist({
                     )}
                   </Button>
                 )}
-                {currentUserRole === "Admin" && !isReadOnly && onOpenReviewModal && item.attachedDocument && (
+                {showReviewActions && !isReadOnly && onOpenReviewModal && item.attachedDocument && (
                   <Button
                     variant="outline"
                     size="sm"

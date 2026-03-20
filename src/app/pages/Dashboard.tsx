@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "../contexts/AuthContext";
+import { getUserDisplayName } from "../contexts/AuthContext";
 import {
   LayoutDashboard,
   Users,
@@ -99,8 +101,11 @@ const agentActivity = [
 
 export function Dashboard() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [selectedOffice, setSelectedOffice] = useState("all");
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
+
+  const displayName = getUserDisplayName(user);
 
   const handleSSOClick = (platform: string) => {
     console.log(`Opening ${platform}...`);
@@ -130,7 +135,8 @@ export function Dashboard() {
         offices={offices}
         selectedOffice={selectedOffice}
         onOfficeChange={setSelectedOffice}
-        userName="John Anderson"
+        userName={displayName}
+        userEmail={user?.email ?? undefined}
         notificationCount={3}
       />
 
@@ -142,7 +148,7 @@ export function Dashboard() {
               Dashboard Overview
             </h1>
             <p className="text-slate-600 mt-1">
-              Welcome back, John. Here's what's happening today.
+              Welcome back, {displayName || "there"}. Here's what's happening today.
             </p>
           </div>
 

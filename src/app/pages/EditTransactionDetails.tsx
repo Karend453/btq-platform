@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { getTransaction, updateTransaction } from "../../services/transactions";
+import { getTransaction, updateTransaction, type TransactionRow } from "../../services/transactions";
 
 type FormData = {
   listAgent: string;
   buyerAgent: string;
+  clientName: string;
+  identifier: string;
   sellerNames: string;
   buyerNames: string;
   salePrice: string;
@@ -19,6 +21,11 @@ type FormData = {
   closingDate: string;
   admin: string;
   status: string;
+  transactionSide: string;
+  transactionCategory: string;
+  leadSource: string;
+  gci: string;
+  referralFeeAmount: string;
 };
 
 export default function EditTransactionDetails() {
@@ -26,8 +33,11 @@ export default function EditTransactionDetails() {
   const { id } = useParams();
 
   const [isLoading, setIsLoading] = useState(true);
+  const [transaction, setTransaction] = useState<TransactionRow | null>(null);
 
   const [formData, setFormData] = useState<FormData>({
+    identifier: "",
+    clientName: "",
     listAgent: "",
     buyerAgent: "",
     sellerNames: "",
@@ -44,49 +54,65 @@ export default function EditTransactionDetails() {
     closingDate: "",
     admin: "",
     status: "",
+    transactionSide: "",
+    transactionCategory: "",
+    leadSource: "",
+    gci: "",
+    referralFeeAmount: "",
   });
 
   useEffect(() => {
     async function loadTransaction() {
-      if (!id) {
+      if (!id) return;
+  
+      setIsLoading(true);
+  
+      const tx = await getTransaction(id);
+  
+      if (!tx) {
+        setTransaction(null);
         setIsLoading(false);
         return;
       }
-
-      try {
-        const transaction = await getTransaction(id);
-
-        if (transaction) {
-          setFormData({
-              listAgent: "",
-              buyerAgent: "",
-              sellerNames: "",
-              buyerNames: "",
-              salePrice: "",
-              type: transaction.type ?? "",
-              checklistType: "",
-              office: transaction.organizationName ?? "",
-              listCommissionPercent: "",
-              buyerCommissionPercent: "",
-              listCommissionAmount: "",
-              buyerCommissionAmount: "",
-              contractDate: "",
-              closingDate: "",
-              admin: transaction.owner ?? "",
-              status: transaction.statusLabel ?? "",
-          });
-        }
-      } catch (error) {
-        console.error("Failed to load transaction details:", error);
-      } finally {
-        setIsLoading(false);
-      }
+  
+      setTransaction(tx);
+  
+      setFormData({
+        identifier: tx.identifier ?? "",
+        clientName: tx.clientname ?? "",
+        listAgent: tx.listagent ?? "",
+        buyerAgent: tx.buyeragent ?? "",
+        sellerNames: tx.sellernames ?? "",
+        buyerNames: tx.buyernames ?? "",
+        salePrice: tx.saleprice != null ? String(tx.saleprice) : "",
+        type: tx.type ?? "",
+        checklistType: tx.checklisttype ?? "",
+        office: tx.office ?? "",
+        listCommissionPercent: tx.listcommissionpercent ?? "",
+        buyerCommissionPercent: tx.buyercommissionpercent ?? "",
+        listCommissionAmount: tx.listcommissionamount ?? "",
+        buyerCommissionAmount: tx.buyercommissionamount ?? "",
+        contractDate: tx.contractdate ?? "",
+        closingDate: tx.closing_date ?? "",
+        admin: tx.assignedadmin ?? "",
+        status: tx.status ?? "",
+        transactionSide: tx.transaction_side ?? "",
+        transactionCategory: tx.transaction_category ?? "",
+        leadSource: tx.lead_source ?? "",
+        gci: tx.gci != null ? String(tx.gci) : "",
+        referralFeeAmount:
+          tx.referral_fee_amount != null ? String(tx.referral_fee_amount) : "",
+      });
+  
+      setIsLoading(false);
     }
-
+  
     loadTransaction();
   }, [id]);
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
+  ) => {
     const { name, value } = e.target;
 
     setFormData((prev) => ({
@@ -107,12 +133,32 @@ export default function EditTransactionDetails() {
   
     try {
       const result = await updateTransaction(id, {
-        type: formData.type,
-        office: formData.office,
-        status: formData.status,
-        assignedadmin: formData.admin,
-        contractdate: formData.contractDate,
-        closingdate: formData.closingDate,
+        type: formData.type || null,
+        office: formData.office || null,
+        status: formData.status || null,
+        admin: formData.admin || null,
+        contractDate: formData.contractDate || null,
+        closingDate: formData.closingDate || null,
+      
+        sellerNames: formData.sellerNames || null,
+        buyerNames: formData.buyerNames || null,
+        salePrice: formData.salePrice ? Number(formData.salePrice) : null,
+        checklistType: formData.checklistType || null,
+      
+        listAgent: formData.listAgent || null,
+        buyerAgent: formData.buyerAgent || null,
+        listCommissionPercent: formData.listCommissionPercent || null,
+        buyerCommissionPercent: formData.buyerCommissionPercent || null,
+        listCommissionAmount: formData.listCommissionAmount || null,
+        buyerCommissionAmount: formData.buyerCommissionAmount || null,
+
+        transactionSide: formData.transactionSide || null,
+        transactionCategory: formData.transactionCategory || null,
+        leadSource: formData.leadSource || null,
+        gci: formData.gci ? Number(formData.gci) : null,
+        referralFeeAmount: formData.referralFeeAmount
+          ? Number(formData.referralFeeAmount)
+          : null,
       });
   
       console.log("updateTransaction result:", result);
@@ -134,51 +180,6 @@ export default function EditTransactionDetails() {
         <h1 className="text-2xl font-semibold">Edit Transaction Details</h1>
         <p className="text-sm text-slate-600">Transaction ID: {id}</p>
       </div>
-
-      <section className="space-y-4">
-        <h2 className="text-lg font-semibold">Transaction Basics</h2>
-        <div className="grid grid-cols-2 gap-4">
-          <input
-            className="border rounded px-3 py-2"
-            name="type"
-            value={formData.type}
-            placeholder="Type (Listing / Buyer)"
-            onChange={handleChange}
-          />
-
-          <input
-            className="border rounded px-3 py-2"
-            name="checklistType"
-            value={formData.checklistType}
-            placeholder="Checklist Type"
-            onChange={handleChange}
-          />
-
-          <input
-            className="border rounded px-3 py-2"
-            name="office"
-            value={formData.office}
-            placeholder="Office"
-            onChange={handleChange}
-          />
-
-          <input
-            className="border rounded px-3 py-2"
-            name="salePrice"
-            value={formData.salePrice}
-            placeholder="Sale Price"
-            onChange={handleChange}
-          />
-
-          <input
-            className="border rounded px-3 py-2"
-            name="status"
-            value={formData.status}
-            placeholder="Status"
-            onChange={handleChange}
-          />
-        </div>
-      </section>
 
       <section className="space-y-4">
         <h2 className="text-lg font-semibold">People</h2>
@@ -226,29 +227,14 @@ export default function EditTransactionDetails() {
       </section>
 
       <section className="space-y-4">
-        <h2 className="text-lg font-semibold">Dates + Intake + Commission</h2>
+        <h2 className="text-lg font-semibold">Intake + Pricing + Commission</h2>
         <div className="grid grid-cols-2 gap-4">
           <input
             className="border rounded px-3 py-2"
-            name="contractDate"
-            value={formData.contractDate}
-            type="date"
+            name="salePrice"
+            value={formData.salePrice}
+            placeholder="Sale Price"
             onChange={handleChange}
-          />
-
-          <input
-            className="border rounded px-3 py-2"
-            name="closingDate"
-            value={formData.closingDate}
-            type="date"
-            onChange={handleChange}
-          />
-
-          <input
-            className="border rounded px-3 py-2 bg-slate-100"
-            value={id ? `txn-${id}@docs.btq.app` : ""}
-            readOnly
-            placeholder="Intake Email"
           />
 
           <input
@@ -280,6 +266,62 @@ export default function EditTransactionDetails() {
             name="buyerCommissionAmount"
             value={formData.buyerCommissionAmount}
             placeholder="Buyer Commission $"
+            onChange={handleChange}
+          />
+        </div>
+      </section>
+
+      <section className="space-y-4">
+        <h2 className="text-lg font-semibold">Reporting + Classification</h2>
+        <div className="grid grid-cols-2 gap-4">
+          <select
+            className="border rounded px-3 py-2"
+            name="transactionSide"
+            value={formData.transactionSide}
+            onChange={handleChange}
+          >
+            <option value="">Side of Transaction</option>
+            <option value="Buyer">Buyer</option>
+            <option value="Seller">Seller</option>
+            <option value="Dual">Dual</option>
+            <option value="Referral">Referral</option>
+          </select>
+
+          <select
+            className="border rounded px-3 py-2"
+            name="transactionCategory"
+            value={formData.transactionCategory}
+            onChange={handleChange}
+          >
+            <option value="">Transaction Category</option>
+            <option value="Resale">Resale</option>
+            <option value="New Construction">New Construction</option>
+            <option value="Land">Land</option>
+            <option value="Lease">Lease</option>
+            <option value="Referral">Referral</option>
+          </select>
+
+          <input
+            className="border rounded px-3 py-2"
+            name="leadSource"
+            value={formData.leadSource}
+            placeholder="Lead Source"
+            onChange={handleChange}
+          />
+
+          <input
+            className="border rounded px-3 py-2"
+            name="gci"
+            value={formData.gci}
+            placeholder="GCI"
+            onChange={handleChange}
+          />
+
+          <input
+            className="border rounded px-3 py-2"
+            name="referralFeeAmount"
+            value={formData.referralFeeAmount}
+            placeholder="Referral Fee Amount"
             onChange={handleChange}
           />
         </div>

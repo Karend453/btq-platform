@@ -1,11 +1,4 @@
-import {
-  AlertTriangle,
-  AlertCircle,
-  Archive,
-  CheckCircle2,
-  Download,
-  Activity as ActivityIcon,
-} from "lucide-react";
+import { Archive, Download, Activity as ActivityIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
@@ -24,6 +17,12 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "../../components/ui/tooltip";
+import {
+  getTransactionClosingReadiness,
+  getCloseValidationIssues,
+} from "../../../lib/documents/documentEngine";
+import { checklistItemForControlsToEngineDocument } from "../../../lib/documents/adapter";
+import TransactionHealth from "./TransactionHealth";
 
 export interface ChecklistItemForControls {
   id: string;
@@ -62,86 +61,25 @@ export type TransactionControlsProps = {
   transactionStatus: TransactionStatus;
   assignedAdmin: string | null;
   closingDate: string | null;
-  contractDate: string | null;
   checklistItems: ChecklistItemForControls[];
   isReadOnly: boolean;
   currentUserRole?: "Admin" | "Agent";
   archiveMetadata: ArchiveMetadata | null;
   onStatusChange: (status: TransactionStatus) => void;
-  onAssignedAdminChange: (admin: string) => void;
   onClosingDateChange: (date: string) => void;
-  onContractDateChange: (date: string) => void;
   onOpenArchiveModal: () => void;
   onDownloadArchivePackage?: () => void;
   onViewArchivedActivityLog?: () => void;
+  intakeEmail?: string | null;
+  onCopyIntakeEmail?: (text?: string | null) => void;
 };
 
-function computeNeedsAttention(
-  checklistItems: ChecklistItemForControls[],
-  closingDate: string | null
-): boolean {
-  const now = new Date();
-  const closingDateObj = closingDate ? new Date(closingDate) : null;
-  const daysUntilClosing = closingDateObj
-    ? Math.ceil((closingDateObj.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
-    : null;
-
-  const hasRejectedRequired = checklistItems.some(
-    (item) => item.requirement === "required" && item.reviewStatus === "rejected"
-  );
-
-  const hasStalePendingRequired = checklistItems.some((item) => {
-    if (item.requirement !== "required" || item.reviewStatus !== "pending") return false;
-    if (item.attachedDocument?.updatedAt) {
-      const hoursSinceUpdate =
-        (now.getTime() - item.attachedDocument.updatedAt.getTime()) / (1000 * 60 * 60);
-      return hoursSinceUpdate > 48;
-    }
-    return false;
-  });
-
-  const hasIncompleteNearClosing =
-    daysUntilClosing !== null &&
-    daysUntilClosing <= 7 &&
-    daysUntilClosing >= 0 &&
-    checklistItems.some(
-      (item) =>
-        item.requirement === "required" &&
-        item.reviewStatus !== "complete" &&
-        item.reviewStatus !== "waived"
-    );
-
-  return hasRejectedRequired || hasStalePendingRequired || hasIncompleteNearClosing;
-}
-
 function computeCloseValidation(checklistItems: ChecklistItemForControls[]) {
-  const requiredItems = checklistItems.filter((item) => item.requirement === "required");
-  const issues: string[] = [];
-
-  const missingAttachments = requiredItems.filter((item) => !item.attachedDocument);
-  if (missingAttachments.length > 0) {
-    issues.push(
-      `${missingAttachments.length} required document${missingAttachments.length > 1 ? "s" : ""} need${missingAttachments.length === 1 ? "s" : ""} attachment`
-    );
-  }
-
-  const rejectedItems = requiredItems.filter((item) => item.reviewStatus === "rejected");
-  if (rejectedItems.length > 0) {
-    issues.push(
-      `${rejectedItems.length} required document${rejectedItems.length > 1 ? "s are" : " is"} rejected`
-    );
-  }
-
-  const pendingItems = requiredItems.filter(
-    (item) => item.attachedDocument && item.reviewStatus === "pending"
+  const engineDocs = checklistItems.map((item) =>
+    checklistItemForControlsToEngineDocument(item)
   );
-  if (pendingItems.length > 0) {
-    issues.push(
-      `${pendingItems.length} required document${pendingItems.length > 1 ? "s are" : " is"} pending review`
-    );
-  }
-
-  return { allowed: issues.length === 0, issues };
+  const readiness = getTransactionClosingReadiness(engineDocs);
+  return getCloseValidationIssues(readiness);
 }
 
 function computeArchiveValidation(
@@ -165,48 +103,30 @@ export default function TransactionControls({
   transactionStatus,
   assignedAdmin,
   closingDate,
-  contractDate,
   checklistItems,
   isReadOnly,
   currentUserRole = "Admin",
   archiveMetadata,
   onStatusChange,
-  onAssignedAdminChange,
   onClosingDateChange,
-  onContractDateChange,
   onOpenArchiveModal,
   onDownloadArchivePackage,
   onViewArchivedActivityLog,
+  intakeEmail,
+  onCopyIntakeEmail,
 }: TransactionControlsProps) {
-  const needsAttention = computeNeedsAttention(checklistItems, closingDate);
   const closeValidation = computeCloseValidation(checklistItems);
   const archiveValidation = computeArchiveValidation(transactionStatus, checklistItems);
+  const showReadiness =
+    !isReadOnly && transactionStatus !== "Closed" && transactionStatus !== "Archived";
 
   return (
     <>
-      {/* Needs Attention Banner */}
-      {needsAttention && (
-        <Card className="border-red-200 bg-red-50">
-          <CardContent className="pt-4">
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
-              <div>
-                <h3 className="font-semibold text-red-900 mb-1">Action Required</h3>
-                <p className="text-sm text-red-700">
-                  This transaction requires attention. Check for rejected documents, stale pending
-                  items, or incomplete requirements near closing.
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Transaction Operational Controls */}
+      {/* Transaction + closing readiness (single purpose) */}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardTitle className="text-lg">Transaction Controls</CardTitle>
+            <CardTitle className="text-lg">Transaction</CardTitle>
             {currentUserRole === "Admin" && !isReadOnly && (
               <TooltipProvider>
                 <Tooltip>
@@ -243,38 +163,9 @@ export default function TransactionControls({
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
-            {/* Ready to Close Indicator */}
-            {!isReadOnly &&
-              transactionStatus !== "Closed" &&
-              transactionStatus !== "Archived" && (
-                <div className="flex items-start gap-2 p-3 rounded-lg border border-slate-200 bg-slate-50">
-                  {closeValidation.allowed ? (
-                    <>
-                      <CheckCircle2 className="h-5 w-5 text-green-600 flex-shrink-0 mt-0.5" />
-                      <div>
-                        <p className="text-sm font-medium text-green-900">Ready to Close</p>
-                        <p className="text-xs text-green-700 mt-0.5">
-                          All required documents are complete
-                        </p>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <AlertCircle className="h-5 w-5 text-slate-500 flex-shrink-0 mt-0.5" />
-                      <div>
-                        <p className="text-sm font-medium text-slate-700">Not Ready to Close</p>
-                        <ul className="text-xs text-slate-600 mt-1 space-y-0.5">
-                          {closeValidation.issues.map((issue, idx) => (
-                            <li key={idx}>• {issue}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
+            {showReadiness && <TransactionHealth checklistItems={checklistItems} />}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {/* Status Dropdown */}
               <div>
                 <Label
@@ -322,47 +213,6 @@ export default function TransactionControls({
                 </TooltipProvider>
               </div>
 
-              {/* Assigned Admin Dropdown */}
-              <div>
-                <Label
-                  htmlFor="assigned-admin"
-                  className="text-sm font-medium text-slate-700 mb-1.5 block"
-                >
-                  Assigned Admin
-                </Label>
-                <Select
-                  value={assignedAdmin ?? ""}
-                  onValueChange={onAssignedAdminChange}
-                  disabled={isReadOnly}
-                >
-                  <SelectTrigger id="assigned-admin">
-                    <SelectValue placeholder="Select admin" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Karen Admin">Karen Admin</SelectItem>
-                    <SelectItem value="Tina Review">Tina Review</SelectItem>
-                    <SelectItem value="Jordan Ops">Jordan Ops</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Contract Date */}
-              <div>
-                <Label
-                  htmlFor="contract-date"
-                  className="text-sm font-medium text-slate-700 mb-1.5 block"
-                >
-                  Contract Date
-                </Label>
-                <Input
-                  id="contract-date"
-                  type="date"
-                  value={contractDate ?? ""}
-                  onChange={(e) => onContractDateChange(e.target.value)}
-                  disabled={isReadOnly}
-                />
-              </div>
-
               {/* Closing Date */}
               <div>
                 <Label
@@ -380,6 +230,40 @@ export default function TransactionControls({
                 />
               </div>
             </div>
+
+            <div>
+              <Label
+                htmlFor="intake-email-display"
+                className="text-sm font-medium text-slate-700 mb-1.5 block"
+              >
+                Intake email
+              </Label>
+              <div className="flex gap-2 flex-wrap sm:flex-nowrap items-stretch">
+                <Input
+                  id="intake-email-display"
+                  readOnly
+                  value={intakeEmail?.trim() ?? ""}
+                  placeholder="—"
+                  className="font-mono text-sm flex-1 min-w-0 bg-slate-50/80"
+                  tabIndex={-1}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 h-10 px-3"
+                  disabled={!intakeEmail?.trim()}
+                  onClick={() => onCopyIntakeEmail?.(intakeEmail)}
+                >
+                  Copy
+                </Button>
+              </div>
+            </div>
+
+            <p className="text-sm text-slate-600">
+              <span className="font-medium text-slate-700">Assigned admin: </span>
+              {assignedAdmin?.trim() ? assignedAdmin : "—"}
+            </p>
           </div>
         </CardContent>
       </Card>

@@ -1,5 +1,7 @@
-import { Outlet } from "react-router-dom";
+import { useEffect } from "react";
+import { Outlet, useNavigate } from "react-router-dom";
 import { DashboardSidebar, NavSection } from "../components/dashboard/DashboardSidebar";
+import { useAuth } from "../contexts/AuthContext";
 import { Toaster } from "../components/ui/sonner";
 import {
   LayoutDashboard,
@@ -64,6 +66,27 @@ const navSections: NavSection[] = [
 ];
 
 export function RootLayout() {
+  const { user, loading } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (loading) return;
+    if (!user) {
+      navigate("/login", { replace: true });
+    }
+  }, [user, loading, navigate]);
+
+  if (loading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-slate-50">
+        <div className="text-slate-600">Loading…</div>
+      </div>
+    );
+  }
+  if (!user) {
+    return null;
+  }
+
   return (
     <div className="flex h-screen bg-slate-50">
       <DashboardSidebar

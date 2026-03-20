@@ -66,6 +66,9 @@ export interface ChecklistItem {
     filename: string;
     confidence: "high" | "low";
   };
+  /** `checklist_items.document_id` — stable link to `transaction_documents.id`. */
+  documentId?: string | null;
+  reviewNote?: string | null;
 }
 
 type InboxFilter = "all" | "unattached" | "recent";
@@ -83,6 +86,8 @@ export type TransactionInboxProps = {
     type: string;
     message: string;
     meta?: Record<string, unknown>;
+    documentId?: string | null;
+    checklistItemId?: string | null;
   }) => void;
   currentUserRole?: "Admin" | "Agent";
   /** When provided, attach drawer can be opened from outside (e.g. Checklist) */
@@ -120,6 +125,8 @@ export default function TransactionInbox({
   attachTargetItem: controlledAttachTargetItem,
   onAttachDrawerOpenChange,
   onAttachTargetChange,
+  intakeEmail,
+  onCopyIntakeEmail,
 }: TransactionInboxProps) {
   const [internalAttachDrawerOpen, setInternalAttachDrawerOpen] = useState(false);
   const [internalAttachTargetItem, setInternalAttachTargetItem] = useState<ChecklistItem | null>(null);
@@ -254,6 +261,8 @@ export default function TransactionInbox({
             previousVersion,
             newVersion,
           },
+          documentId: inboxDoc.id,
+          checklistItemId: attachTargetItem.id,
         });
       } else {
         addActivityEntry({
@@ -266,6 +275,8 @@ export default function TransactionInbox({
             checklistItem: attachTargetItem.name,
             version: newVersion,
           },
+          documentId: inboxDoc.id,
+          checklistItemId: attachTargetItem.id,
         });
       }
       if (statusAutoReset) {
@@ -279,6 +290,7 @@ export default function TransactionInbox({
             previousStatus,
             newStatus: "pending",
           },
+          checklistItemId: attachTargetItem.id,
         });
       }
     }

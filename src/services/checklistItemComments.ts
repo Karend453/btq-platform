@@ -68,9 +68,10 @@ export async function fetchCommentsByTransactionId(
   for (const row of data ?? []) {
     const r = row as CommentRow;
     const comment = rowToCommentShape(r);
-    const list = byItem.get(r.checklist_item_id) ?? [];
+    const key = String(r.checklist_item_id);
+    const list = byItem.get(key) ?? [];
     list.push(comment);
-    byItem.set(r.checklist_item_id, list);
+    byItem.set(key, list);
   }
   return byItem;
 }
@@ -96,7 +97,7 @@ export async function insertComment(input: InsertCommentInput): Promise<CommentS
     .from("checklist_item_comments")
     .insert({
       transaction_id: input.transactionId,
-      checklist_item_id: input.checklistItemId,
+      checklist_item_id: String(input.checklistItemId),
       author_role: input.authorRole,
       author_name: input.authorName,
       message: input.message,

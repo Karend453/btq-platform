@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import React from "react";
 import { toast } from "sonner";
 import { MessageSquare, Save, Archive, AlertTriangle, ExternalLink } from "lucide-react";
@@ -7,6 +7,12 @@ import { Badge } from "../components/ui/badge";
 import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Input } from "../components/ui/input";
+import {
+  ensureChecklistItemsForTransaction,
+  fetchChecklistItemsForTransaction,
+  replaceChecklistItemsFromTemplate,
+  updateChecklistItem,
+} from "../../services/checklistItems";
 import { Checkbox } from "../components/ui/checkbox";
 import {
   Dialog,
@@ -23,19 +29,33 @@ import {
   SheetHeader,
   SheetTitle,
 } from "../components/ui/sheet";
-import { getTransaction, updateTransaction, type TransactionRow } from "../../services/transactions";
+import {
+  getTransaction,
+  getAssignedAdminUserId,
+  updateTransaction,
+  type TransactionRow,
+} from "../../services/transactions";
 import { fetchDocumentsByTransactionId, getSignedUrl } from "../../services/transactionDocuments";
 import { fetchCommentsByTransactionId, insertComment } from "../../services/checklistItemComments";
-import { getCurrentUser } from "../../services/auth";
+import { insertActivityEntry, fetchActivityByTransactionId } from "../../services/transactionActivity";
+import { getCurrentUser, getCurrentUserRole } from "../../services/auth";
+import { useAuth } from "../contexts/AuthContext";
 import {
-  fetchChecklistTemplates,
-  fetchChecklistItemsByTemplateId,
-  type ChecklistTemplate,
-} from "../../services/checklistTemplates";
+  canUserMarkAccepted,
+  canUserReviewDocument,
+  getDocumentState,
+  getTransactionClosingReadiness,
+} from "../../lib/documents/documentEngine";
+import {
+  checklistItemToEngineDocument,
+  buildEngineUser,
+  transactionRowToEngineTransaction,
+  checklistItemForControlsToEngineDocument,
+} from "../../lib/documents/adapter";
+import { fetchChecklistTemplates, type ChecklistTemplate } from "../../services/checklistTemplates";
 import TransactionOverview from "./sections/TransactionOverview";
 import TransactionInbox from "./sections/TransactionInbox";
 import TransactionControls from "./sections/TransactionControls";
-import GeneratedIntakeEmail from "./sections/GeneratedIntakeEmail";
 import TransactionActivity from "./sections/TransactionActivity";
 import Checklist from "./sections/Checklist";
 import type { ChecklistItem, InboxDocument } from "./sections/TransactionInbox";
@@ -55,10 +75,6 @@ type CommentShape = {
   pageNumber?: number;
   locationNote?: string;
 };
-function handleSave() {
-  window.location.href = "/transactions";
-}
-
 function handleLaunchZipForms() {
   alert("ZipForms launch coming soon");
 }
@@ -78,19 +94,6 @@ function formatCurrency(value?: number | string | null) {
   }).format(numericValue);
 }
 
-function formatDate(value?: string | null) {
-  if (!value) return "—";
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-
-  return date.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
 function formatRelativeTime(date: Date) {
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
@@ -107,52 +110,8 @@ function formatRelativeTime(date: Date) {
   }
 }
 
-function SummaryField({
-  label,
-  value,
-  fullWidth,
-}: {
-  label: string;
-  value?: string | number | null;
-  fullWidth?: boolean;
-}) {
-  return (
-    <div
-      style={{
-        border: "1px solid #e2e8f0",
-        borderRadius: 14,
-        padding: 16,
-        background: "#f8fafc",
-        gridColumn: fullWidth ? "span 2" : "span 1",
-      }}
-    >
-      <div
-        style={{
-          fontSize: 12,
-          fontWeight: 700,
-          letterSpacing: "0.06em",
-          textTransform: "uppercase",
-          color: "#64748b",
-          marginBottom: 6,
-        }}
-      >
-        {label}
-      </div>
-      <div
-        style={{
-          fontSize: 15,
-          fontWeight: 600,
-          color: "#0f172a",
-          wordBreak: "break-word",
-        }}
-      >
-        {value ?? "—"}
-      </div>
-    </div>
-  );
-}
-
 export default function TransactionDetailsPage() {
+  const { user: authUser, loading: authLoading } = useAuth();
   const id = useMemo(() => {
     const parts = window.location.pathname.split("/").filter(Boolean);
     return parts[parts.length - 1] ?? "";
@@ -197,22 +156,158 @@ export default function TransactionDetailsPage() {
   const [reviewDocUrlError, setReviewDocUrlError] = useState(false);
   // Review workspace comment form
   const [reviewCommentText, setReviewCommentText] = useState("");
-  const [reviewRejectionPage, setReviewRejectionPage] = useState<string>("");
-  const [reviewRejectionLocation, setReviewRejectionLocation] = useState("");
-  const [showRejectionLocationInputs, setShowRejectionLocationInputs] = useState(false);
 
   const reviewCommentsEndRef = useRef<HTMLDivElement>(null);
 
   const [currentUserName, setCurrentUserName] = useState<string>("Current User");
-  const currentUserRole = "Admin" as "Admin" | "Agent";
+  const [currentUserId, setCurrentUserId] = useState<string>("");
+  const [currentUserRole, setCurrentUserRole] = useState<"Admin" | "Agent">("Admin");
 
-  function addActivityEntry(entry: Omit<ActivityLogEntry, "id" | "timestamp">) {
-    const newEntry: ActivityLogEntry = {
-      id: `act-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      timestamp: new Date(),
-      ...entry,
+  const reloadTransaction = useCallback(
+    async (opts?: { isCancelled?: () => boolean }) => {
+      if (!id) return;
+      const data = await getTransaction(id);
+      if (opts?.isCancelled?.()) return;
+      setTransaction(data);
+      if (data) {
+        setTransactionStatus((data.status ?? "Pre-Contract") as TransactionStatus);
+        setAssignedAdmin(data.assignedadmin ?? null);
+        setClosingDate(data.closing_date ?? null);
+        setContractDate(data.contractdate ?? null);
+      }
+    },
+    [id]
+  );
+
+  /** Prefer AuthContext user id so review permissions are correct before getCurrentUser() effect runs. */
+  const sessionUserId = authUser?.id ?? currentUserId;
+
+  const reviewModalPermissions = useMemo(() => {
+    if (!selectedItem || !id || !transaction) return { canMarkAccepted: false, canReview: false };
+    const txn = transaction as TransactionRow & { office?: string };
+    const engineDoc = checklistItemToEngineDocument(selectedItem, id, txn.office ?? "", {
+      assignedAdminUserId: getAssignedAdminUserId(transaction as TransactionRow),
+    });
+    const engineUser = buildEngineUser({
+      id: sessionUserId,
+      roles: [currentUserRole === "Admin" ? "ADMIN" : "AGENT"],
+      officeIds: [txn.office ?? ""],
+    });
+    const engineTxn = transactionRowToEngineTransaction(transaction as TransactionRow & { office?: string });
+    return {
+      canMarkAccepted: canUserMarkAccepted(engineUser, engineDoc, engineTxn),
+      canReview: canUserReviewDocument(engineUser, engineDoc, engineTxn),
     };
-    setActivityLog((prev) => [newEntry, ...prev]);
+  }, [selectedItem, id, transaction, sessionUserId, currentUserRole, authUser?.id]);
+
+  /** Runtime audit: filter console by `[BTQ review audit]` */
+  useEffect(() => {
+    console.log("[BTQ review audit] session", {
+      authUserId: authUser?.id ?? null,
+      sessionUserId,
+      currentUserId,
+      currentUserRole,
+    });
+    const row = transaction as (TransactionRow & { office?: string }) | null;
+    if (!transaction || !row) return;
+    const engineTxn = transactionRowToEngineTransaction(row);
+    console.log("[BTQ review audit] transaction", {
+      transactionId: row.id,
+      assigned_admin_user_id: row.assigned_admin_user_id ?? null,
+      engineTxn_assignedAdminUserId: engineTxn.assignedAdminUserId,
+    });
+    if (selectedItem && id) {
+      const engineDoc = checklistItemToEngineDocument(selectedItem, id, row.office ?? "", {
+        assignedAdminUserId: getAssignedAdminUserId(row as TransactionRow),
+      });
+      const engineUser = buildEngineUser({
+        id: sessionUserId,
+        roles: [currentUserRole === "Admin" ? "ADMIN" : "AGENT"],
+        officeIds: [row.office ?? ""],
+      });
+      const canReview = canUserReviewDocument(engineUser, engineDoc, engineTxn);
+      const canMarkAccepted = canUserMarkAccepted(engineUser, engineDoc, engineTxn);
+      console.log("[BTQ review audit] reviewModal", {
+        engineUser,
+        engineDoc,
+        engineTxn,
+        canReview,
+        canMarkAccepted,
+      });
+    }
+    if (checklistItems.length > 0 && id) {
+      const item = checklistItems[0];
+      const engineDoc0 = checklistItemToEngineDocument(item, id, row.office ?? "", {
+        assignedAdminUserId: getAssignedAdminUserId(row as TransactionRow),
+      });
+      const engineUser0 = buildEngineUser({
+        id: sessionUserId,
+        roles: [currentUserRole === "Admin" ? "ADMIN" : "AGENT"],
+        officeIds: [row.office ?? ""],
+      });
+      const engineTxnChecklist = {
+        id,
+        officeId: row.office ?? "",
+        agentUserId: row.agent_user_id ?? null,
+        assignedAdminUserId: getAssignedAdminUserId(row as TransactionRow),
+        closingDate: row.closing_date ?? null,
+      };
+      const docState = getDocumentState(engineDoc0, engineUser0, engineTxnChecklist);
+      const showReviewActionsLegacy = docState.canReview && docState.currentActionOwner === "ADMIN";
+      const showReviewActionsFixed =
+        docState.canReview &&
+        !!item.attachedDocument &&
+        (docState.currentActionOwner === "ADMIN" ||
+          (!!engineTxnChecklist.assignedAdminUserId &&
+            !!sessionUserId &&
+            engineTxnChecklist.assignedAdminUserId === sessionUserId));
+      console.log("[BTQ review audit] checklistRow0", {
+        docState,
+        showReviewActions_legacy: showReviewActionsLegacy,
+        showReviewActions_fixed: showReviewActionsFixed,
+      });
+    }
+  }, [
+    authUser?.id,
+    sessionUserId,
+    currentUserId,
+    currentUserRole,
+    transaction,
+    selectedItem,
+    id,
+    checklistItems,
+  ]);
+
+  async function addActivityEntry(
+    entry: Omit<ActivityLogEntry, "id" | "timestamp"> & {
+      documentId?: string | null;
+      checklistItemId?: string | null;
+    }
+  ) {
+    if (!id) {
+      console.warn("[addActivityEntry] skipped: no transaction id");
+      return;
+    }
+    if (authLoading || !authUser) {
+      console.warn("[addActivityEntry] skipped: auth not ready", { authLoading, hasUser: !!authUser });
+      return;
+    }
+    const inserted = await insertActivityEntry({
+      transactionId: id,
+      actor: entry.actor,
+      category: entry.category,
+      type: entry.type,
+      message: entry.message,
+      meta: entry.meta,
+      documentId: entry.documentId ?? null,
+      checklistItemId: entry.checklistItemId ?? null,
+      actorUserId: sessionUserId || null,
+    });
+    if (inserted) {
+      setActivityLog((prev) => [inserted as ActivityLogEntry, ...prev]);
+    } else {
+      console.warn("[addActivityEntry] insert returned null, entry not persisted");
+    }
   }
 
   function handleOpenAttachDrawer(item?: ChecklistItem) {
@@ -280,6 +375,7 @@ export default function TransactionDetailsPage() {
       type: "COMMENT_ADDED",
       message: `${currentUserRole} added a ${commentVisibility.toLowerCase()} comment on "${commentsTargetItem.name}"`,
       meta: { checklistItem: commentsTargetItem.name, visibility: commentVisibility },
+      checklistItemId: commentsTargetItem.id,
     });
     if (currentUserRole === "Admin" && commentVisibility === "Shared" && notifyAgentOnComment) {
       addActivityEntry({
@@ -303,9 +399,6 @@ export default function TransactionDetailsPage() {
     setWaivedReason("");
     setNotifyAgent(true);
     setReviewCommentText("");
-    setReviewRejectionPage("");
-    setReviewRejectionLocation("");
-    setShowRejectionLocationInputs(false);
     setReviewDocUrl(null);
     setReviewDocUrlError(false);
     setIsReviewModalOpen(true);
@@ -340,10 +433,28 @@ export default function TransactionDetailsPage() {
     }
     if (!id) return;
 
+    const reviewNoteToPersist =
+      reviewStatus === "rejected"
+        ? reviewNote.trim()
+        : reviewStatus === "waived"
+          ? waivedReason.trim()
+          : null;
+
+    try {
+      await updateChecklistItem(selectedItem.id, {
+        reviewStatus,
+        reviewNote: reviewNoteToPersist,
+        required: reviewRequirement === "required",
+        status: reviewStatus,
+      });
+    } catch {
+      toast.error("Could not save review to checklist");
+      return;
+    }
+
     const comments = (selectedItem.comments ?? []) as CommentShape[];
     const updatedComments = [...comments];
     if (reviewStatus === "rejected" && reviewNote.trim()) {
-      const pageNum = reviewRejectionPage.trim() ? parseInt(reviewRejectionPage, 10) : undefined;
       const saved = await insertComment({
         transactionId: id,
         checklistItemId: selectedItem.id,
@@ -352,8 +463,6 @@ export default function TransactionDetailsPage() {
         message: reviewNote.trim(),
         visibility: "Shared",
         type: "StatusChange",
-        pageNumber: pageNum !== undefined && !Number.isNaN(pageNum) ? pageNum : undefined,
-        locationNote: reviewRejectionLocation.trim() || undefined,
         unread: { Agent: true },
       });
       if (!saved) {
@@ -417,6 +526,8 @@ export default function TransactionDetailsPage() {
           fromRequirement: selectedItem.requirement,
           toRequirement: reviewRequirement,
         },
+        checklistItemId: selectedItem.id,
+        documentId: selectedItem.attachedDocument?.id,
       });
     }
 
@@ -511,6 +622,8 @@ export default function TransactionDetailsPage() {
       type: "COMMENT_ADDED",
       message: `${currentUserRole} added a comment on "${selectedItem.name}"`,
       meta: { checklistItem: selectedItem.name },
+      checklistItemId: selectedItem.id,
+      documentId: selectedItem.attachedDocument?.id,
     });
     setReviewCommentText("");
     toast.success("Comment posted");
@@ -534,6 +647,16 @@ export default function TransactionDetailsPage() {
     window.location.href = `/transactions/${id}/edit`;
   }
 
+  async function handleCopyIntakeEmail(text?: string | null) {
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success("Copied to clipboard");
+    } catch {
+      toast.error("Copy failed");
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
 
@@ -545,19 +668,7 @@ export default function TransactionDetailsPage() {
           return;
         }
 
-        const data = await getTransaction(id);
-
-        if (!cancelled) {
-          setTransaction(data);
-          if (data) {
-            const s = data.status as string;
-            const valid: TransactionStatus[] = ["Pre-Contract", "Under Contract", "Closed", "Archived"];
-            setTransactionStatus(valid.includes(s as TransactionStatus) ? (s as TransactionStatus) : "Pre-Contract");
-            setAssignedAdmin(data.assignedadmin ?? null);
-            setClosingDate(data.closingdate ?? null);
-            setContractDate(data.contractdate ?? null);
-          }
-        }
+        await reloadTransaction({ isCancelled: () => cancelled });
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -568,7 +679,7 @@ export default function TransactionDetailsPage() {
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, reloadTransaction]);
 
   useEffect(() => {
     if (!id) return;
@@ -582,14 +693,37 @@ export default function TransactionDetailsPage() {
   }, [id]);
 
   useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    async function loadActivity() {
+      const entries = await fetchActivityByTransactionId(id);
+      if (!cancelled) {
+        setActivityLog((prev) => {
+          const fetchedIds = new Set(entries.map((e) => e.id));
+          const localOnly = prev.filter((e) => !fetchedIds.has(e.id));
+          return [...localOnly, ...entries].sort(
+            (a, b) => b.timestamp.getTime() - a.timestamp.getTime()
+          ) as ActivityLogEntry[];
+        });
+      }
+    }
+    loadActivity();
+    return () => { cancelled = true; };
+  }, [id]);
+
+  useEffect(() => {
     let cancelled = false;
     getCurrentUser().then((user) => {
       if (!cancelled) {
         setCurrentUserName(user?.email ?? "Current User");
+        setCurrentUserId(user?.id ?? "");
       }
     });
+    getCurrentUserRole().then((role) => {
+      if (!cancelled) setCurrentUserRole(role);
+    });
     return () => { cancelled = true; };
-  }, []);
+  }, [authUser?.id]);
 
   const checklistTemplateId = transaction?.checklist_template_id?.trim() || null;
   const assignedAgentName =
@@ -621,14 +755,22 @@ export default function TransactionDetailsPage() {
     const transactionId = id;
     let cancelled = false;
     async function loadChecklist() {
+      await ensureChecklistItemsForTransaction(transactionId, templateId);
       const [items, commentsByItem] = await Promise.all([
-        fetchChecklistItemsByTemplateId(templateId),
+        fetchChecklistItemsForTransaction(transactionId, templateId),
         fetchCommentsByTransactionId(transactionId),
       ]);
       if (!cancelled) {
         const merged = items.map((item) => {
-          const attached = inboxDocuments.find((d) => d.attachedToItemId === item.id);
-          const itemComments = commentsByItem.get(item.id) ?? [];
+          const attached =
+            inboxDocuments.find(
+              (d) =>
+                d.attachedToItemId != null && String(d.attachedToItemId) === String(item.id)
+            ) ??
+            (item.documentId
+              ? inboxDocuments.find((d) => d.id === item.documentId)
+              : undefined);
+          const itemComments = commentsByItem.get(String(item.id)) ?? [];
           return {
             ...item,
             attachedDocument: attached
@@ -650,50 +792,40 @@ export default function TransactionDetailsPage() {
     return () => { cancelled = true; };
   }, [checklistTemplateId, inboxDocuments, id]);
 
-  async function handleCopy(text?: string | null) {
-    if (!text) return;
-
-    try {
-      await navigator.clipboard.writeText(text);
-      alert("Copied to clipboard");
-    } catch {
-      alert("Copy failed");
-    }
-  }
-
   const isReadOnly = transactionStatus === "Archived";
+
+  async function handleSaveTransactionControls() {
+    if (!id || isReadOnly) return;
+    const updated = await updateTransaction(id, {
+      status: transactionStatus || null,
+      closingDate: closingDate || null,
+    });
+    if (!updated) {
+      toast.error("Could not save transaction");
+      return;
+    }
+    await reloadTransaction();
+    toast.success("Saved");
+  }
 
   function handleStatusChange(status: TransactionStatus) {
     setTransactionStatus(status);
-  }
-
-  function handleAssignedAdminChange(admin: string) {
-    setAssignedAdmin(admin);
   }
 
   function handleClosingDateChange(date: string) {
     setClosingDate(date);
   }
 
-  function handleContractDateChange(date: string) {
-    setContractDate(date);
-  }
-
   async function handleChecklistTemplateSelect(templateId: string) {
     if (!id || isSavingChecklist) return;
     setIsSavingChecklist(true);
-    // Optimistic update: immediately update page state so checklistTemplateId and items populate
-    // even if persist fails (e.g. RLS). User sees the checklist; persist is best-effort.
-    setTransaction((prev) =>
-      prev ? { ...prev, checklist_template_id: templateId } : null
-    );
-    const items = await fetchChecklistItemsByTemplateId(templateId);
-    setChecklistItems(items);
-    const updated = await updateTransaction(id, { checklistTemplateId: templateId });
-    if (updated) {
-      setTransaction(updated);
+    try {
+      await updateTransaction(id, { checklistTemplateId: templateId });
+      await replaceChecklistItemsFromTemplate(id, templateId);
+      await reloadTransaction();
+    } finally {
+      setIsSavingChecklist(false);
     }
-    setIsSavingChecklist(false);
   }
 
   function handleOpenArchiveModal() {
@@ -703,6 +835,10 @@ export default function TransactionDetailsPage() {
     );
     if (!confirmed) return;
     const txn = transaction as TransactionRow & { identifier?: string; office?: string; agent?: string };
+    const engineDocs = checklistItems.map((item) =>
+      checklistItemForControlsToEngineDocument(item)
+    );
+    const readiness = getTransactionClosingReadiness(engineDocs);
     setArchiveMetadata({
       archivedAt: new Date(),
       archivedBy: { name: "Current User", role: "Admin" },
@@ -715,9 +851,11 @@ export default function TransactionDetailsPage() {
           status: "Closed",
         },
         documentSummary: {
-          requiredComplete: checklistItems.filter((i) => i.requirement === "required" && i.reviewStatus === "complete").length,
-          requiredWaived: checklistItems.filter((i) => i.requirement === "required" && i.reviewStatus === "waived").length,
-          optionalComplete: checklistItems.filter((i) => i.requirement === "optional" && i.reviewStatus === "complete").length,
+          requiredComplete: readiness.acceptedRequiredCount - (readiness.waivedRequiredCount ?? 0),
+          requiredWaived: readiness.waivedRequiredCount ?? 0,
+          optionalComplete: checklistItems.filter(
+            (i) => i.requirement === "optional" && i.reviewStatus === "complete"
+          ).length,
           totalDocuments: checklistItems.length,
         },
         activityLogCount: 0,
@@ -783,7 +921,6 @@ export default function TransactionDetailsPage() {
     row.identifier ||
     `Transaction ${row.id}`;
 
-  const clientValue = row.client_name || row.client || "—";
   const officeValue = row.office_name || row.office || "—";
 
   return (
@@ -792,49 +929,48 @@ export default function TransactionDetailsPage() {
         <TransactionOverview
           row={row}
           title={title}
-          clientValue={clientValue}
           officeValue={officeValue}
-          formatDate={formatDate}
           formatCurrency={formatCurrency}
-          onSave={handleSave}
+          onSave={() => {
+            void handleSaveTransactionControls();
+          }}
           onLaunchZipForms={handleLaunchZipForms}
           onEdit={handleEdit}
-          onCopyIntakeEmail={handleCopy}
         />
 
         <TransactionControls
           transactionStatus={transactionStatus}
           assignedAdmin={assignedAdmin}
           closingDate={closingDate}
-          contractDate={contractDate}
           checklistItems={checklistItems}
           isReadOnly={isReadOnly}
-          currentUserRole="Admin"
+          currentUserRole={currentUserRole}
           archiveMetadata={archiveMetadata}
           onStatusChange={handleStatusChange}
-          onAssignedAdminChange={handleAssignedAdminChange}
           onClosingDateChange={handleClosingDateChange}
-          onContractDateChange={handleContractDateChange}
           onOpenArchiveModal={handleOpenArchiveModal}
           onDownloadArchivePackage={handleDownloadArchivePackage}
           onViewArchivedActivityLog={() => {}}
+          intakeEmail={row.intake_email}
+          onCopyIntakeEmail={handleCopyIntakeEmail}
         />
 
-        <GeneratedIntakeEmail intakeEmail={row.intake_email} />
-
-        <TransactionInbox
-          transactionId={id}
-          inboxDocuments={inboxDocuments}
-          onInboxDocumentsChange={setInboxDocuments}
-          checklistItems={checklistItems}
-          onChecklistItemsChange={setChecklistItems}
-          addActivityEntry={addActivityEntry}
-          currentUserRole="Admin"
-          attachDrawerOpen={attachDrawerOpen}
-          attachTargetItem={attachTargetItem}
-          onAttachDrawerOpenChange={handleAttachDrawerOpenChange}
-          onAttachTargetChange={setAttachTargetItem}
-        />
+        <div className="space-y-3">
+          <h2 className="text-sm font-semibold text-slate-900 tracking-tight">Documents</h2>
+          <TransactionInbox
+            transactionId={id}
+            inboxDocuments={inboxDocuments}
+            onInboxDocumentsChange={setInboxDocuments}
+            checklistItems={checklistItems}
+            onChecklistItemsChange={setChecklistItems}
+            addActivityEntry={addActivityEntry}
+            currentUserRole={currentUserRole}
+            attachDrawerOpen={attachDrawerOpen}
+            attachTargetItem={attachTargetItem}
+            onAttachDrawerOpenChange={handleAttachDrawerOpenChange}
+            onAttachTargetChange={setAttachTargetItem}
+          />
+        </div>
 
         <Checklist
           checklistTemplateId={checklistTemplateId}
@@ -846,7 +982,19 @@ export default function TransactionDetailsPage() {
           onChecklistItemsChange={setChecklistItems}
           inboxDocuments={inboxDocuments}
           onInboxDocumentsChange={setInboxDocuments}
-          currentUserRole="Admin"
+          transactionContext={
+            transaction && id
+              ? {
+                  id,
+                  officeId: (transaction as TransactionRow & { office?: string }).office ?? "",
+                  agentUserId: (transaction as TransactionRow).agent_user_id ?? null,
+                  assignedAdminUserId: getAssignedAdminUserId(transaction as TransactionRow),
+                  closingDate: (transaction as TransactionRow).closing_date ?? null,
+                }
+              : null
+          }
+          currentUserId={sessionUserId}
+          currentUserRole={currentUserRole}
           isReadOnly={isReadOnly}
           addActivityEntry={addActivityEntry}
           onOpenAttachDrawer={handleOpenAttachDrawer}
@@ -998,7 +1146,7 @@ export default function TransactionDetailsPage() {
                       <div className="grid grid-cols-2 gap-2">
                         <button
                           onClick={() => { setReviewStatus("pending"); setNotifyAgent(false); }}
-                          disabled={!selectedItem.attachedDocument}
+                          disabled={!selectedItem.attachedDocument || !reviewModalPermissions.canReview}
                           className={`px-3 py-2 rounded-lg border-2 text-sm font-medium ${
                             reviewStatus === "pending"
                               ? "border-amber-600 bg-amber-50 text-amber-900"
@@ -1009,6 +1157,7 @@ export default function TransactionDetailsPage() {
                         >
                           Pending
                         </button>
+                        {reviewModalPermissions.canMarkAccepted && (
                         <button
                           onClick={() => {
                             setReviewStatus("complete");
@@ -1024,8 +1173,10 @@ export default function TransactionDetailsPage() {
                                 : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
                           }`}
                         >
-                          Complete
+                          Mark Accepted
                         </button>
+                        )}
+                        {reviewModalPermissions.canReview && (
                         <button
                           onClick={() => { setReviewStatus("rejected"); setNotifyAgent(true); }}
                           className={`px-3 py-2 rounded-lg border-2 text-sm font-medium ${
@@ -1036,6 +1187,8 @@ export default function TransactionDetailsPage() {
                         >
                           Rejected
                         </button>
+                        )}
+                        {reviewModalPermissions.canReview && (
                         <button
                           onClick={() => { setReviewStatus("waived"); setNotifyAgent(false); }}
                           className={`px-3 py-2 rounded-lg border-2 text-sm font-medium ${
@@ -1046,6 +1199,7 @@ export default function TransactionDetailsPage() {
                         >
                           Waived
                         </button>
+                        )}
                       </div>
                     </div>
                     {reviewStatus === "rejected" && (
@@ -1060,44 +1214,6 @@ export default function TransactionDetailsPage() {
                           onChange={(e) => setReviewNote(e.target.value)}
                           className="mt-1.5 min-h-[80px]"
                         />
-                        {!showRejectionLocationInputs ? (
-                          <button
-                            type="button"
-                            onClick={() => setShowRejectionLocationInputs(true)}
-                            className="mt-2 text-xs text-slate-500 hover:text-slate-700 underline underline-offset-2"
-                          >
-                            Add location (optional)
-                          </button>
-                        ) : (
-                          <div className="grid grid-cols-2 gap-2 mt-2">
-                            <div>
-                              <Label htmlFor="reviewRejectionPage" className="text-xs text-slate-500">
-                                Page (optional)
-                              </Label>
-                              <Input
-                                id="reviewRejectionPage"
-                                type="number"
-                                min={1}
-                                placeholder="e.g. 3"
-                                value={reviewRejectionPage}
-                                onChange={(e) => setReviewRejectionPage(e.target.value)}
-                                className="mt-0.5 h-8"
-                              />
-                            </div>
-                            <div>
-                              <Label htmlFor="reviewRejectionLocation" className="text-xs text-slate-500">
-                                Location (optional)
-                              </Label>
-                              <Input
-                                id="reviewRejectionLocation"
-                                placeholder="e.g. Section 3.2"
-                                value={reviewRejectionLocation}
-                                onChange={(e) => setReviewRejectionLocation(e.target.value)}
-                                className="mt-0.5 h-8"
-                              />
-                            </div>
-                          </div>
-                        )}
                         <div className="flex items-start gap-2 mt-2">
                           <Checkbox
                             id="notifyAgent"

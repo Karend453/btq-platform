@@ -1,45 +1,67 @@
-import { useState } from "react";
-import { signIn } from "../services/auth"; // use ../lib if you renamed Lib -> lib
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { signIn } from "../services/auth";
+import { useAuth } from "./contexts/AuthContext";
 
 export default function Login() {
+  const navigate = useNavigate();
+  const { user, loading: authLoading } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleLogin = async () => {
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+  useEffect(() => {
+    if (!authLoading && user) {
+      navigate("/", { replace: true });
+    }
+  }, [user, authLoading, navigate]);
 
-    if (error) {
-      alert(error.message);
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+    const result = await signIn(email, password);
+    setLoading(false);
+    if (result.success) {
+      window.location.href = "/";
     } else {
-        window.location.href = "/";
+      setError(result.message);
     }
   };
 
-  return (
-    <div style={{ padding: 40 }}>
-      <h2>BTQ Login</h2>
+  if (authLoading) {
+    return <div style={{ padding: 40 }}>Loading…</div>;
+  }
+  if (user) {
+    return null;
+  }
 
+  return (
+    <form onSubmit={handleLogin} style={{ padding: 40 }}>
+      <h2>BTQ Login</h2>
+      {error && <p style={{ color: "red", marginBottom: 12 }}>{error}</p>}
       <input
         placeholder="Email"
+        type="email"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
+        required
       />
       <br />
       <br />
-
       <input
         placeholder="Password"
         type="password"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
+        required
       />
       <br />
       <br />
-
-      <button onClick={handleLogin}>Login</button>
-    </div>
+      <button type="submit" disabled={loading}>
+        {loading ? "Signing in…" : "Login"}
+      </button>
+    </form>
   );
 }

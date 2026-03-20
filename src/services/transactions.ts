@@ -11,9 +11,13 @@ export type TransactionRow = {
   type: string | null;
   office: string | null;
   status: string | null;
+  /** Legacy or display; may also hold admin UID when `assigned_admin_user_id` is unset. */
   assignedadmin: string | null;
+  /** Preferred stable auth UID of assigned admin. */
+  assigned_admin_user_id: string | null;
   contractdate: string | null;
-  closingdate: string | null;
+  /** Supabase column `closing_date` */
+  closing_date: string | null;
   checklisttype: string | null;
   checklist_template_id: string | null;
   saleprice: number | null;
@@ -21,14 +25,25 @@ export type TransactionRow = {
   buyernames: string | null;
   listagent: string | null;
   buyeragent: string | null;
+  /** Stable auth UID of agent. Use for identity; listagent/buyeragent are display names only. */
+  agent_user_id: string | null;
   listcommissionpercent: string | null;
   buyercommissionpercent: string | null;
   listcommissionamount: string | null;
   buyercommissionamount: string | null;
+  transaction_side: string | null;
+  transaction_category: string | null;
+  lead_source: string | null;
+  gci: number | null;
+  referral_fee_amount: number | null;
   isarchived: boolean | null;
   archivedat: string | null;
 };
 
+/** Stable admin auth UID: prefer `assigned_admin_user_id`, else legacy `assignedadmin` when it holds the UID. */
+export function getAssignedAdminUserId(row: Pick<TransactionRow, "assigned_admin_user_id" | "assignedadmin">): string | null {
+  return row.assigned_admin_user_id ?? row.assignedadmin ?? null;
+}
 
 function toWorkItem(row: TransactionRow): WorkItem {
   const allowed: WorkItemStatus[] = ["error", "warning", "success", "pending", "info"];
@@ -44,7 +59,7 @@ function toWorkItem(row: TransactionRow): WorkItem {
       owner: row.assignedadmin ?? "",
       status,
       statusLabel: row.status ?? "",
-      dueDate: row.closingdate ?? "",
+      dueDate: row.closing_date ?? "",
       missingCount: 0,
       rejectedCount: 0,
       lastActivity: "",
@@ -120,38 +135,49 @@ export type UpdateTransactionInput = {
   buyerCommissionPercent?: string | null;
   listCommissionAmount?: string | null;
   buyerCommissionAmount?: string | null;
+
+  transactionSide?: string | null;
+  transactionCategory?: string | null;
+  leadSource?: string | null;
+  gci?: number | null;
+  referralFeeAmount?: number | null;
 };
 
 export async function updateTransaction(
   id: string,
   input: UpdateTransactionInput
 ) {
-  const { data, error } = await supabase
-    .from("transactions")
-    .update({
-      type: input.type,
-      office: input.office,
-      status: input.status,
-      assignedadmin: input.admin,
-      contractdate: input.contractDate,
-      closingdate: input.closingDate,
+  const patch = {
+    type: input.type,
+    office: input.office,
+    status: input.status,
+    assignedadmin: input.admin,
+    contractdate: input.contractDate,
+    closing_date: input.closingDate,
 
-      sellernames: input.sellerNames,
-      buyernames: input.buyerNames,
-      saleprice: input.salePrice,
-      checklisttype: input.checklistType,
-      checklist_template_id: input.checklistTemplateId,
+    sellernames: input.sellerNames,
+    buyernames: input.buyerNames,
+    saleprice: input.salePrice,
+    checklisttype: input.checklistType,
+    checklist_template_id: input.checklistTemplateId,
 
-      listagent: input.listAgent,
-      buyeragent: input.buyerAgent,
-      listcommissionpercent: input.listCommissionPercent,
-      buyercommissionpercent: input.buyerCommissionPercent,
-      listcommissionamount: input.listCommissionAmount,
-      buyercommissionamount: input.buyerCommissionAmount,
-    })
-    .eq("id", id)
-    .select()
-    .single();
+    listagent: input.listAgent,
+    buyeragent: input.buyerAgent,
+    listcommissionpercent: input.listCommissionPercent,
+    buyercommissionpercent: input.buyerCommissionPercent,
+    listcommissionamount: input.listCommissionAmount,
+    buyercommissionamount: input.buyerCommissionAmount,
+
+    transaction_side: input.transactionSide,
+    transaction_category: input.transactionCategory,
+    lead_source: input.leadSource,
+    gci: input.gci,
+    referral_fee_amount: input.referralFeeAmount,
+  };
+
+  console.log("[updateTransaction] public.transactions patch keys:", Object.keys(patch));
+
+  const { data, error } = await supabase.from("transactions").update(patch).eq("id", id).select().single();
 
   console.log("updateTransaction data:", data);
   console.log("updateTransaction error:", error);

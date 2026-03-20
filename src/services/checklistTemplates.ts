@@ -20,10 +20,18 @@ export interface ChecklistItemFromTemplate {
   section_id?: string | null;
   section?: { name: string; sort_order: number };
   sort_order?: number;
+  /** `checklist_items.document_id` — use to resolve attachment when inbox join misses (id type mismatch). */
+  documentId?: string | null;
+  reviewNote?: string | null;
 }
 
-type DbSection = { id: string; template_id: string; name: string | null; sort_order: number | null };
-type DbItem = {
+export type ChecklistTemplateSectionRow = {
+  id: string;
+  template_id: string;
+  name: string | null;
+  sort_order: number | null;
+};
+export type ChecklistTemplateItemRow = {
   id: string;
   template_id: string;
   section_id: string | null;
@@ -31,6 +39,9 @@ type DbItem = {
   requirement: string | null;
   sort_order: number | null;
 };
+
+type DbSection = ChecklistTemplateSectionRow;
+type DbItem = ChecklistTemplateItemRow;
 
 export type ChecklistTemplate = { id: string; name: string };
 
@@ -90,13 +101,11 @@ function mapItemsToChecklist(
 }
 
 /**
- * Fetches a checklist template by ID and its sections/items from Supabase,
- * then maps them into the ChecklistItem UI shape.
- * Sections ordered by sort_order; items ordered by sort_order within each section.
+ * Raw template sections + items (for ordering / section labels when merging transaction checklist rows).
  */
-export async function fetchChecklistItemsByTemplateId(
+export async function fetchChecklistTemplateSectionsAndItems(
   templateId: string
-): Promise<ChecklistItemFromTemplate[]> {
+): Promise<{ sections: DbSection[]; items: DbItem[] } | null> {
   const [sectionsRes, itemsRes] = await Promise.all([
     supabase
       .from("checklist_template_sections")
@@ -112,10 +121,24 @@ export async function fetchChecklistItemsByTemplateId(
 
   if (sectionsRes.error || itemsRes.error) {
     console.error("Failed to load checklist sections/items", sectionsRes.error ?? itemsRes.error);
-    return [];
+    return null;
   }
 
-  const sections = (sectionsRes.data ?? []) as DbSection[];
-  const items = (itemsRes.data ?? []) as DbItem[];
-  return mapItemsToChecklist(sections, items);
+  return {
+    sections: (sectionsRes.data ?? []) as DbSection[],
+    items: (itemsRes.data ?? []) as DbItem[],
+  };
+}
+
+/**
+ * Fetches a checklist template by ID and its sections/items from Supabase,
+ * then maps them into the ChecklistItem UI shape.
+ * Sections ordered by sort_order; items ordered by sort_order within each section.
+ */
+export async function fetchChecklistItemsByTemplateId(
+  templateId: string
+): Promise<ChecklistItemFromTemplate[]> {
+  const raw = await fetchChecklistTemplateSectionsAndItems(templateId);
+  if (!raw) return [];
+  return mapItemsToChecklist(raw.sections, raw.items);
 }

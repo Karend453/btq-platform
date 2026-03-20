@@ -24,10 +24,14 @@ export type InboxDocumentShape = {
 };
 
 function rowToInboxDocument(row: TransactionDocumentRow): InboxDocumentShape {
+  const storagePath =
+    row.storage_path ??
+    (row as unknown as { storagePath?: string }).storagePath ??
+    "";
   return {
     id: row.id,
     filename: row.file_name,
-    storage_path: row.storage_path,
+    storage_path: typeof storagePath === "string" ? storagePath.trim() : "",
     receivedAt: new Date(row.created_at),
     isAttached: !!row.attached_to_checklist_item_id,
     attachedToItemId: row.attached_to_checklist_item_id ?? undefined,
@@ -37,16 +41,25 @@ function rowToInboxDocument(row: TransactionDocumentRow): InboxDocumentShape {
 /**
  * Get a signed URL for viewing a document in storage.
  * URL expires after 1 hour (3600 seconds).
+ * Requires storage RLS: authenticated users need SELECT on storage.objects for bucket 'transaction-documents'.
+ * See migration 20250319000000_storage_transaction_documents_policies.sql.
  */
 export async function getSignedUrl(storagePath: string): Promise<string | null> {
-  const { data, error } = await supabase.storage
-    .from(BUCKET)
-    .createSignedUrl(storagePath, 3600);
-
-  if (error) {
-    console.error("Failed to create signed URL:", error);
+  const path = (storagePath ?? "").trim();
+  if (!path) {
+    console.error("[getSignedUrl] Empty storage path");
     return null;
   }
+
+  const { data, error } = await supabase.storage
+    .from(BUCKET)
+    .createSignedUrl(path, 3600);
+
+  if (error) {
+    console.error("[getSignedUrl] Failed:", error.message, "path:", path);
+    return null;
+  }
+
   return data?.signedUrl ?? null;
 }
 
@@ -102,24 +115,34 @@ export async function uploadDocument(
 
 /**
  * Attach or detach a document to/from a checklist item.
- * Persists attached_to_checklist_item_id to Supabase.
+ * Persists checklist_items.document_id (FK to transaction_documents).
  * @param documentId - transaction_documents.id
- * @param checklistItemId - checklist item id, or null to detach
+ * @param checklistItemId - checklist item id, or null to detach this document from any item
  * @returns true on success, false on error
  */
 export async function attachDocumentToChecklistItem(
   documentId: string,
   checklistItemId: string | null
 ): Promise<boolean> {
-  const { data, error } = await supabase
-    .from("transaction_documents")
-    .update({ attached_to_checklist_item_id: checklistItemId })
-    .eq("id", documentId)
-    .select("id, attached_to_checklist_item_id")
-    .single();
+  if (checklistItemId === null) {
+    const { error } = await supabase
+      .from("checklist_items")
+      .update({ document_id: null })
+      .eq("document_id", documentId);
 
-  // [DEBUG] Attach persistence
-  console.log("[attachDocumentToChecklistItem] documentId:", documentId, "checklistItemId:", checklistItemId, "result:", { data, error });
+    if (error) {
+      console.error("[attachDocumentToChecklistItem] detach failed:", error);
+      return false;
+    }
+    return true;
+  }
+
+  const { error } = await supabase
+    .from("checklist_items")
+    .update({ document_id: documentId })
+    .eq("id", checklistItemId)
+    .select("id, document_id")
+    .single();
 
   if (error) {
     console.error("[attachDocumentToChecklistItem] DB update failed:", error);
@@ -145,12 +168,26 @@ export async function fetchDocumentsByTransactionId(
     return [];
   }
 
-  const docs = (data ?? []).map((row) => rowToInboxDocument(row as TransactionDocumentRow));
-  // [DEBUG] Fetched documents with attached_to_checklist_item_id
-  docs.forEach((d) => {
-    if (d.attachedToItemId) {
-      console.log("[fetchDocumentsByTransactionId] doc id:", d.id, "attachedToItemId:", d.attachedToItemId);
+  const { data: checklistRows } = await supabase
+    .from("checklist_items")
+    .select("id, document_id")
+    .eq("transaction_id", transactionId)
+    .not("document_id", "is", null);
+
+  const docIdToChecklistItemId = new Map<string, string>();
+  for (const row of checklistRows ?? []) {
+    if (row.document_id) {
+      docIdToChecklistItemId.set(String(row.document_id), String(row.id));
     }
+  }
+
+  return (data ?? []).map((row) => {
+    const base = rowToInboxDocument(row as TransactionDocumentRow);
+    const attachedToItemId = docIdToChecklistItemId.get(row.id);
+    return {
+      ...base,
+      isAttached: !!attachedToItemId,
+      attachedToItemId: attachedToItemId ?? undefined,
+    };
   });
-  return docs;
 }

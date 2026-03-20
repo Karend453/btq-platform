@@ -1,4 +1,6 @@
-import { Bell, ChevronDown, Settings, User } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Bell, ChevronDown, LogOut, Settings, User } from "lucide-react";
+import { signOut } from "../../../services/auth";
 import {
   Select,
   SelectContent,
@@ -27,6 +29,7 @@ interface DashboardHeaderProps {
   selectedOffice: string;
   onOfficeChange: (officeId: string) => void;
   userName?: string;
+  userEmail?: string;
   notificationCount?: number;
 }
 
@@ -35,8 +38,15 @@ export function DashboardHeader({
   selectedOffice,
   onOfficeChange,
   userName = "Admin User",
+  userEmail,
   notificationCount = 0,
 }: DashboardHeaderProps) {
+  const navigate = useNavigate();
+
+  const handleLogout = async () => {
+    await signOut();
+    navigate("/login", { replace: true });
+  };
   return (
     <header className="bg-white border-b border-slate-200 px-6 py-3">
       <div className="flex items-center justify-between">
@@ -76,7 +86,7 @@ export function DashboardHeader({
             <Settings className="h-5 w-5" />
           </Button>
 
-          {/* User Menu */}
+          {/* User Menu / Who am I */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" className="flex items-center gap-2">
@@ -85,10 +95,16 @@ export function DashboardHeader({
                     {userName
                       .split(" ")
                       .map((n) => n[0])
-                      .join("")}
+                      .join("")
+                      .slice(0, 2) || "?"}
                   </AvatarFallback>
                 </Avatar>
-                <span className="text-sm">{userName}</span>
+                <div className="text-left">
+                  <span className="text-sm block">{userName}</span>
+                  {userEmail && (
+                    <span className="text-xs text-slate-500 block">{userEmail}</span>
+                  )}
+                </div>
                 <ChevronDown className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
@@ -104,7 +120,10 @@ export function DashboardHeader({
                 Settings
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem>Log out</DropdownMenuItem>
+              <DropdownMenuItem onClick={handleLogout}>
+                <LogOut className="mr-2 h-4 w-4" />
+                Log out
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
