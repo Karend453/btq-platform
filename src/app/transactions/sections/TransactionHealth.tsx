@@ -11,7 +11,7 @@ export default function TransactionHealth({ checklistItems }: TransactionHealthP
   const engineDocs = checklistItems.map((item) =>
     checklistItemForControlsToEngineDocument(item)
   );
-  const { isReadyToClose, missingRequiredCount, pendingReviewCount } =
+  const { isReadyToClose, missingRequiredCount, pendingReviewCount, rejectedComplianceCount } =
     getTransactionHealthSectionMetrics(engineDocs);
 
   return (
@@ -47,8 +47,12 @@ export default function TransactionHealth({ checklistItems }: TransactionHealthP
               <span className="font-medium tabular-nums text-slate-900">{missingRequiredCount}</span>
             </li>
             <li>
-              <span className="text-slate-600">Required documents pending review:</span>{" "}
+              <span className="text-slate-600">Pending review (compliance):</span>{" "}
               <span className="font-medium tabular-nums text-slate-900">{pendingReviewCount}</span>
+            </li>
+            <li>
+              <span className="text-slate-600">Rejected (compliance):</span>{" "}
+              <span className="font-medium tabular-nums text-slate-900">{rejectedComplianceCount}</span>
             </li>
           </ul>
         </div>

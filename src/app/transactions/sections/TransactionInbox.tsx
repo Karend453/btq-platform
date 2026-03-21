@@ -69,6 +69,8 @@ export interface ChecklistItem {
   /** `checklist_items.document_id` — stable link to `transaction_documents.id`. */
   documentId?: string | null;
   reviewNote?: string | null;
+  /** false = reference/supplemental; not reviewed for compliance. */
+  isComplianceDocument?: boolean;
 }
 
 type InboxFilter = "all" | "unattached" | "recent";
@@ -208,11 +210,12 @@ export default function TransactionInbox({
     let newReviewStatus = attachTargetItem.reviewStatus;
     let statusAutoReset = false;
 
+    const isReferenceOnly = attachTargetItem.isComplianceDocument === false;
     if (!isReplacement) {
-      newReviewStatus = "pending";
+      newReviewStatus = isReferenceOnly ? "complete" : "pending";
     } else if (previousStatus === "complete" || previousStatus === "rejected") {
-      newReviewStatus = "pending";
-      statusAutoReset = true;
+      newReviewStatus = isReferenceOnly ? "complete" : "pending";
+      statusAutoReset = !isReferenceOnly;
     }
 
     onChecklistItemsChange(
@@ -489,6 +492,11 @@ export default function TransactionInbox({
                 ? `Select a document to attach to "${attachTargetItem.name}"`
                 : "Select a document from inbox"}
             </SheetDescription>
+            {attachTargetItem?.isComplianceDocument === false && (
+              <p className="text-xs text-slate-600 mt-2">
+                Reference documents are not reviewed for compliance
+              </p>
+            )}
           </SheetHeader>
 
           <div className="space-y-6 py-6">

@@ -23,6 +23,8 @@ export interface ChecklistItemFromTemplate {
   /** `checklist_items.document_id` — use to resolve attachment when inbox join misses (id type mismatch). */
   documentId?: string | null;
   reviewNote?: string | null;
+  /** false = reference/supplemental only (not sent to compliance when attached). */
+  isComplianceDocument?: boolean;
 }
 
 export type ChecklistTemplateSectionRow = {
@@ -38,6 +40,7 @@ export type ChecklistTemplateItemRow = {
   name: string;
   requirement: string | null;
   sort_order: number | null;
+  is_compliance_document?: boolean | null;
 };
 
 type DbSection = ChecklistTemplateSectionRow;
@@ -60,6 +63,26 @@ export async function fetchChecklistTemplates(): Promise<ChecklistTemplate[]> {
   }
 
   return (data ?? []) as ChecklistTemplate[];
+}
+
+/**
+ * Resolves which checklist template to attach at transaction creation so
+ * `TransactionDetailsPage` can seed/load rows (`checklist_template_id` must be set).
+ * Prefers a template whose name contains the transaction type; otherwise the first template.
+ */
+export async function resolveChecklistTemplateForNewTransaction(
+  transactionType: string
+): Promise<ChecklistTemplate | null> {
+  const templates = await fetchChecklistTemplates();
+  if (templates.length === 0) return null;
+
+  const needle = transactionType.trim().toLowerCase();
+  if (needle) {
+    const match = templates.find((t) => t.name.toLowerCase().includes(needle));
+    if (match) return match;
+  }
+
+  return templates[0];
 }
 
 function mapItemsToChecklist(
@@ -96,6 +119,7 @@ function mapItemsToChecklist(
         ? { name: section.name ?? "Other", sort_order: section.sortOrder }
         : undefined,
       sort_order: item.sort_order ?? 9999,
+      isComplianceDocument: item.is_compliance_document !== false,
     };
   });
 }
@@ -114,7 +138,7 @@ export async function fetchChecklistTemplateSectionsAndItems(
       .order("sort_order", { ascending: true, nullsFirst: false }),
     supabase
       .from("checklist_template_items")
-      .select("id, template_id, section_id, name, requirement, sort_order")
+      .select("id, template_id, section_id, name, requirement, sort_order, is_compliance_document")
       .eq("template_id", templateId)
       .order("sort_order", { ascending: true, nullsFirst: false }),
   ]);

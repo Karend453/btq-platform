@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { toast } from "sonner";
 import { getTransaction, updateTransaction, type TransactionRow } from "../../services/transactions";
 
 type FormData = {
@@ -132,7 +133,7 @@ export default function EditTransactionDetails() {
     }
   
     try {
-      const result = await updateTransaction(id, {
+      const { data, error } = await updateTransaction(id, {
         type: formData.type || null,
         office: formData.office || null,
         status: formData.status || null,
@@ -160,9 +161,13 @@ export default function EditTransactionDetails() {
           ? Number(formData.referralFeeAmount)
           : null,
       });
-  
-      console.log("updateTransaction result:", result);
-  
+
+      if (error || !data) {
+        console.error("[EditTransactionDetails] updateTransaction", error);
+        toast.error(error?.message ?? "Failed to save transaction details.");
+        return;
+      }
+
       navigate(`/transactions/${id}`);
     } catch (error) {
       console.error("Failed to save transaction details:", error);

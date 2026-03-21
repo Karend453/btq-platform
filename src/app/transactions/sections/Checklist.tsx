@@ -302,11 +302,12 @@ export default function Checklist({
     let newReviewStatus = item.reviewStatus;
     let statusAutoReset = false;
 
+    const isReferenceOnly = item.isComplianceDocument === false;
     if (!isReplacement) {
-      newReviewStatus = "pending";
+      newReviewStatus = isReferenceOnly ? "complete" : "pending";
     } else if (previousStatus === "complete" || previousStatus === "rejected") {
-      newReviewStatus = "pending";
-      statusAutoReset = true;
+      newReviewStatus = isReferenceOnly ? "complete" : "pending";
+      statusAutoReset = !isReferenceOnly;
     }
 
     onChecklistItemsChange(
@@ -523,6 +524,11 @@ export default function Checklist({
                       <Badge variant="outline" className="bg-slate-50 text-slate-500 border-slate-300 text-xs">
                         Needs attachment
                       </Badge>
+                    )}
+                    {item.isComplianceDocument === false && (
+                      <p className="text-xs text-slate-500 mt-1 max-w-xl">
+                        Reference documents are not reviewed for compliance
+                      </p>
                     )}
                   </div>
                   {item.attachedDocument && (

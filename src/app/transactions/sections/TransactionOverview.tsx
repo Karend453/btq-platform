@@ -10,6 +10,8 @@ type TransactionOverviewSectionProps = {
   };
   title: string;
   officeValue: string;
+  /** Agent of record for this deal (list/buyer); shown for admin review context. */
+  agentDisplayName?: string | null;
   formatCurrency: (value?: number | string | null) => string;
   onSave: () => void;
   onLaunchZipForms: () => void;
@@ -65,6 +67,7 @@ export default function TransactionOverviewSection({
   row,
   title,
   officeValue,
+  agentDisplayName,
   formatCurrency,
   onSave,
   onLaunchZipForms,
@@ -97,27 +100,32 @@ export default function TransactionOverviewSection({
               Save
             </Button>
 
-            <div>
-              <h1
-                style={{
-                  fontSize: 28,
-                  fontWeight: 700,
-                  color: "#0f172a",
-                  margin: 0,
-                }}
-              >
-                {title}
-              </h1>
-              <div
-                style={{
-                  marginTop: 6,
-                  fontSize: 14,
-                  color: "#64748b",
-                }}
-              >
-                Summary — edit details to complete reporting & financial data
+              <div>
+                <h1
+                  style={{
+                    fontSize: 28,
+                    fontWeight: 700,
+                    color: "#0f172a",
+                    margin: 0,
+                  }}
+                >
+                  {title}
+                </h1>
+                {(agentDisplayName ?? "").trim() ? (
+                  <div style={{ marginTop: 8, fontSize: 14, color: "#334155", fontWeight: 600 }}>
+                    Agent: {agentDisplayName}
+                  </div>
+                ) : null}
+                <div
+                  style={{
+                    marginTop: 6,
+                    fontSize: 14,
+                    color: "#64748b",
+                  }}
+                >
+                  Summary — edit details to complete reporting & financial data
+                </div>
               </div>
-            </div>
           </div>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>

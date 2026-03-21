@@ -12,6 +12,7 @@ type DbChecklistItem = {
   template_item_id: string;
   name: string;
   required: boolean;
+  is_compliance_document?: boolean | null;
   status: string | null;
   reviewstatus: string | null;
   reviewnote: string | null;
@@ -104,6 +105,7 @@ function mapRowsToChecklist(
       sort_order: templateItem?.sort_order ?? 9999,
       documentId: row.document_id ?? null,
       reviewNote: row.reviewnote ?? null,
+      isComplianceDocument: row.is_compliance_document !== false,
     };
   });
 }
@@ -130,7 +132,7 @@ export async function ensureChecklistItemsForTransaction(
 
   const { data: items, error } = await supabase
     .from("checklist_template_items")
-    .select("id, name, requirement")
+    .select("id, name, requirement, is_compliance_document")
     .eq("template_id", templateId);
 
   if (error || !items?.length) {
@@ -143,15 +145,19 @@ export async function ensureChecklistItemsForTransaction(
     template_item_id: ti.id,
     name: ti.name,
     required: ti.requirement !== "optional",
+    is_compliance_document: (ti as { is_compliance_document?: boolean | null }).is_compliance_document !== false,
     status: "pending",
     reviewstatus: "pending",
     reviewnote: null as string | null,
   }));
 
-  const { error: insertError } = await supabase.from("checklist_items").insert(rows);
+  const { error: upsertError } = await supabase.from("checklist_items").upsert(rows, {
+    onConflict: "transaction_id,template_item_id",
+    ignoreDuplicates: true,
+  });
 
-  if (insertError) {
-    console.error("ensureChecklistItemsForTransaction insert", insertError);
+  if (upsertError) {
+    console.error("ensureChecklistItemsForTransaction upsert", upsertError);
     return false;
   }
 
@@ -177,7 +183,7 @@ export async function replaceChecklistItemsFromTemplate(
 
   const { data: items, error } = await supabase
     .from("checklist_template_items")
-    .select("id, name, requirement")
+    .select("id, name, requirement, is_compliance_document")
     .eq("template_id", templateId);
 
   if (error || !items?.length) {
@@ -190,6 +196,7 @@ export async function replaceChecklistItemsFromTemplate(
     template_item_id: ti.id,
     name: ti.name,
     required: ti.requirement !== "optional",
+    is_compliance_document: (ti as { is_compliance_document?: boolean | null }).is_compliance_document !== false,
     status: "pending",
     reviewstatus: "pending",
     reviewnote: null as string | null,
@@ -205,6 +212,45 @@ export async function replaceChecklistItemsFromTemplate(
 /**
  * Load persisted checklist rows for a transaction and merge template metadata for section order/labels.
  */
+/**
+ * Compliance-only counts per transaction (for transaction list indicators).
+ */
+export async function fetchComplianceDocCountsByTransactionIds(
+  transactionIds: string[]
+): Promise<Record<string, { pending: number; rejected: number }>> {
+  const empty: Record<string, { pending: number; rejected: number }> = {};
+  if (transactionIds.length === 0) return empty;
+
+  const { data, error } = await supabase
+    .from("checklist_items")
+    .select("transaction_id, reviewstatus, is_compliance_document, document_id")
+    .in("transaction_id", transactionIds);
+
+  if (error) {
+    console.error("fetchComplianceDocCountsByTransactionIds", error);
+    return empty;
+  }
+
+  for (const id of transactionIds) {
+    empty[id] = { pending: 0, rejected: 0 };
+  }
+
+  for (const row of data ?? []) {
+    const tid = row.transaction_id as string;
+    if (!tid || !empty[tid]) continue;
+    const isComp = row.is_compliance_document !== false;
+    if (!isComp) continue;
+    // Match documentEngine/adapter: no attachment => NOT_SUBMITTED, not SUBMITTED/REJECTED.
+    const hasDoc = row.document_id != null;
+    if (!hasDoc) continue;
+    const rs = String(row.reviewstatus ?? "").toLowerCase();
+    if (rs === "pending") empty[tid].pending += 1;
+    if (rs === "rejected") empty[tid].rejected += 1;
+  }
+
+  return empty;
+}
+
 export async function fetchChecklistItemsForTransaction(
   transactionId: string,
   templateId: string
@@ -212,7 +258,7 @@ export async function fetchChecklistItemsForTransaction(
   const { data: rows, error } = await supabase
     .from("checklist_items")
     .select(
-      "id, transaction_id, template_item_id, name, required, status, reviewstatus, reviewnote, document_id"
+      "id, transaction_id, template_item_id, name, required, is_compliance_document, status, reviewstatus, reviewnote, document_id"
     )
     .eq("transaction_id", transactionId);
 

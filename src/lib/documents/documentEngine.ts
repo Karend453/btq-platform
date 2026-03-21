@@ -31,6 +31,11 @@ import type {
   ScopeType,
 } from "./types";
 
+/** Reference/supplemental rows (not in compliance). Default true when unset (legacy rows). */
+export function isComplianceWorkflowDocument(document: DocumentEngineDocument): boolean {
+  return document.isComplianceDocument !== false;
+}
+
 // ─── Status mapping ──────────────────────────────────────────────────────────
 /** Map workflow/review state to canonical DocumentStatus. Pure mapping; no attachment logic. */
 export function toCanonicalStatus(
@@ -63,6 +68,7 @@ export function isWaived(document: DocumentEngineDocument): boolean {
  * NOT_SUBMITTED/REJECTED => AGENT; SUBMITTED => ADMIN; ACCEPTED => NONE.
  */
 export function getCurrentActionOwner(document: DocumentEngineDocument): CurrentActionOwner {
+  if (!isComplianceWorkflowDocument(document)) return "NONE";
   if (document.waived) return "NONE";
   switch (document.status) {
     case "NOT_SUBMITTED":
@@ -78,12 +84,12 @@ export function getCurrentActionOwner(document: DocumentEngineDocument): Current
 }
 
 /**
- * Blocking = required AND not waived AND (no attachment OR status != ACCEPTED).
- * Attachment presence and status are separate facts; both used for blocking.
- * Waived satisfies closing readiness but remains audit-distinct (waived flag).
- * Optional docs are always non-blocking.
+ * Blocking = compliance + required AND not waived AND (no attachment OR status != ACCEPTED).
+ * Optional docs are always non-blocking (including optional compliance).
+ * Non-compliance reference docs never block.
  */
 export function isBlockingDocument(document: DocumentEngineDocument): boolean {
+  if (!isComplianceWorkflowDocument(document)) return false;
   if (!document.required) return false;
   if (document.waived) return false;
   const hasAttachment = document.hasAttachment ?? false;
@@ -102,6 +108,7 @@ export function canUserReviewDocument(
   document: DocumentEngineDocument,
   transactionContext?: DocumentEngineTransaction | null
 ): boolean {
+  if (!isComplianceWorkflowDocument(document)) return false;
   // Assigned admin (stable UID on transaction) can always review, even when UI role is AGENT
   // or office scope does not match (getCurrentUserRole / officeIds can be wrong).
   if (
@@ -252,6 +259,7 @@ export function buildAgentQueue(
 ): QueueDocumentItem[] {
   const items: QueueDocumentItem[] = [];
   for (const doc of documents) {
+    if (!isComplianceWorkflowDocument(doc)) continue;
     const txn = transactionMap?.get(doc.transactionId);
     const state = getDocumentState(doc, user, txn, activeView, scopeType);
     if (!state.isVisible) continue;
@@ -362,7 +370,9 @@ export function buildBrokerQueue(
 export function getTransactionClosingReadiness(
   transactionDocuments: DocumentEngineDocument[]
 ): ClosingReadiness {
-  const required = transactionDocuments.filter((d) => d.required);
+  const required = transactionDocuments.filter(
+    (d) => isComplianceWorkflowDocument(d) && d.required
+  );
   const blocking = required.filter((d) => isBlockingDocument(d));
   const submitted = required.filter((d) => d.status === "SUBMITTED");
   const rejected = required.filter((d) => d.status === "REJECTED");
@@ -419,7 +429,8 @@ export function getCloseValidationIssues(
 
 /**
  * Compact metrics for Transaction Health UI (detail page + dashboard).
- * Pending review count = required items in SUBMITTED state (same as closing issues / blocking).
+ * Pending/rejected = all compliance docs in SUBMITTED / REJECTED (includes optional when attached/in workflow).
+ * Missing required stays on readiness (required-only, via getTransactionClosingReadiness).
  */
 export function getTransactionHealthSectionMetrics(
   transactionDocuments: DocumentEngineDocument[]
@@ -427,12 +438,17 @@ export function getTransactionHealthSectionMetrics(
   isReadyToClose: boolean;
   missingRequiredCount: number;
   pendingReviewCount: number;
+  rejectedComplianceCount: number;
 } {
   const readiness = getTransactionClosingReadiness(transactionDocuments);
+  const compliance = transactionDocuments.filter((d) => isComplianceWorkflowDocument(d));
+  const pendingReviewCount = compliance.filter((d) => d.status === "SUBMITTED").length;
+  const rejectedComplianceCount = compliance.filter((d) => d.status === "REJECTED").length;
   return {
     isReadyToClose: readiness.isReadyToClose,
     missingRequiredCount: readiness.missingRequiredCount,
-    pendingReviewCount: readiness.submittedRequiredCount,
+    pendingReviewCount,
+    rejectedComplianceCount,
   };
 }
 
@@ -453,6 +469,7 @@ export function getTransactionHealth(
   let blockingCount = 0;
 
   for (const doc of documents) {
+    if (!isComplianceWorkflowDocument(doc)) continue;
     const owner = getCurrentActionOwner(doc);
     if (owner === "AGENT") itemsWaitingOnAgent++;
     if (owner === "ADMIN") itemsWaitingOnAdmin++;

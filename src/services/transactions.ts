@@ -2,6 +2,16 @@
 
 import { WorkItem, WorkItemStatus } from "../types/workItem";
 import { supabase } from "../lib/supabaseClient";
+import type { PostgrestError } from "@supabase/supabase-js";
+import { getCurrentUser } from "./auth";
+import { resolveChecklistTemplateForNewTransaction } from "./checklistTemplates";
+import { fetchComplianceDocCountsByTransactionIds } from "./checklistItems";
+
+function compactDefined<T extends Record<string, unknown>>(row: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(row).filter(([, v]) => v !== undefined)
+  ) as Partial<T>;
+}
 
 
 export type TransactionRow = {
@@ -45,6 +55,36 @@ export function getAssignedAdminUserId(row: Pick<TransactionRow, "assigned_admin
   return row.assigned_admin_user_id ?? row.assignedadmin ?? null;
 }
 
+/**
+ * Display label for the transaction agent. `agent_user_id` is canonical; list/buyer names are
+ * only used as display hints, chosen by `transaction_side` so we don't default to buyer first.
+ * (Cross-user profile/email is not available from the client under current user_profiles RLS.)
+ */
+export function getAssignedAgentDisplayNameFromRow(row: TransactionRow): string {
+  const list = (row.listagent ?? "").trim();
+  const buyer = (row.buyeragent ?? "").trim();
+  const hasAgentUid = !!(row.agent_user_id && String(row.agent_user_id).trim());
+
+  if (!hasAgentUid) {
+    if (list) return list;
+    if (buyer) return buyer;
+    return "";
+  }
+
+  const side = (row.transaction_side ?? "").toLowerCase();
+  const buyerSide =
+    /\b(buyer|purchase|buy\s*side|buyer's)\b/.test(side) ||
+    side.includes("buyer");
+  const sellerSide =
+    /\b(seller|list|listing|sell\s*side|seller's)\b/.test(side) ||
+    side.includes("seller") ||
+    side.includes("list");
+
+  if (buyerSide && !sellerSide) return buyer || list;
+  if (sellerSide && !buyerSide) return list || buyer;
+  return list || buyer;
+}
+
 function toWorkItem(row: TransactionRow): WorkItem {
   const allowed: WorkItemStatus[] = ["error", "warning", "success", "pending", "info"];
 
@@ -52,22 +92,26 @@ function toWorkItem(row: TransactionRow): WorkItem {
     ? (row.status as WorkItemStatus)
     : "info";
 
-    return {
-      id: row.id,
-      identifier: row.identifier ?? row.id,
-      type: row.type ?? "",
-      owner: row.assignedadmin ?? "",
-      status,
-      statusLabel: row.status ?? "",
-      dueDate: row.closing_date ?? "",
-      missingCount: 0,
-      rejectedCount: 0,
-      lastActivity: "",
-      organizationId: `org_${(row.office ?? "unknown").toLowerCase().replace(/\s+/g, "_")}`,
-      organizationName: row.office ?? "",
-      isArchived: row.isarchived ?? false,
-      archivedBy: null,
-    };
+  const agentDisplayName = getAssignedAgentDisplayNameFromRow(row);
+
+  return {
+    id: row.id,
+    identifier: row.identifier ?? row.id,
+    type: row.type ?? "",
+    owner: row.assignedadmin ?? "",
+    agentDisplayName: agentDisplayName || undefined,
+    status,
+    statusLabel: row.status ?? "",
+    rawTransactionStatus: row.status ?? undefined,
+    dueDate: row.closing_date ?? "",
+    missingCount: 0,
+    rejectedCount: 0,
+    lastActivity: "",
+    organizationId: `org_${(row.office ?? "unknown").toLowerCase().replace(/\s+/g, "_")}`,
+    organizationName: row.office ?? "",
+    isArchived: row.isarchived ?? false,
+    archivedBy: null,
+  };
 }
   
 export async function getTransaction(id: string): Promise<TransactionRow | null> {
@@ -93,14 +137,33 @@ type CreateTransactionInput = {
 };
 
 export async function createTransaction(input: CreateTransactionInput): Promise<WorkItem | null> {
+  const user = await getCurrentUser();
+  if (!user?.id) {
+    console.error("[createTransaction] no authenticated user; cannot set agent_user_id");
+    return null;
+  }
+
+  const checklistTemplate = await resolveChecklistTemplateForNewTransaction(input.type);
+
   const payload = {
     identifier: input.identifier,
     type: input.type,
     clientname: input.clientName,
     office: input.officeId,
+    status: "Pre-Contract",
     isarchived: false,
     archivedat: null,
+    agent_user_id: user.id,
+    ...(checklistTemplate
+      ? {
+          checklist_template_id: checklistTemplate.id,
+          checklisttype: checklistTemplate.name,
+        }
+      : {}),
   };
+
+  // TODO: remove after RLS insert path verified
+  console.log("[createTransaction] public.transactions insert payload:", payload);
 
   const { data, error } = await supabase
     .from("transactions")
@@ -109,6 +172,8 @@ export async function createTransaction(input: CreateTransactionInput): Promise<
     .single();
 
   if (error) {
+    // TODO: remove after RLS insert path verified
+    console.error("[createTransaction] supabase insert error:", error);
     console.error("Failed to create transaction", error);
     return null;
   }
@@ -141,13 +206,21 @@ export type UpdateTransactionInput = {
   leadSource?: string | null;
   gci?: number | null;
   referralFeeAmount?: number | null;
+
+  /** Set when claiming a legacy row with null agent_user_id (RLS + client must allow). */
+  agentUserId?: string | null;
+};
+
+export type UpdateTransactionResult = {
+  data: TransactionRow | null;
+  error: PostgrestError | null;
 };
 
 export async function updateTransaction(
   id: string,
   input: UpdateTransactionInput
-) {
-  const patch = {
+): Promise<UpdateTransactionResult> {
+  const patch = compactDefined({
     type: input.type,
     office: input.office,
     status: input.status,
@@ -173,21 +246,27 @@ export async function updateTransaction(
     lead_source: input.leadSource,
     gci: input.gci,
     referral_fee_amount: input.referralFeeAmount,
-  };
+    agent_user_id: input.agentUserId,
+  });
 
-  console.log("[updateTransaction] public.transactions patch keys:", Object.keys(patch));
-
-  const { data, error } = await supabase.from("transactions").update(patch).eq("id", id).select().single();
-
-  console.log("updateTransaction data:", data);
-  console.log("updateTransaction error:", error);
+  const { data, error } = await supabase
+    .from("transactions")
+    .update(patch)
+    .eq("id", id)
+    .select()
+    .single();
 
   if (error) {
-    console.error("Failed to update transaction", error);
-    return null;
+    console.error("[updateTransaction] Supabase error:", {
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+    });
+    return { data: null, error };
   }
 
-  return data as TransactionRow;
+  return { data: data as TransactionRow, error: null };
 }
 export async function listTransactions(): Promise<WorkItem[]> {
   const { data, error } = await supabase
@@ -199,5 +278,21 @@ export async function listTransactions(): Promise<WorkItem[]> {
     return [];
   }
 
-  return (data ?? []).map((row) => toWorkItem(row as TransactionRow));
+  const rows = (data ?? []) as TransactionRow[];
+  const items = rows.map((row) => toWorkItem(row));
+  const ids = items.map((i) => i.id);
+  const counts = await fetchComplianceDocCountsByTransactionIds(ids);
+
+  return items.map((item) => {
+    const c = counts[item.id];
+    const pending = c?.pending ?? 0;
+    const rejected = c?.rejected ?? 0;
+    return {
+      ...item,
+      compliancePendingReviewCount: pending,
+      complianceRejectedCount: rejected,
+      missingCount: pending,
+      rejectedCount: rejected,
+    };
+  });
 }

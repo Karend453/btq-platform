@@ -32,6 +32,7 @@ import {
 import {
   getTransaction,
   getAssignedAdminUserId,
+  getAssignedAgentDisplayNameFromRow,
   updateTransaction,
   type TransactionRow,
 } from "../../services/transactions";
@@ -110,6 +111,35 @@ function formatRelativeTime(date: Date) {
   }
 }
 
+/** Re-resolve inbox attachments onto checklist rows (no DB seeding). */
+function mergeInboxIntoChecklistItems(
+  items: ChecklistItem[],
+  inboxDocuments: InboxDocument[]
+): ChecklistItem[] {
+  return items.map((item) => {
+    const attached =
+      inboxDocuments.find(
+        (d) =>
+          d.attachedToItemId != null && String(d.attachedToItemId) === String(item.id)
+      ) ??
+      (item.documentId
+        ? inboxDocuments.find((d) => d.id === item.documentId)
+        : undefined);
+    return {
+      ...item,
+      attachedDocument: attached
+        ? {
+            id: attached.id,
+            filename: attached.filename,
+            storage_path: attached.storage_path,
+            version: 1,
+            updatedAt: attached.receivedAt,
+          }
+        : undefined,
+    };
+  });
+}
+
 export default function TransactionDetailsPage() {
   const { user: authUser, loading: authLoading } = useAuth();
   const id = useMemo(() => {
@@ -120,6 +150,8 @@ export default function TransactionDetailsPage() {
   const [loading, setLoading] = useState(true);
   const [transaction, setTransaction] = useState<TransactionRow | null>(null);
   const [inboxDocuments, setInboxDocuments] = useState<InboxDocument[]>([]);
+  const inboxDocumentsRef = useRef(inboxDocuments);
+  inboxDocumentsRef.current = inboxDocuments;
   const [checklistItems, setChecklistItems] = useState<ChecklistItem[]>([]);
   const [checklistTemplates, setChecklistTemplates] = useState<ChecklistTemplate[]>([]);
   const [isLoadingTemplates, setIsLoadingTemplates] = useState(true);
@@ -389,6 +421,7 @@ export default function TransactionDetailsPage() {
     }
     setNewCommentText("");
     toast.success("Comment posted");
+    setIsCommentsDrawerOpen(false);
   }
 
   async function handleOpenReviewModal(item: ChecklistItem) {
@@ -726,10 +759,15 @@ export default function TransactionDetailsPage() {
   }, [authUser?.id]);
 
   const checklistTemplateId = transaction?.checklist_template_id?.trim() || null;
-  const assignedAgentName =
-    (transaction as TransactionRow & { listagent?: string; buyeragent?: string })?.listagent ??
-    (transaction as TransactionRow & { listagent?: string; buyeragent?: string })?.buyeragent ??
-    "Unassigned";
+  const assignedAgentName = useMemo(() => {
+    if (!transaction) return "Unassigned";
+    const row = transaction as TransactionRow;
+    if (authUser?.id && row.agent_user_id && row.agent_user_id === authUser.id) {
+      return authUser.email?.trim() || getAssignedAgentDisplayNameFromRow(row) || "Unassigned";
+    }
+    const fromRow = getAssignedAgentDisplayNameFromRow(row);
+    return fromRow || "Unassigned";
+  }, [transaction, authUser?.id, authUser?.email]);
 
   useEffect(() => {
     let cancelled = false;
@@ -761,47 +799,44 @@ export default function TransactionDetailsPage() {
         fetchCommentsByTransactionId(transactionId),
       ]);
       if (!cancelled) {
-        const merged = items.map((item) => {
-          const attached =
-            inboxDocuments.find(
-              (d) =>
-                d.attachedToItemId != null && String(d.attachedToItemId) === String(item.id)
-            ) ??
-            (item.documentId
-              ? inboxDocuments.find((d) => d.id === item.documentId)
-              : undefined);
-          const itemComments = commentsByItem.get(String(item.id)) ?? [];
-          return {
-            ...item,
-            attachedDocument: attached
-              ? {
-                  id: attached.id,
-                  filename: attached.filename,
-                  storage_path: attached.storage_path,
-                  version: 1,
-                  updatedAt: attached.receivedAt,
-                }
-              : undefined,
-            comments: itemComments,
-          };
-        });
-        setChecklistItems(merged);
+        const withComments: ChecklistItem[] = items.map((item) => ({
+          ...item,
+          comments: commentsByItem.get(String(item.id)) ?? [],
+        })) as ChecklistItem[];
+        setChecklistItems(
+          mergeInboxIntoChecklistItems(withComments, inboxDocumentsRef.current)
+        );
       }
     }
     loadChecklist();
     return () => { cancelled = true; };
-  }, [checklistTemplateId, inboxDocuments, id]);
+    // inboxDocuments merged in the effect below so inbox refreshes do not re-run template seeding.
+  }, [checklistTemplateId, id]);
+
+  useEffect(() => {
+    setChecklistItems((prev) => mergeInboxIntoChecklistItems(prev, inboxDocuments));
+  }, [inboxDocuments]);
 
   const isReadOnly = transactionStatus === "Archived";
 
   async function handleSaveTransactionControls() {
     if (!id || isReadOnly) return;
-    const updated = await updateTransaction(id, {
+    const user = await getCurrentUser();
+    const row = transaction as TransactionRow | null;
+    const claimAgent =
+      currentUserRole === "Agent" &&
+      user?.id &&
+      row &&
+      (row.agent_user_id == null || String(row.agent_user_id).trim() === "");
+
+    const { data: updated, error } = await updateTransaction(id, {
       status: transactionStatus || null,
       closingDate: closingDate || null,
+      ...(claimAgent ? { agentUserId: user.id } : {}),
     });
-    if (!updated) {
-      toast.error("Could not save transaction");
+    if (error || !updated) {
+      console.error("[handleSaveTransactionControls]", error);
+      toast.error(error?.message ?? "Could not save transaction");
       return;
     }
     await reloadTransaction();
@@ -820,7 +855,12 @@ export default function TransactionDetailsPage() {
     if (!id || isSavingChecklist) return;
     setIsSavingChecklist(true);
     try {
-      await updateTransaction(id, { checklistTemplateId: templateId });
+      const { error } = await updateTransaction(id, { checklistTemplateId: templateId });
+      if (error) {
+        console.error("[handleChecklistTemplateSelect]", error);
+        toast.error(error.message);
+        return;
+      }
       await replaceChecklistItemsFromTemplate(id, templateId);
       await reloadTransaction();
     } finally {
@@ -930,6 +970,7 @@ export default function TransactionDetailsPage() {
           row={row}
           title={title}
           officeValue={officeValue}
+          agentDisplayName={assignedAgentName}
           formatCurrency={formatCurrency}
           onSave={() => {
             void handleSaveTransactionControls();

@@ -21,6 +21,14 @@ import { listTransactions } from "../../services/transactions";
 import type { WorkItem } from "../../types/workItem";
 
 type StatusFilter = "all" | StatusType;
+type SortBy = "closingDate" | "agentName" | "address";
+
+/** Strip leading street number so address sort orders by street name, not house number. */
+function addressSortKey(identifier: string): string {
+  const t = identifier.trim();
+  const rest = t.replace(/^\d+[A-Za-z]?(?:\s*[-/]\s*\d+)?\s+/, "").trimStart();
+  return rest || t;
+}
 
 export default function TransactionsPage() {
   const { terms } = useTerminology();
@@ -31,6 +39,7 @@ export default function TransactionsPage() {
 
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [sortBy, setSortBy] = useState<SortBy>("closingDate");
   const [showArchived, setShowArchived] = useState(false);
 
   useEffect(() => {
@@ -66,11 +75,39 @@ if (!cancelled) setRows(data);
           r.identifier.toLowerCase().includes(q) ||
           r.type.toLowerCase().includes(q) ||
           (r.owner ?? "").toLowerCase().includes(q) ||
+          (r.agentDisplayName ?? "").toLowerCase().includes(q) ||
           (r.organizationName ?? "").toLowerCase().includes(q) ||
           r.statusLabel.toLowerCase().includes(q)
         );
       });
   }, [rows, query, statusFilter, showArchived]);
+
+  const sortedRows = useMemo(() => {
+    const copy = [...filteredRows];
+    const parseClosing = (w: WorkItem) => {
+      const n = Date.parse(w.dueDate || "");
+      return Number.isNaN(n) ? null : n;
+    };
+    copy.sort((a, b) => {
+      if (sortBy === "closingDate") {
+        const da = parseClosing(a);
+        const db = parseClosing(b);
+        if (da == null && db == null) return 0;
+        if (da == null) return 1;
+        if (db == null) return -1;
+        return da - db;
+      }
+      if (sortBy === "agentName") {
+        return (a.agentDisplayName ?? "").localeCompare(b.agentDisplayName ?? "", undefined, {
+          sensitivity: "base",
+        });
+      }
+      return addressSortKey(a.identifier).localeCompare(addressSortKey(b.identifier), undefined, {
+        sensitivity: "base",
+      });
+    });
+    return copy;
+  }, [filteredRows, sortBy]);
 
   const summary = useMemo(() => {
     const needsAttention = filteredRows.filter(
@@ -119,7 +156,7 @@ if (!cancelled) setRows(data);
 
             <Badge variant="secondary">
               <FileX style={{ width: 14, height: 14, marginRight: 6 }} />
-              {summary.totalMissing} missing
+              {summary.totalMissing} pending review
             </Badge>
 
             <Badge variant="secondary">
@@ -187,6 +224,19 @@ if (!cancelled) setRows(data);
             </SelectContent>
           </Select>
         </div>
+
+        <div style={{ width: 240 }}>
+          <Select value={sortBy} onValueChange={(v) => setSortBy(v as SortBy)}>
+            <SelectTrigger>
+              <SelectValue placeholder="Sort by" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="closingDate">Closing date (soonest first)</SelectItem>
+              <SelectItem value="agentName">Agent name</SelectItem>
+              <SelectItem value="address">Address</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       {/* List */}
@@ -195,20 +245,33 @@ if (!cancelled) setRows(data);
           <Card>
             <CardContent style={{ padding: 18 }}>Loading transactions…</CardContent>
           </Card>
-        ) : filteredRows.length === 0 ? (
+        ) : sortedRows.length === 0 ? (
           <Card>
             <CardContent style={{ padding: 18 }}>No transactions match your filters.</CardContent>
           </Card>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {filteredRows.map((t) => {
+            {sortedRows.map((t) => {
               const needsAttention = (t.missingCount ?? 0) > 0 || (t.rejectedCount ?? 0) > 0;
+              const isClosed =
+                (t.rawTransactionStatus ?? "").trim().toLowerCase() === "closed";
+              const hasComplianceIssue =
+                (t.compliancePendingReviewCount ?? t.missingCount ?? 0) > 0 ||
+                (t.complianceRejectedCount ?? t.rejectedCount ?? 0) > 0;
+              const rowTint = isClosed
+                ? "rgba(34, 197, 94, 0.09)"
+                : hasComplianceIssue
+                  ? "rgba(248, 113, 113, 0.1)"
+                  : undefined;
 
               return (
                 <Card
                   key={t.id}
                   onClick={() => openTransaction(t.id)}
-                  style={{ cursor: "pointer" }}
+                  style={{
+                    cursor: "pointer",
+                    ...(rowTint ? { backgroundColor: rowTint } : {}),
+                  }}
                 >
                   <CardContent style={{ padding: 16 }}>
                     <div
@@ -254,7 +317,7 @@ if (!cancelled) setRows(data);
                           )}
 
                           {(t.missingCount ?? 0) > 0 && (
-                            <Badge variant="secondary">{t.missingCount} missing</Badge>
+                            <Badge variant="secondary">{t.missingCount} pending review</Badge>
                           )}
 
                           {(t.rejectedCount ?? 0) > 0 && (

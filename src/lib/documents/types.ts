@@ -73,6 +73,8 @@ export type DocumentEngineDocument = {
   officeId: string;
   status: DocumentStatus;
   required: boolean;
+  /** When false, item is reference/supplemental only — excluded from compliance review and health. */
+  isComplianceDocument?: boolean;
   waived?: boolean;
   /** File attachment presence. Separate from status; used for blocking/closing-readiness only. */
   hasAttachment?: boolean;

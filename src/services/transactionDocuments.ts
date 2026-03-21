@@ -139,7 +139,7 @@ export async function attachDocumentToChecklistItem(
 
   const { data: current, error: fetchError } = await supabase
     .from("checklist_items")
-    .select("document_id, reviewstatus")
+    .select("document_id, reviewstatus, is_compliance_document")
     .eq("id", checklistItemId)
     .single();
 
@@ -148,14 +148,21 @@ export async function attachDocumentToChecklistItem(
     return false;
   }
 
+  const isCompliance =
+    (current as { is_compliance_document?: boolean | null } | null)?.is_compliance_document !== false;
+
   const hadPreviousDocument =
     current?.document_id != null && String(current.document_id).trim() !== "";
 
   const patch: Record<string, unknown> = { document_id: documentId };
 
-  // Replacement after admin decision: move back to pending review (matches Checklist / Inbox UI).
-  // Without this, only document_id was persisted and reviewstatus stayed rejected/complete.
-  if (hadPreviousDocument) {
+  if (!isCompliance) {
+    // Reference documents: file only, never submit to compliance review.
+    patch.reviewstatus = "complete";
+    patch.status = "complete";
+    patch.reviewnote = null;
+  } else if (hadPreviousDocument) {
+    // Replacement after admin decision: move back to pending review (matches Checklist / Inbox UI).
     const r = String(current?.reviewstatus ?? "pending").toLowerCase();
     if (r === "rejected" || r === "complete") {
       patch.reviewstatus = "pending";

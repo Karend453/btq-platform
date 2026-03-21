@@ -10,7 +10,11 @@ import { toCanonicalStatus } from "./documentEngine";
 export type ChecklistItemShape = {
   id: string;
   requirement: "required" | "optional";
+  /** false = reference file only; excluded from compliance (default true). */
+  isComplianceDocument?: boolean;
   reviewStatus: "pending" | "rejected" | "complete" | "waived";
+  /** Persisted `checklist_items.document_id` — treat as attached when inbox merge has not hydrated `attachedDocument`. */
+  documentId?: string | null;
   attachedDocument?: {
     id: string;
     filename: string;
@@ -21,6 +25,16 @@ export type ChecklistItemShape = {
   comments?: unknown[];
   updatedAt?: string;
 };
+
+function checklistHasAttachment(item: {
+  /** Truthy when a file is linked (full shape varies by call site). */
+  attachedDocument?: unknown;
+  documentId?: string | null;
+}): boolean {
+  if (item.attachedDocument) return true;
+  const id = item.documentId;
+  return id != null && String(id).trim() !== "";
+}
 
 /** TransactionRow from transactions service */
 export type TransactionRowShape = {
@@ -60,7 +74,7 @@ export function checklistItemToEngineDocument(
   }
 ): DocumentEngineDocument {
   const waived = item.reviewStatus === "waived";
-  const hasAttachment = !!item.attachedDocument;
+  const hasAttachment = checklistHasAttachment(item);
   // No attachment (and not waived) => NOT_SUBMITTED; else map workflow status
   const status =
     !hasAttachment && !waived
@@ -73,6 +87,7 @@ export function checklistItemToEngineDocument(
     officeId,
     status,
     required: item.requirement === "required",
+    isComplianceDocument: item.isComplianceDocument !== false,
     waived,
     hasAttachment,
     assignedAdminUserId: options?.assignedAdminUserId ?? null,
@@ -152,7 +167,9 @@ type UserRoleInput = "AGENT" | "ADMIN" | "BROKER" | string;
 export type ChecklistItemForControlsShape = {
   id: string;
   requirement: "required" | "optional";
+  isComplianceDocument?: boolean;
   reviewStatus: "pending" | "rejected" | "complete" | "waived";
+  documentId?: string | null;
   attachedDocument?: { updatedAt?: Date };
 };
 
@@ -166,7 +183,7 @@ export function checklistItemForControlsToEngineDocument(
   officeId = ""
 ): DocumentEngineDocument {
   const waived = item.reviewStatus === "waived";
-  const hasAttachment = !!item.attachedDocument;
+  const hasAttachment = checklistHasAttachment(item);
   const status =
     !hasAttachment && !waived
       ? ("NOT_SUBMITTED" as const)
@@ -178,6 +195,7 @@ export function checklistItemForControlsToEngineDocument(
     officeId,
     status,
     required: item.requirement === "required",
+    isComplianceDocument: item.isComplianceDocument !== false,
     waived,
     hasAttachment,
   };

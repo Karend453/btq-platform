@@ -27,7 +27,10 @@ import TransactionHealth from "./TransactionHealth";
 export interface ChecklistItemForControls {
   id: string;
   requirement: "required" | "optional";
+  isComplianceDocument?: boolean;
   reviewStatus: "pending" | "rejected" | "complete" | "waived";
+  /** Persisted link — engine uses when `attachedDocument` is not merged from inbox. */
+  documentId?: string | null;
   attachedDocument?: {
     updatedAt: Date;
   };
