@@ -1,8 +1,9 @@
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Outlet, useNavigate } from "react-router-dom";
 import { DashboardSidebar, NavSection } from "../components/dashboard/DashboardSidebar";
 import { useAuth } from "../contexts/AuthContext";
 import { Toaster } from "../components/ui/sonner";
+import { getUserProfileRoleKey } from "../../services/auth";
 import {
   LayoutDashboard,
   Users,
@@ -12,7 +13,8 @@ import {
   Settings,
 } from "lucide-react";
 
-const navSections: NavSection[] = [
+/** Default (admin / agent): full management + insights. */
+const navSectionsDefault: NavSection[] = [
   {
     items: [
       {
@@ -65,9 +67,50 @@ const navSections: NavSection[] = [
   },
 ];
 
+/** Broker: oversight-focused nav (no placeholder management pages; no mock transaction badge). */
+const navSectionsBroker: NavSection[] = [
+  {
+    items: [
+      {
+        label: "Dashboard",
+        href: "/",
+        icon: LayoutDashboard,
+      },
+    ],
+  },
+  {
+    title: "Oversight",
+    items: [
+      {
+        label: "Transactions",
+        href: "/transactions",
+        icon: FileText,
+      },
+      {
+        label: "Analytics",
+        href: "/analytics",
+        icon: BarChart3,
+      },
+    ],
+  },
+  {
+    title: "System",
+    items: [
+      {
+        label: "Settings",
+        href: "/settings",
+        icon: Settings,
+      },
+    ],
+  },
+];
+
 export function RootLayout() {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
+  const [profileRoleKey, setProfileRoleKey] = useState<
+    "admin" | "agent" | "broker" | null | undefined
+  >(undefined);
 
   useEffect(() => {
     if (loading) return;
@@ -75,6 +118,23 @@ export function RootLayout() {
       navigate("/login", { replace: true });
     }
   }, [user, loading, navigate]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getUserProfileRoleKey().then((key) => {
+      if (!cancelled) setProfileRoleKey(key);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
+  const navSections = useMemo(
+    () => (profileRoleKey === "broker" ? navSectionsBroker : navSectionsDefault),
+    [profileRoleKey]
+  );
+
+  const isBroker = profileRoleKey === "broker";
 
   if (loading) {
     return (
@@ -93,7 +153,9 @@ export function RootLayout() {
         logo={
           <div>
             <div className="text-xl font-semibold text-white">RealtyPro</div>
-            <div className="text-xs text-slate-400 mt-1">Broker Portal</div>
+            <div className="text-xs text-slate-400 mt-1">
+              {isBroker ? "Broker oversight" : "Broker Portal"}
+            </div>
           </div>
         }
         sections={navSections}

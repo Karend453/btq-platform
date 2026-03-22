@@ -19,7 +19,7 @@ export type ActivityRow = {
 export type ActivityLogEntryShape = {
   id: string;
   timestamp: Date;
-  actor: "System" | "Agent" | "Admin";
+  actor: "System" | "Agent" | "Admin" | "Broker";
   category: "docs" | "forms" | "system" | "transaction";
   type: string;
   message: string;
@@ -30,7 +30,7 @@ function rowToActivityEntry(row: ActivityRow): ActivityLogEntryShape {
   return {
     id: row.id,
     timestamp: new Date(row.created_at),
-    actor: row.actor_display_name as "System" | "Agent" | "Admin",
+    actor: row.actor_display_name as "System" | "Agent" | "Admin" | "Broker",
     category: (row.category as "docs" | "forms" | "system" | "transaction") || "docs",
     type: row.activity_type,
     message: row.message,
@@ -40,7 +40,7 @@ function rowToActivityEntry(row: ActivityRow): ActivityLogEntryShape {
 
 export type InsertActivityInput = {
   transactionId: string;
-  actor: "System" | "Agent" | "Admin";
+  actor: "System" | "Agent" | "Admin" | "Broker";
   category: "docs" | "forms" | "system" | "transaction";
   type: string;
   message: string;

@@ -3,6 +3,7 @@ import React from "react";
 import { toast } from "sonner";
 import { MessageSquare, Save, Archive, AlertTriangle, ExternalLink } from "lucide-react";
 import { Button } from "../components/ui/button";
+import { Card, CardContent } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
@@ -33,13 +34,20 @@ import {
   getTransaction,
   getAssignedAdminUserId,
   getAssignedAgentDisplayNameFromRow,
+  formatAgentLabelForList,
   updateTransaction,
   type TransactionRow,
 } from "../../services/transactions";
 import { fetchDocumentsByTransactionId, getSignedUrl } from "../../services/transactionDocuments";
 import { fetchCommentsByTransactionId, insertComment } from "../../services/checklistItemComments";
 import { insertActivityEntry, fetchActivityByTransactionId } from "../../services/transactionActivity";
-import { getCurrentUser, getCurrentUserRole } from "../../services/auth";
+import {
+  getCurrentUser,
+  getTransactionRuntimeRole,
+  transactionRuntimeRoleToUiRole,
+  uiTransactionRoleToEngineRole,
+  type UiTransactionRole,
+} from "../../services/auth";
 import { useAuth } from "../contexts/AuthContext";
 import {
   canUserMarkAccepted,
@@ -65,13 +73,13 @@ import type { ActivityLogEntry, ActivityFilter } from "./sections/TransactionAct
 
 type CommentShape = {
   id: string;
-  authorRole: "Admin" | "Agent";
+  authorRole: "Admin" | "Agent" | "Broker";
   authorName: string;
   createdAt: Date;
   message: string;
   visibility: "Internal" | "Shared";
   type?: "Comment" | "StatusChange" | "System";
-  unread?: { Admin?: boolean; Agent?: boolean };
+  unread?: { Admin?: boolean; Agent?: boolean; Broker?: boolean };
   // Optional for structured review comments
   pageNumber?: number;
   locationNote?: string;
@@ -193,7 +201,7 @@ export default function TransactionDetailsPage() {
 
   const [currentUserName, setCurrentUserName] = useState<string>("Current User");
   const [currentUserId, setCurrentUserId] = useState<string>("");
-  const [currentUserRole, setCurrentUserRole] = useState<"Admin" | "Agent">("Admin");
+  const [currentUserRole, setCurrentUserRole] = useState<UiTransactionRole>("Admin");
 
   const reloadTransaction = useCallback(
     async (opts?: { isCancelled?: () => boolean }) => {
@@ -222,7 +230,7 @@ export default function TransactionDetailsPage() {
     });
     const engineUser = buildEngineUser({
       id: sessionUserId,
-      roles: [currentUserRole === "Admin" ? "ADMIN" : "AGENT"],
+      roles: [uiTransactionRoleToEngineRole(currentUserRole)],
       officeIds: [txn.office ?? ""],
     });
     const engineTxn = transactionRowToEngineTransaction(transaction as TransactionRow & { office?: string });
@@ -254,7 +262,7 @@ export default function TransactionDetailsPage() {
       });
       const engineUser = buildEngineUser({
         id: sessionUserId,
-        roles: [currentUserRole === "Admin" ? "ADMIN" : "AGENT"],
+        roles: [uiTransactionRoleToEngineRole(currentUserRole)],
         officeIds: [row.office ?? ""],
       });
       const canReview = canUserReviewDocument(engineUser, engineDoc, engineTxn);
@@ -274,7 +282,7 @@ export default function TransactionDetailsPage() {
       });
       const engineUser0 = buildEngineUser({
         id: sessionUserId,
-        roles: [currentUserRole === "Admin" ? "ADMIN" : "AGENT"],
+        roles: [uiTransactionRoleToEngineRole(currentUserRole)],
         officeIds: [row.office ?? ""],
       });
       const engineTxnChecklist = {
@@ -387,7 +395,9 @@ export default function TransactionDetailsPage() {
       type: "Comment",
       unread: {
         Admin: currentUserRole === "Agent",
-        Agent: currentUserRole === "Admin" && commentVisibility === "Shared",
+        Agent:
+          (currentUserRole === "Admin" || currentUserRole === "Broker") &&
+          commentVisibility === "Shared",
       },
     });
     if (!saved) {
@@ -409,7 +419,11 @@ export default function TransactionDetailsPage() {
       meta: { checklistItem: commentsTargetItem.name, visibility: commentVisibility },
       checklistItemId: commentsTargetItem.id,
     });
-    if (currentUserRole === "Admin" && commentVisibility === "Shared" && notifyAgentOnComment) {
+    if (
+      (currentUserRole === "Admin" || currentUserRole === "Broker") &&
+      commentVisibility === "Shared" &&
+      notifyAgentOnComment
+    ) {
       addActivityEntry({
         actor: "Admin",
         category: "docs",
@@ -491,7 +505,7 @@ export default function TransactionDetailsPage() {
       const saved = await insertComment({
         transactionId: id,
         checklistItemId: selectedItem.id,
-        authorRole: "Admin",
+        authorRole: currentUserRole === "Broker" ? "Broker" : "Admin",
         authorName: currentUserName,
         message: reviewNote.trim(),
         visibility: "Shared",
@@ -507,7 +521,7 @@ export default function TransactionDetailsPage() {
       const saved = await insertComment({
         transactionId: id,
         checklistItemId: selectedItem.id,
-        authorRole: "Admin",
+        authorRole: currentUserRole === "Broker" ? "Broker" : "Admin",
         authorName: currentUserName,
         message: `Waived: ${waivedReason.trim()}`,
         visibility: "Shared",
@@ -550,10 +564,10 @@ export default function TransactionDetailsPage() {
 
     if (requirementChanged) {
       addActivityEntry({
-        actor: "Admin",
+        actor: currentUserRole === "Broker" ? "Broker" : "Admin",
         category: "docs",
         type: "CHECKLIST_ITEM_REQUIREMENT_CHANGED",
-        message: `Admin marked "${selectedItem.name}" as ${reviewRequirement === "required" ? "Required" : "Optional"}`,
+        message: `${currentUserRole === "Broker" ? "Broker" : "Admin"} marked "${selectedItem.name}" as ${reviewRequirement === "required" ? "Required" : "Optional"}`,
         meta: {
           docName: selectedItem.name,
           fromRequirement: selectedItem.requirement,
@@ -600,7 +614,7 @@ export default function TransactionDetailsPage() {
 
     if (notifyAgent && reviewStatus === "rejected") {
       addActivityEntry({
-        actor: "Admin",
+        actor: currentUserRole === "Broker" ? "Broker" : "Admin",
         category: "docs",
         type: "AGENT_NOTIFIED",
         message: `Notification sent to Agent: ${assignedAgentName} — Document rejected: ${selectedItem.name}`,
@@ -632,7 +646,7 @@ export default function TransactionDetailsPage() {
       type: "Comment",
       unread: {
         Admin: currentUserRole === "Agent",
-        Agent: currentUserRole === "Admin",
+        Agent: currentUserRole === "Admin" || currentUserRole === "Broker",
       },
     });
     if (!saved) {
@@ -752,8 +766,8 @@ export default function TransactionDetailsPage() {
         setCurrentUserId(user?.id ?? "");
       }
     });
-    getCurrentUserRole().then((role) => {
-      if (!cancelled) setCurrentUserRole(role);
+    getTransactionRuntimeRole().then((r) => {
+      if (!cancelled) setCurrentUserRole(transactionRuntimeRoleToUiRole(r));
     });
     return () => { cancelled = true; };
   }, [authUser?.id]);
@@ -762,12 +776,10 @@ export default function TransactionDetailsPage() {
   const assignedAgentName = useMemo(() => {
     if (!transaction) return "Unassigned";
     const row = transaction as TransactionRow;
-    if (authUser?.id && row.agent_user_id && row.agent_user_id === authUser.id) {
-      return authUser.email?.trim() || getAssignedAgentDisplayNameFromRow(row) || "Unassigned";
-    }
-    const fromRow = getAssignedAgentDisplayNameFromRow(row);
-    return fromRow || "Unassigned";
-  }, [transaction, authUser?.id, authUser?.email]);
+    const raw = getAssignedAgentDisplayNameFromRow(row);
+    const formatted = formatAgentLabelForList(raw).trim();
+    return formatted || "Unassigned";
+  }, [transaction]);
 
   useEffect(() => {
     let cancelled = false;
@@ -881,7 +893,7 @@ export default function TransactionDetailsPage() {
     const readiness = getTransactionClosingReadiness(engineDocs);
     setArchiveMetadata({
       archivedAt: new Date(),
-      archivedBy: { name: "Current User", role: "Admin" },
+      archivedBy: { name: "Current User", role: currentUserRole },
       archiveReceipt: {
         transactionSummary: {
           identifier: txn?.identifier ?? "Unknown",
@@ -923,18 +935,28 @@ export default function TransactionDetailsPage() {
   }
 
   if (loading) {
-    return <div style={{ padding: 24 }}>Loading…</div>;
+    return (
+      <div className="min-h-screen bg-slate-50 p-5">
+        <Card className="mx-auto max-w-[1080px] border-slate-200 shadow-sm">
+          <CardContent className="py-8 text-sm text-slate-600">Loading…</CardContent>
+        </Card>
+      </div>
+    );
   }
 
   if (!transaction) {
     return (
-      <div style={{ padding: 24 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+      <div className="min-h-screen bg-slate-50 p-5">
+        <div className="mx-auto max-w-[1080px] space-y-4">
           <Button variant="outline" onClick={() => window.history.back()}>
             Back
           </Button>
+          <Card className="border-slate-200 shadow-sm">
+            <CardContent className="py-10 text-center text-sm text-slate-600">
+              Not found.
+            </CardContent>
+          </Card>
         </div>
-        <div>Not found.</div>
       </div>
     );
   }
@@ -964,8 +986,8 @@ export default function TransactionDetailsPage() {
   const officeValue = row.office_name || row.office || "—";
 
   return (
-    <div style={{ padding: 24, background: "#f8fafc", minHeight: "100vh" }}>
-      <div style={{ maxWidth: 1200, margin: "0 auto", display: "grid", gap: 32 }}>
+    <div className="min-h-screen bg-slate-50 p-5">
+      <div className="mx-auto flex max-w-[1080px] flex-col gap-6">
         <TransactionOverview
           row={row}
           title={title}
@@ -996,7 +1018,7 @@ export default function TransactionDetailsPage() {
           onCopyIntakeEmail={handleCopyIntakeEmail}
         />
 
-        <div className="space-y-3">
+        <div className="space-y-2">
           <h2 className="text-sm font-semibold text-slate-900 tracking-tight">Documents</h2>
           <TransactionInbox
             transactionId={id}
@@ -1291,7 +1313,12 @@ export default function TransactionDetailsPage() {
                         <p className="text-sm text-slate-500 py-2">No comments yet.</p>
                       )}
                       {((selectedItem.comments ?? []) as CommentShape[])
-                        .filter((c) => currentUserRole === "Admin" || c.visibility === "Shared")
+                        .filter(
+                          (c) =>
+                            currentUserRole === "Admin" ||
+                            currentUserRole === "Broker" ||
+                            c.visibility === "Shared"
+                        )
                         .map((comment) => (
                           <div
                             key={comment.id}
@@ -1381,37 +1408,52 @@ export default function TransactionDetailsPage() {
                 {((commentsTargetItem?.comments ?? []) as CommentShape[])
                   .filter((comment) => {
                     if (currentUserRole === "Agent") return comment.visibility === "Shared";
+                    if (currentUserRole === "Broker") {
+                      return (
+                        comment.authorRole === "Broker" ||
+                        comment.authorRole === "Admin" ||
+                        comment.visibility === "Shared"
+                      );
+                    }
                     return true;
                   })
                   .map((comment) => (
                     <div
                       key={comment.id}
                       className={`flex gap-3 ${
-                        comment.authorRole === "Admin" ? "flex-row" : "flex-row-reverse"
+                        comment.authorRole === "Admin" || comment.authorRole === "Broker"
+                          ? "flex-row"
+                          : "flex-row-reverse"
                       }`}
                     >
                       <div
                         className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold ${
-                          comment.authorRole === "Admin" ? "bg-slate-700 text-white" : "bg-blue-600 text-white"
+                          comment.authorRole === "Admin" || comment.authorRole === "Broker"
+                            ? "bg-slate-700 text-white"
+                            : "bg-blue-600 text-white"
                         }`}
                       >
                         {comment.authorName.split(" ").map((n) => n[0]).join("")}
                       </div>
                       <div
                         className={`flex-1 max-w-[80%] ${
-                          comment.authorRole === "Admin" ? "text-left" : "text-right"
+                          comment.authorRole === "Admin" || comment.authorRole === "Broker"
+                            ? "text-left"
+                            : "text-right"
                         }`}
                       >
                         <div
                           className={`inline-block p-3 rounded-lg ${
-                            comment.authorRole === "Admin" ? "bg-slate-100 text-slate-900" : "bg-blue-50 text-slate-900"
+                            comment.authorRole === "Admin" || comment.authorRole === "Broker"
+                              ? "bg-slate-100 text-slate-900"
+                              : "bg-blue-50 text-slate-900"
                           }`}
                         >
                           <div className="flex items-center gap-2 mb-1">
                             <span className="font-semibold text-sm">{comment.authorName}</span>
                             <Badge
                               className={`text-xs h-5 ${
-                                comment.authorRole === "Admin"
+                                comment.authorRole === "Admin" || comment.authorRole === "Broker"
                                   ? "bg-slate-600 text-white border-0"
                                   : "bg-blue-600 text-white border-0"
                               }`}

@@ -22,6 +22,23 @@ interface TransactionData {
   officeId: string;
 }
 
+/** Values for `transactions.transaction_side`; must stay aligned with transactionSideFlags() in services. */
+function transactionSideFromWizardType(
+  type: TransactionData["type"]
+): string | null {
+  if (!type) return null;
+  switch (type) {
+    case "Purchase":
+      return "Buy side";
+    case "Listing":
+      return "Listing";
+    case "Lease":
+    case "Other":
+    default:
+      return type;
+  }
+}
+
 export function NewTransaction() {
   const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState(1);
@@ -77,6 +94,7 @@ export function NewTransaction() {
       type: transactionData.type,
       clientName: transactionData.clientName,
       officeId: transactionData.officeId,
+      transactionSide: transactionSideFromWizardType(transactionData.type),
     });
   
     if (!created) {

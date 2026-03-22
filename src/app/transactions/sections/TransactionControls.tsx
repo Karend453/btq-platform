@@ -66,7 +66,7 @@ export type TransactionControlsProps = {
   closingDate: string | null;
   checklistItems: ChecklistItemForControls[];
   isReadOnly: boolean;
-  currentUserRole?: "Admin" | "Agent";
+  currentUserRole?: "Admin" | "Agent" | "Broker";
   archiveMetadata: ArchiveMetadata | null;
   onStatusChange: (status: TransactionStatus) => void;
   onClosingDateChange: (date: string) => void;
@@ -104,7 +104,7 @@ function computeArchiveValidation(
 
 export default function TransactionControls({
   transactionStatus,
-  assignedAdmin,
+  assignedAdmin: _assignedAdmin,
   closingDate,
   checklistItems,
   isReadOnly,
@@ -126,11 +126,11 @@ export default function TransactionControls({
   return (
     <>
       {/* Transaction + closing readiness (single purpose) */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-lg">Transaction</CardTitle>
-            {currentUserRole === "Admin" && !isReadOnly && (
+      <Card className="gap-3 border-slate-200 shadow-sm">
+        <CardHeader className="px-4 pb-3 pt-4">
+          <div className="flex items-center justify-between gap-3">
+            <CardTitle className="text-base font-semibold text-slate-900">Transaction</CardTitle>
+            {(currentUserRole === "Admin" || currentUserRole === "Broker") && !isReadOnly && (
               <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -164,16 +164,21 @@ export default function TransactionControls({
             )}
           </div>
         </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
+        <CardContent className="px-4 pb-3 pt-0">
+          <div className="space-y-2.5">
             {showReadiness && <TransactionHealth checklistItems={checklistItems} />}
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div
+              className={
+                showReadiness ? "space-y-3 border-t border-slate-100 pt-2.5" : "space-y-4"
+              }
+            >
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 sm:items-end">
               {/* Status Dropdown */}
               <div>
                 <Label
                   htmlFor="transaction-status"
-                  className="text-sm font-medium text-slate-700 mb-1.5 block"
+                  className="mb-1 block text-xs font-medium text-slate-500"
                 >
                   Status
                 </Label>
@@ -220,7 +225,7 @@ export default function TransactionControls({
               <div>
                 <Label
                   htmlFor="closing-date"
-                  className="text-sm font-medium text-slate-700 mb-1.5 block"
+                  className="mb-1 block text-xs font-medium text-slate-500"
                 >
                   Closing Date
                 </Label>
@@ -234,27 +239,27 @@ export default function TransactionControls({
               </div>
             </div>
 
-            <div>
+            <div className="pb-0">
               <Label
                 htmlFor="intake-email-display"
-                className="text-sm font-medium text-slate-700 mb-1.5 block"
+                className="mb-1 block text-xs font-medium text-slate-500"
               >
                 Intake email
               </Label>
-              <div className="flex gap-2 flex-wrap sm:flex-nowrap items-stretch">
+              <div className="flex flex-wrap items-center gap-1.5 sm:flex-nowrap">
                 <Input
                   id="intake-email-display"
                   readOnly
                   value={intakeEmail?.trim() ?? ""}
                   placeholder="—"
-                  className="font-mono text-sm flex-1 min-w-0 bg-slate-50/80"
+                  className="h-9 min-h-0 flex-1 min-w-0 bg-slate-50/80 font-mono text-sm"
                   tabIndex={-1}
                 />
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="shrink-0 h-10 px-3"
+                  className="h-9 shrink-0 px-3"
                   disabled={!intakeEmail?.trim()}
                   onClick={() => onCopyIntakeEmail?.(intakeEmail)}
                 >
@@ -262,20 +267,16 @@ export default function TransactionControls({
                 </Button>
               </div>
             </div>
-
-            <p className="text-sm text-slate-600">
-              <span className="font-medium text-slate-700">Assigned admin: </span>
-              {assignedAdmin?.trim() ? assignedAdmin : "—"}
-            </p>
+            </div>
           </div>
         </CardContent>
       </Card>
 
       {/* Archive Receipt Section (visible when archived) */}
       {isReadOnly && archiveMetadata?.archivedAt && archiveMetadata?.archiveReceipt && (
-        <Card className="border-blue-200 bg-blue-50">
-          <CardHeader>
-            <CardTitle className="text-lg flex items-center gap-2">
+        <Card className="border-blue-200 bg-blue-50/90 shadow-sm">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base font-semibold text-slate-900">
               <Archive className="h-5 w-5 text-blue-700" />
               Archive Receipt
             </CardTitle>
@@ -299,73 +300,73 @@ export default function TransactionControls({
                 </p>
               </div>
 
-              <div className="bg-white border border-blue-200 rounded-lg p-3">
-                <h4 className="text-sm font-semibold text-slate-900 mb-2">Transaction Summary</h4>
-                <div className="grid grid-cols-2 gap-2 text-sm">
+              <div className="rounded-lg border border-slate-200/80 bg-white p-4 shadow-sm">
+                <h4 className="mb-3 text-sm font-semibold text-slate-900">Transaction Summary</h4>
+                <div className="grid grid-cols-2 gap-3 text-sm">
                   <div>
                     <span className="text-slate-600">Transaction:</span>
-                    <p className="text-slate-900 text-xs">
+                    <p className="text-xs text-slate-900">
                       {archiveMetadata.archiveReceipt.transactionSummary.identifier}
                     </p>
                   </div>
                   <div>
                     <span className="text-slate-600">ID:</span>
-                    <p className="text-slate-900 text-xs">
+                    <p className="text-xs text-slate-900">
                       {archiveMetadata.archiveReceipt.transactionSummary.id}
                     </p>
                   </div>
                   <div>
                     <span className="text-slate-600">Office:</span>
-                    <p className="text-slate-900 text-xs">
+                    <p className="text-xs text-slate-900">
                       {archiveMetadata.archiveReceipt.transactionSummary.office}
                     </p>
                   </div>
                   <div>
                     <span className="text-slate-600">Agent:</span>
-                    <p className="text-slate-900 text-xs">
+                    <p className="text-xs text-slate-900">
                       {archiveMetadata.archiveReceipt.transactionSummary.assignedAgent}
                     </p>
                   </div>
                 </div>
-              </div>
 
-              <div className="bg-white border border-blue-200 rounded-lg p-3">
-                <h4 className="text-sm font-semibold text-slate-900 mb-2">Document Summary</h4>
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-slate-600">Required (Complete):</span>
-                    <span className="text-slate-900 font-medium">
-                      {archiveMetadata.archiveReceipt.documentSummary.requiredComplete}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-600">Required (Waived):</span>
-                    <span className="text-slate-900 font-medium">
-                      {archiveMetadata.archiveReceipt.documentSummary.requiredWaived}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-600">Optional (Complete):</span>
-                    <span className="text-slate-900 font-medium">
-                      {archiveMetadata.archiveReceipt.documentSummary.optionalComplete}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-600">Total:</span>
-                    <span className="text-slate-900 font-medium">
-                      {archiveMetadata.archiveReceipt.documentSummary.totalDocuments}
-                    </span>
-                  </div>
-                  <div className="col-span-2 flex justify-between pt-2 border-t border-blue-200">
-                    <span className="text-slate-600">Activity Log Entries:</span>
-                    <span className="text-slate-900 font-medium">
-                      {archiveMetadata.archiveReceipt.activityLogCount}
-                    </span>
+                <div className="mt-4 border-t border-slate-100 pt-4">
+                  <h4 className="mb-3 text-sm font-semibold text-slate-900">Document Summary</h4>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div className="flex justify-between gap-2">
+                      <span className="text-slate-600">Required (Complete):</span>
+                      <span className="font-medium text-slate-900">
+                        {archiveMetadata.archiveReceipt.documentSummary.requiredComplete}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-slate-600">Required (Waived):</span>
+                      <span className="font-medium text-slate-900">
+                        {archiveMetadata.archiveReceipt.documentSummary.requiredWaived}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-slate-600">Optional (Complete):</span>
+                      <span className="font-medium text-slate-900">
+                        {archiveMetadata.archiveReceipt.documentSummary.optionalComplete}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-slate-600">Total:</span>
+                      <span className="font-medium text-slate-900">
+                        {archiveMetadata.archiveReceipt.documentSummary.totalDocuments}
+                      </span>
+                    </div>
+                    <div className="col-span-2 flex justify-between border-t border-slate-100 pt-3">
+                      <span className="text-slate-600">Activity Log Entries:</span>
+                      <span className="font-medium text-slate-900">
+                        {archiveMetadata.archiveReceipt.activityLogCount}
+                      </span>
+                    </div>
                   </div>
                 </div>
               </div>
 
-              <div className="flex flex-wrap gap-2 pt-2">
+              <div className="flex flex-wrap gap-2 pt-1">
                 {onDownloadArchivePackage && (
                   <Button variant="outline" size="sm" onClick={onDownloadArchivePackage}>
                     <Download className="h-4 w-4 mr-2" />

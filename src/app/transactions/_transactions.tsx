@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useTerminology } from "../../hooks/useTerminology";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Search, Plus, AlertCircle, FileX, Archive } from "lucide-react";
 
 import { Button } from "../components/ui/button";
@@ -15,10 +15,18 @@ import {
 import { Card, CardContent } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { StatusBadge, StatusType } from "../components/dashboard/StatusBadge";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "../components/ui/table";
 
-// ✅ Service layer (Supabase now, AWS later)
 import { listTransactions } from "../../services/transactions";
-import type { WorkItem } from "../../types/workItem";
+import { getUserProfileRoleKey } from "../../services/auth";
+import type { ComplianceDominantState, WorkItem } from "../../types/workItem";
 
 type StatusFilter = "all" | StatusType;
 type SortBy = "closingDate" | "agentName" | "address";
@@ -30,17 +38,42 @@ function addressSortKey(identifier: string): string {
   return rest || t;
 }
 
+/** Display ISO closing_date in the list (presentation only). */
+function formatClosingDisplay(iso: string): string {
+  const s = iso.trim();
+  if (!s) return "—";
+  const d = Date.parse(s);
+  if (Number.isNaN(d)) return iso;
+  return new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(new Date(d));
+}
+
+/** Query `?filter=` aligned with Compliance Overview dominant state (document engine). */
+function parseComplianceFilterParam(raw: string | null): ComplianceDominantState | null {
+  if (!raw) return null;
+  const v = raw.trim().toLowerCase();
+  if (v === "rejected" || v === "missing" || v === "pending_review") return v;
+  if (v === "pending") return "pending_review";
+  return null;
+}
+
 export default function TransactionsPage() {
   const { terms } = useTerminology();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<WorkItem[]>([]);
+  const [viewerIsBroker, setViewerIsBroker] = useState(false);
 
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [sortBy, setSortBy] = useState<SortBy>("closingDate");
   const [showArchived, setShowArchived] = useState(false);
+
+  const complianceFilter = useMemo(
+    () => parseComplianceFilterParam(searchParams.get("filter")),
+    [searchParams]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -48,8 +81,12 @@ export default function TransactionsPage() {
     async function load() {
       setLoading(true);
       try {
-        const data = await listTransactions();
-if (!cancelled) setRows(data);
+        const role = await getUserProfileRoleKey();
+        const data = await listTransactions(role);
+        if (!cancelled) {
+          setRows(data);
+          setViewerIsBroker(role === "broker");
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -66,7 +103,11 @@ if (!cancelled) setRows(data);
 
     return rows
       .filter((r) => (showArchived ? true : !r.isArchived))
-      .filter((r) => (statusFilter === "all" ? true : (r.status as StatusType) === statusFilter))
+      .filter((r) => (statusFilter === "all" ? true : r.statusType === statusFilter))
+      .filter((r) => {
+        if (complianceFilter == null) return true;
+        return r.complianceDominant === complianceFilter;
+      })
       .filter((r) => {
         if (!q) return true;
 
@@ -77,15 +118,17 @@ if (!cancelled) setRows(data);
           (r.owner ?? "").toLowerCase().includes(q) ||
           (r.agentDisplayName ?? "").toLowerCase().includes(q) ||
           (r.organizationName ?? "").toLowerCase().includes(q) ||
-          r.statusLabel.toLowerCase().includes(q)
+          r.status.toLowerCase().includes(q) ||
+          r.stage.toLowerCase().includes(q) ||
+          r.risk.toLowerCase().includes(q)
         );
       });
-  }, [rows, query, statusFilter, showArchived]);
+  }, [rows, query, statusFilter, showArchived, complianceFilter]);
 
   const sortedRows = useMemo(() => {
     const copy = [...filteredRows];
     const parseClosing = (w: WorkItem) => {
-      const n = Date.parse(w.dueDate || "");
+      const n = Date.parse(w.closingDate || "");
       return Number.isNaN(n) ? null : n;
     };
     copy.sort((a, b) => {
@@ -136,9 +179,9 @@ if (!cancelled) setRows(data);
         }}
       >
         <div>
-        <h2 style={{ fontSize: 22, fontWeight: 700 }}>
-  {terms ? terms.record_label_plural : "Transactions"}
-</h2>
+          <h2 style={{ fontSize: 22, fontWeight: 700 }}>
+            {terms ? terms.record_label_plural : "Transactions"}
+          </h2>
           <div
             style={{
               marginTop: 8,
@@ -148,6 +191,29 @@ if (!cancelled) setRows(data);
             }}
           >
             <Badge variant="secondary">{filteredRows.length} showing</Badge>
+
+            {complianceFilter != null && (
+              <Badge
+                variant="outline"
+                style={{ cursor: "pointer" }}
+                onClick={() => {
+                  setSearchParams((prev) => {
+                    const next = new URLSearchParams(prev);
+                    next.delete("filter");
+                    return next;
+                  });
+                }}
+                title="Clear compliance filter"
+              >
+                Compliance:{" "}
+                {complianceFilter === "rejected"
+                  ? "Rejected"
+                  : complianceFilter === "missing"
+                    ? "Missing docs"
+                    : "Awaiting review"}{" "}
+                ×
+              </Badge>
+            )}
 
             <Badge variant="secondary">
               <AlertCircle style={{ width: 14, height: 14, marginRight: 6 }} />
@@ -172,7 +238,7 @@ if (!cancelled) setRows(data);
             {showArchived ? "Hide Archived" : "Show Archived"}
           </Button>
 
-         <Button onClick={() => navigate("/transactions/new")} variant="default">
+          <Button onClick={() => navigate("/transactions/new")} variant="default">
             <Plus style={{ width: 16, height: 16, marginRight: 8 }} />
             New
           </Button>
@@ -203,7 +269,7 @@ if (!cancelled) setRows(data);
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search by ID, identifier, owner, organization…"
+            placeholder="Search by ID, address, agent, workflow status, stage…"
             style={{ paddingLeft: 36 }}
           />
         </div>
@@ -211,11 +277,10 @@ if (!cancelled) setRows(data);
         <div style={{ width: 220 }}>
           <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as StatusFilter)}>
             <SelectTrigger>
-              <SelectValue placeholder="Filter status" />
+              <SelectValue placeholder="Filter workflow status" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All statuses</SelectItem>
-              {/* These values must match your StatusType union */}
+              <SelectItem value="all">All workflow statuses</SelectItem>
               <SelectItem value="success">Success</SelectItem>
               <SelectItem value="warning">Warning</SelectItem>
               <SelectItem value="error">Error</SelectItem>
@@ -250,86 +315,55 @@ if (!cancelled) setRows(data);
             <CardContent style={{ padding: 18 }}>No transactions match your filters.</CardContent>
           </Card>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {sortedRows.map((t) => {
-              const needsAttention = (t.missingCount ?? 0) > 0 || (t.rejectedCount ?? 0) > 0;
-              const isClosed =
-                (t.rawTransactionStatus ?? "").trim().toLowerCase() === "closed";
-              const hasComplianceIssue =
-                (t.compliancePendingReviewCount ?? t.missingCount ?? 0) > 0 ||
-                (t.complianceRejectedCount ?? t.rejectedCount ?? 0) > 0;
-              const rowTint = isClosed
-                ? "rgba(34, 197, 94, 0.09)"
-                : hasComplianceIssue
-                  ? "rgba(248, 113, 113, 0.1)"
-                  : undefined;
-
-              return (
-                <Card
-                  key={t.id}
-                  onClick={() => openTransaction(t.id)}
-                  style={{
-                    cursor: "pointer",
-                    ...(rowTint ? { backgroundColor: rowTint } : {}),
-                  }}
-                >
-                  <CardContent style={{ padding: 16 }}>
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        gap: 12,
-                      }}
-                    >
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontWeight: 700 }}>
-                          {t.identifier}
-                          {t.isArchived ? " (Archived)" : ""}
-                        </div>
-
-                        <div style={{ opacity: 0.8, marginTop: 4 }}>
-                          {t.id} • {t.type} • {t.owner} • {t.organizationName}
-                        </div>
-
-                        <div style={{ opacity: 0.8, marginTop: 6 }}>
-                          Due: {t.dueDate} • Last activity: {t.lastActivity}
-                        </div>
+          <div className="rounded-md border border-border bg-background">
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>Identifier</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Agent</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Stage</TableHead>
+                  <TableHead>Closing date</TableHead>
+                  <TableHead>Risk</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {sortedRows.map((t) => (
+                  <TableRow
+                    key={t.id}
+                    className="cursor-pointer"
+                    onClick={() => openTransaction(t.id)}
+                  >
+                    <TableCell className="max-w-[220px] whitespace-normal">
+                      {t.identifier}
+                      {t.isArchived ? " (Archived)" : ""}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{t.type}</TableCell>
+                    <TableCell>
+                      <div className="flex flex-col gap-0.5">
+                        <span>{t.agentDisplayName ?? "—"}</span>
+                        {viewerIsBroker && (t.organizationName ?? "").trim() !== "" && (
+                          <span className="text-xs text-muted-foreground">
+                            {t.organizationName}
+                          </span>
+                        )}
                       </div>
-
-                      <div
-                        style={{
-                          display: "flex",
-                          flexDirection: "column",
-                          gap: 8,
-                          alignItems: "flex-end",
-                        }}
-                      >
-                        <StatusBadge type={t.status as StatusType} label={t.statusLabel} />
-
-                        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                          {needsAttention ? (
-                            <Badge variant="destructive">
-                              <AlertCircle style={{ width: 14, height: 14, marginRight: 6 }} />
-                              Needs attention
-                            </Badge>
-                          ) : (
-                            <Badge variant="secondary">On track</Badge>
-                          )}
-
-                          {(t.missingCount ?? 0) > 0 && (
-                            <Badge variant="secondary">{t.missingCount} pending review</Badge>
-                          )}
-
-                          {(t.rejectedCount ?? 0) > 0 && (
-                            <Badge variant="secondary">{t.rejectedCount} rejected</Badge>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
+                    </TableCell>
+                    <TableCell>
+                      <StatusBadge status={t.statusType as StatusType} label={t.status} />
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{t.stage}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {formatClosingDisplay(t.closingDate)}
+                    </TableCell>
+                    <TableCell className="max-w-[200px] whitespace-normal text-muted-foreground text-xs">
+                      {t.risk}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </div>
         )}
       </div>

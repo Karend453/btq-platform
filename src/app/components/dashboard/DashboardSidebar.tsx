@@ -43,10 +43,14 @@ export function DashboardSidebar({ logo, sections, footer }: DashboardSidebarPro
               </div>
             )}
             <ul className="space-y-1 px-3">
-              {section.items.map((item) => {
+              {section.items
+                .filter(
+                  (item, i, arr) => arr.findIndex((x) => x.href === item.href) === i
+                )
+                .map((item) => {
                 const isActive = location.pathname === item.href;
                 return (
-                  <li key={item.href}>
+                  <li key={`${item.href}-${item.label}`}>
                     <Link
                       to={item.href}
                       className={cn(

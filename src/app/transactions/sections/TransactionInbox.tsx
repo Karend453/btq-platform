@@ -83,7 +83,7 @@ export type TransactionInboxProps = {
   onChecklistItemsChange: (items: ChecklistItem[]) => void;
   onViewInbox?: () => void;
   addActivityEntry?: (entry: {
-    actor: "System" | "Agent" | "Admin";
+    actor: "System" | "Agent" | "Admin" | "Broker";
     category: "docs" | "forms" | "system";
     type: string;
     message: string;
@@ -91,17 +91,23 @@ export type TransactionInboxProps = {
     documentId?: string | null;
     checklistItemId?: string | null;
   }) => void;
-  currentUserRole?: "Admin" | "Agent";
+  currentUserRole?: "Admin" | "Agent" | "Broker";
   /** When provided, attach drawer can be opened from outside (e.g. Checklist) */
   attachDrawerOpen?: boolean;
   attachTargetItem?: ChecklistItem | null;
   onAttachDrawerOpenChange?: (open: boolean) => void;
   onAttachTargetChange?: (item: ChecklistItem | null) => void;
+  /** Reserved for future intake UX; optional. */
+  intakeEmail?: string | null;
+  onCopyIntakeEmail?: (text?: string | null) => void;
 };
 
 function formatRelativeTime(date: Date) {
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
+  if (diffMs <= 0) {
+    return "Just now";
+  }
   const diffMins = Math.floor(diffMs / 60000);
   const diffHours = Math.floor(diffMs / 3600000);
   const diffDays = Math.floor(diffMs / 86400000);
@@ -127,8 +133,8 @@ export default function TransactionInbox({
   attachTargetItem: controlledAttachTargetItem,
   onAttachDrawerOpenChange,
   onAttachTargetChange,
-  intakeEmail,
-  onCopyIntakeEmail,
+  intakeEmail: _intakeEmail,
+  onCopyIntakeEmail: _onCopyIntakeEmail,
 }: TransactionInboxProps) {
   const [internalAttachDrawerOpen, setInternalAttachDrawerOpen] = useState(false);
   const [internalAttachTargetItem, setInternalAttachTargetItem] = useState<ChecklistItem | null>(null);
@@ -368,15 +374,18 @@ export default function TransactionInbox({
   return (
     <>
       {/* Document Inbox Card */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <Inbox className="h-5 w-5" />
+      <Card className="gap-2 border-slate-200 shadow-sm">
+        <CardHeader className="space-y-0 px-4 py-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex min-w-0 items-center gap-2">
+              <CardTitle className="flex items-center gap-1.5 text-base font-semibold">
+                <Inbox className="h-4 w-4 shrink-0 text-slate-600" />
                 Document Inbox
               </CardTitle>
-              <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+              <Badge
+                variant="outline"
+                className="shrink-0 border-blue-200 bg-blue-50/90 text-xs font-normal text-blue-700"
+              >
                 Unattached: {unattachedCount}
               </Badge>
             </div>
@@ -416,32 +425,35 @@ export default function TransactionInbox({
             </div>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="px-4 pb-4 pt-0">
           {previewInboxDocs.length === 0 ? (
-            <div className="text-center py-8 text-slate-500">
-              <Inbox className="h-12 w-12 mx-auto mb-3 text-slate-300" />
+            <div className="py-6 text-center text-sm text-slate-500">
+              <Inbox className="mx-auto mb-2 h-10 w-10 text-slate-300" />
               <p>No unattached documents in inbox</p>
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-2">
               {previewInboxDocs.map((doc) => (
                 <div
                   key={doc.id}
-                  className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200 hover:border-slate-300 transition-colors"
+                  className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50/90 p-2.5 transition-colors hover:border-slate-300"
                 >
-                  <div className="flex items-center gap-3 flex-1">
-                    <FileText className="h-5 w-5 text-blue-600" />
-                    <div className="flex-1">
-                      <div className="font-medium text-slate-900 text-sm">
+                  <div className="flex min-w-0 flex-1 items-center gap-2">
+                    <FileText className="h-4 w-4 shrink-0 text-blue-600" />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm text-slate-900">
                         {doc.filename}
                       </div>
-                      <div className="text-xs text-slate-600">
+                      <div className="text-[11px] text-slate-500">
                         {formatRelativeTime(doc.receivedAt)}
                       </div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200 text-xs">
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Badge
+                      variant="outline"
+                      className="border-slate-200 bg-white text-xs font-normal text-slate-600"
+                    >
                       Unattached
                     </Badge>
                     <Button
@@ -466,7 +478,7 @@ export default function TransactionInbox({
               {unattachedCount > 3 && (
                 <button
                   onClick={() => handleOpenAttachDrawer()}
-                  className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+                  className="text-sm font-normal text-blue-600 hover:text-blue-700"
                 >
                   View all inbox documents ({unattachedCount})
                 </button>
@@ -499,7 +511,7 @@ export default function TransactionInbox({
             )}
           </SheetHeader>
 
-          <div className="space-y-6 py-6">
+          <div className="space-y-4 py-4">
             {/* Search Bar */}
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -585,11 +597,11 @@ export default function TransactionInbox({
 
             {/* Attach To Preview (when launched from checklist) */}
             {attachTargetItem && (
-              <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                <div className="text-xs text-blue-700 font-medium mb-1">
+              <div className="rounded-lg border border-blue-200 bg-blue-50/90 p-2.5">
+                <div className="mb-0.5 text-xs text-blue-700">
                   Attach to:
                 </div>
-                <div className="font-medium text-blue-900">
+                <div className="text-sm text-blue-900">
                   {attachTargetItem.name}
                 </div>
               </div>
@@ -597,10 +609,10 @@ export default function TransactionInbox({
 
             {/* Document List */}
             <div>
-              <Label className="text-sm font-medium text-slate-700 mb-3 block">
+              <Label className="mb-2 block text-sm font-medium text-slate-600">
                 Inbox Documents ({filteredInboxDocuments.length})
               </Label>
-              <div className="space-y-2 max-h-[400px] overflow-y-auto">
+              <div className="max-h-[400px] space-y-1.5 overflow-y-auto">
                 {filteredInboxDocuments.length === 0 ? (
                   <div className="text-center py-8 text-slate-500">
                     <Inbox className="h-12 w-12 mx-auto mb-3 text-slate-300" />
@@ -618,18 +630,18 @@ export default function TransactionInbox({
                     >
                       <button
                         onClick={() => setSelectedDocumentForAttach(doc.id)}
-                        className="flex-1 min-w-0 text-left flex items-start gap-3"
+                        className="flex min-w-0 flex-1 items-start gap-2 text-left"
                       >
                         <FileText
-                          className={`h-5 w-5 flex-shrink-0 ${
+                          className={`h-4 w-4 flex-shrink-0 ${
                             selectedDocumentForAttach === doc.id
                               ? "text-blue-600"
                               : "text-slate-600"
                           }`}
                         />
-                        <div className="flex-1 min-w-0">
+                        <div className="min-w-0 flex-1">
                           <div
-                            className={`font-medium text-sm ${
+                            className={`text-sm ${
                               selectedDocumentForAttach === doc.id
                                 ? "text-blue-900"
                                 : "text-slate-900"
@@ -637,7 +649,7 @@ export default function TransactionInbox({
                           >
                             {doc.filename}
                           </div>
-                          <div className="text-xs text-slate-600 mt-1">
+                          <div className="mt-0.5 text-[11px] text-slate-500">
                             {formatRelativeTime(doc.receivedAt)}
                           </div>
                           {doc.isAttached && (

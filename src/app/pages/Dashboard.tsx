@@ -1,7 +1,16 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { getUserDisplayName } from "../contexts/AuthContext";
+import {
+  getUserProfileRoleKey,
+  getAccountInfoReadonly,
+  type AccountInfoReadonly,
+} from "../../services/auth";
+import {
+  fetchComplianceOverviewData,
+  type ComplianceOverviewData,
+} from "../../services/transactions";
 import {
   LayoutDashboard,
   Users,
@@ -12,9 +21,7 @@ import {
   Database,
   DollarSign,
   AlertTriangle,
-  CheckCircle2,
   Clock,
-  MessageSquare,
 } from "lucide-react";
 import { DashboardHeader } from "../components/dashboard/DashboardHeader";
 import { DataCard } from "../components/dashboard/DataCard";
@@ -26,6 +33,15 @@ import { DashboardModal } from "../components/dashboard/DashboardModal";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 
+function formatUsdCompact(n: number): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(n);
+}
+
 const offices = [
   { id: "all", name: "All Offices" },
   { id: "downtown", name: "Downtown Office" },
@@ -33,79 +49,50 @@ const offices = [
   { id: "westend", name: "West End Office" },
 ];
 
-const sampleTransactions: Transaction[] = [
-  {
-    id: "1",
-    address: "123 Oak Street, Chicago, IL",
-    agent: "Sarah Johnson",
-    type: "Sale",
-    status: "error",
-    statusLabel: "Missing Docs",
-    amount: "$485,000",
-    closingDate: "2026-03-15",
-    missingDocs: 3,
-  },
-  {
-    id: "2",
-    address: "456 Maple Ave, Chicago, IL",
-    agent: "Michael Chen",
-    type: "Purchase",
-    status: "warning",
-    statusLabel: "Under Review",
-    amount: "$625,000",
-    closingDate: "2026-03-20",
-    documents: 8,
-  },
-  {
-    id: "3",
-    address: "789 Pine Road, Evanston, IL",
-    agent: "Emily Rodriguez",
-    type: "Sale",
-    status: "success",
-    statusLabel: "Complete",
-    amount: "$750,000",
-    closingDate: "2026-03-10",
-    documents: 12,
-  },
-  {
-    id: "4",
-    address: "321 Birch Lane, Oak Park, IL",
-    agent: "David Kim",
-    type: "Lease",
-    status: "pending",
-    statusLabel: "Pending",
-    amount: "$3,200/mo",
-    closingDate: "2026-03-08",
-    missingDocs: 1,
-  },
-  {
-    id: "5",
-    address: "654 Cedar Court, Naperville, IL",
-    agent: "Jessica Martinez",
-    type: "Sale",
-    status: "error",
-    statusLabel: "Rejected",
-    amount: "$890,000",
-    closingDate: "2026-03-25",
-    missingDocs: 5,
-  },
-];
-
-const agentActivity = [
-  { name: "Sarah Johnson", tasks: 8, leads: 12, lastContact: "2 hours ago" },
-  { name: "Michael Chen", tasks: 5, leads: 8, lastContact: "4 hours ago" },
-  { name: "Emily Rodriguez", tasks: 3, leads: 15, lastContact: "1 hour ago" },
-  { name: "David Kim", tasks: 12, leads: 6, lastContact: "30 min ago" },
-  { name: "Jessica Martinez", tasks: 6, leads: 9, lastContact: "3 hours ago" },
-];
-
 export function Dashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [selectedOffice, setSelectedOffice] = useState("all");
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
+  const [complianceOverview, setComplianceOverview] = useState<ComplianceOverviewData | null>(null);
+  const [complianceLoading, setComplianceLoading] = useState(true);
+  const [profileRoleKey, setProfileRoleKey] = useState<
+    "admin" | "agent" | "broker" | null | undefined
+  >(undefined);
+  const [accountInfo, setAccountInfo] = useState<AccountInfoReadonly | null | undefined>(
+    undefined
+  );
 
-  const displayName = getUserDisplayName(user);
+  const displayName =
+    accountInfo?.display_name?.trim() ||
+    getUserDisplayName(user) ||
+    "there";
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      setComplianceLoading(true);
+      const [data, roleKey, accountRow] = await Promise.all([
+        fetchComplianceOverviewData(),
+        getUserProfileRoleKey(),
+        getAccountInfoReadonly(),
+      ]);
+      if (!cancelled) {
+        setComplianceOverview(data ?? null);
+        setProfileRoleKey(roleKey);
+        setAccountInfo(accountRow);
+        setComplianceLoading(false);
+      }
+    }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const isBroker = profileRoleKey === "broker";
 
   const handleSSOClick = (platform: string) => {
     console.log(`Opening ${platform}...`);
@@ -114,7 +101,7 @@ export function Dashboard() {
 
   const handleViewFullDetails = () => {
     if (selectedTransaction) {
-      const transactionId = `TXN-240${selectedTransaction.id}`;
+      const transactionId = selectedTransaction.id;
       setSelectedTransaction(null);
       navigate(`/transactions/${transactionId}`);
     }
@@ -125,9 +112,85 @@ export function Dashboard() {
   };
 
   const handleRowDoubleClick = (transaction: Transaction) => {
-    const transactionId = `TXN-240${transaction.id}`;
-    navigate(`/transactions/${transactionId}`);
+    navigate(`/transactions/${transaction.id}`);
   };
+
+  let actionRequiredBanner: {
+    type: "info" | "warning" | "success";
+    title: string;
+    message: string;
+  };
+  if (complianceLoading) {
+    actionRequiredBanner = {
+      type: "info",
+      title: "Checking compliance",
+      message: "Loading compliance status for your dashboard…",
+    };
+  } else if (!complianceOverview) {
+    actionRequiredBanner = {
+      type: "info",
+      title: "Compliance status unavailable",
+      message: "We couldn’t load compliance data. Refresh the page or try again shortly.",
+    };
+  } else {
+    const n = complianceOverview.tableRows.length;
+    if (n > 0) {
+      const label = n === 1 ? "transaction" : "transactions";
+      actionRequiredBanner = {
+        type: "warning",
+        title: "Action required",
+        message: isBroker
+          ? `Portfolio-wide: ${n} ${label} with compliance items that need attention. Review the Compliance Overview below.`
+          : `You have ${n} ${label} with compliance items that need attention. Review the Compliance Overview below.`,
+      };
+    } else {
+      actionRequiredBanner = {
+        type: "success",
+        title: "Compliance up to date",
+        message: isBroker
+          ? "No portfolio-wide compliance blockers are showing right now."
+          : "No transactions in your current scope require compliance attention right now.",
+      };
+    }
+  }
+
+  const kpiLoading = complianceLoading;
+  const kpis = complianceOverview?.kpis;
+  const kpiPlaceholder = "—";
+  const activeTxValue = kpiLoading ? kpiPlaceholder : kpis ? String(kpis.activeTransactionCount) : kpiPlaceholder;
+  const activeAgentsValue = kpiLoading ? kpiPlaceholder : kpis ? String(kpis.distinctAgentsOnActiveDeals) : kpiPlaceholder;
+  const complianceQueueValue = kpiLoading ? kpiPlaceholder : kpis ? String(kpis.complianceDocsPendingReviewCount) : kpiPlaceholder;
+  const volumeValue =
+    kpiLoading || !kpis
+      ? kpiPlaceholder
+      : kpis.activeTransactionCount === 0
+        ? kpiPlaceholder
+        : kpis.activePipelineSalePriceSum > 0
+          ? formatUsdCompact(kpis.activePipelineSalePriceSum)
+          : kpiPlaceholder;
+  const agentsOfficesSubtitle =
+    kpiLoading || !kpis
+      ? undefined
+      : kpis.distinctOfficesOnActiveDeals > 0
+        ? `Across ${kpis.distinctOfficesOnActiveDeals} office${kpis.distinctOfficesOnActiveDeals === 1 ? "" : "es"}`
+        : undefined;
+
+  const brokerSnapshot =
+    isBroker && complianceOverview && kpis
+      ? (() => {
+          const leg = complianceOverview.legend;
+          const total =
+            leg.rejected + leg.missing + leg.pendingReview + leg.complete;
+          const attention = leg.rejected + leg.missing + leg.pendingReview;
+          return {
+            total,
+            attention,
+            attentionPct:
+              total > 0 ? Math.round((attention / total) * 100) : 0,
+            queueDocs: kpis.complianceDocsPendingReviewCount,
+          };
+        })()
+      : null;
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-slate-50">
@@ -145,45 +208,80 @@ export function Dashboard() {
           {/* Page Header */}
           <div>
             <h1 className="text-3xl font-semibold text-slate-900">
-              Dashboard Overview
+              {isBroker ? "Broker oversight" : "Dashboard Overview"}
             </h1>
             <p className="text-slate-600 mt-1">
-              Welcome back, {displayName || "there"}. Here's what's happening today.
-            </p>
+            Welcome back, {displayName}! Here's what's happening today.
+</p>
           </div>
 
-          {/* Needs Attention Alert */}
+          {/* Broker-only: real rollup from same compliance payload as KPIs / overview */}
+          {isBroker && (
+            <Card className="border-l-4 border-indigo-600 shadow-sm">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-lg">Portfolio snapshot</CardTitle>
+                <p className="text-sm text-slate-600 font-normal">
+                </p>
+              </CardHeader>
+              <CardContent className="text-sm text-slate-700 space-y-2">
+                {complianceLoading ? (
+                  <p className="text-slate-600">Loading portfolio snapshot…</p>
+                ) : !complianceOverview || !brokerSnapshot ? (
+                  <p className="text-slate-600">Snapshot unavailable. Refresh to try again.</p>
+                ) : (
+                  <>
+                    <p>
+                      <span className="font-semibold text-slate-900">
+                        {brokerSnapshot.attention}
+                      </span>{" "}
+                      of{" "}
+                      <span className="font-semibold text-slate-900">
+                        {brokerSnapshot.total}
+                      </span>{" "}
+                      deals in scope have a non-complete compliance posture (
+                      {brokerSnapshot.attentionPct}%).
+                    </p>
+                    <p>
+                      Compliance document queue:{" "}
+                      <span className="font-semibold text-slate-900">
+                        {brokerSnapshot.queueDocs}
+                      </span>{" "}
+                      required checklist item(s) awaiting review (submitted, pending compliance
+                      review).
+                    </p>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Action required (scoped compliance — same payload as Compliance Overview) */}
           <AlertBanner
-            type="warning"
-            title="Action Required"
-            message="You have 8 transactions with missing or rejected documents that need immediate attention."
+            type={actionRequiredBanner.type}
+            title={actionRequiredBanner.title}
+            message={actionRequiredBanner.message}
           />
 
-          {/* Key Metrics */}
+          {/* Key Metrics — same scope as Compliance Overview (`fetchComplianceOverviewData` kpis) */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <DataCard
-              title="Active Transactions"
-              value="47"
-              icon={FileText}
-              trend={{ value: "12% from last month", isPositive: true }}
-            />
+            <DataCard title="Active Transactions" value={activeTxValue} icon={FileText} />
             <DataCard
               title="Active Agents"
-              value="23"
+              value={activeAgentsValue}
               icon={Users}
-              subtitle="Across 3 offices"
+              subtitle={agentsOfficesSubtitle}
             />
             <DataCard
-              title="Pending Tasks"
-              value="34"
+              title="Compliance Queue"
+              value={complianceQueueValue}
               icon={Clock}
-              trend={{ value: "8 overdue", isPositive: false }}
+              subtitle="Required checklist documents submitted and awaiting compliance review"
             />
             <DataCard
               title="Total Volume"
-              value="$12.4M"
+              value={volumeValue}
               icon={DollarSign}
-              trend={{ value: "18% from last month", isPositive: true }}
+              subtitle="Sale price on pipeline deals"
             />
           </div>
 
@@ -227,75 +325,64 @@ export function Dashboard() {
                     Transactions requiring document attention
                   </p>
                 </div>
-                <div className="flex items-center gap-4 text-sm">
+                <div className="flex flex-wrap items-center gap-4 text-sm">
                   <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-red-500" />
-                    <span className="text-slate-600">Missing (4)</span>
+                    <div className="w-3 h-3 rounded-full bg-red-600" />
+                    <span className="text-slate-600">
+                      Rejected (
+                      {complianceLoading ? "…" : complianceOverview?.legend.rejected ?? 0})
+                    </span>
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="w-3 h-3 rounded-full bg-amber-500" />
-                    <span className="text-slate-600">Rejected (4)</span>
+                    <span className="text-slate-600">
+                      Missing required (
+                      {complianceLoading ? "…" : complianceOverview?.legend.missing ?? 0})
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-blue-500" />
+                    <span className="text-slate-600">
+                      Pending review (
+                      {complianceLoading ? "…" : complianceOverview?.legend.pendingReview ?? 0})
+                    </span>
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="w-3 h-3 rounded-full bg-emerald-500" />
-                    <span className="text-slate-600">Complete (39)</span>
+                    <span className="text-slate-600">
+                      Complete (
+                      {complianceLoading ? "…" : complianceOverview?.legend.complete ?? 0})
+                    </span>
                   </div>
                 </div>
               </div>
             </CardHeader>
             <CardContent>
-              <TransactionTable
-                transactions={sampleTransactions}
-                onRowClick={handleRowClick}
-                onRowDoubleClick={handleRowDoubleClick}
-              />
+              {complianceLoading ? (
+                <p className="text-sm text-slate-600 py-6">Loading compliance data…</p>
+              ) : (
+                <TransactionTable
+                  transactions={complianceOverview?.tableRows ?? []}
+                  onRowClick={handleRowClick}
+                  onRowDoubleClick={handleRowDoubleClick}
+                />
+              )}
             </CardContent>
           </Card>
 
-          {/* Agent Activity Summary */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Agent Activity</CardTitle>
-                <p className="text-sm text-slate-600 mt-1">
-                  Recent activity across your team
-                </p>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {agentActivity.map((agent, idx) => (
-                    <div
-                      key={idx}
-                      className="flex items-center justify-between pb-4 border-b last:border-0 last:pb-0"
-                    >
-                      <div>
-                        <div className="font-medium text-slate-900">
-                          {agent.name}
-                        </div>
-                        <div className="text-sm text-slate-600 mt-1">
-                          <MessageSquare className="inline h-3 w-3 mr-1" />
-                          Last contact: {agent.lastContact}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-4 text-sm">
-                        <div className="text-center">
-                          <div className="font-semibold text-slate-900">
-                            {agent.tasks}
-                          </div>
-                          <div className="text-slate-500">Tasks</div>
-                        </div>
-                        <div className="text-center">
-                          <div className="font-semibold text-slate-900">
-                            {agent.leads}
-                          </div>
-                          <div className="text-slate-500">Leads</div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
+          {/* Agent Activity: only when user_profiles.role is broker (getUserProfileRoleKey); hidden for admin/agent */}
+          <div
+            className={`grid gap-6 ${isBroker ? "grid-cols-1 lg:grid-cols-2" : "grid-cols-1"}`}
+          >
+            {isBroker && (
+              <Card>
+                <CardContent className="py-6">
+                  <p className="text-sm text-slate-600">
+                    Agent Activity (Broker Insights) — coming soon
+                  </p>
+                </CardContent>
+              </Card>
+            )}
 
             <Card>
               <CardHeader>
@@ -305,52 +392,77 @@ export function Dashboard() {
                 </p>
               </CardHeader>
               <CardContent>
-                <div className="space-y-3">
-                  <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-200 rounded-lg">
-                    <AlertTriangle className="h-5 w-5 text-red-600 mt-0.5" />
-                    <div className="flex-1">
-                      <div className="font-medium text-slate-900">
-                        8 Transactions Missing Documents
+                {complianceLoading ? (
+                  <p className="text-sm text-slate-600 py-1">Loading alerts…</p>
+                ) : !complianceOverview ? (
+                  <p className="text-sm text-slate-600 py-1">
+                    Compliance data could not be loaded. Refresh the page to try again.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                      <AlertTriangle className="h-5 w-5 text-red-600 mt-0.5 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-slate-900">
+                          {complianceOverview.legend.rejected} Rejected Transactions
+                        </div>
+                        <div className="text-sm text-slate-600 mt-1">
+                          Work with agents to fix or re-upload documents marked rejected on these
+                          deals.
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="mt-2"
+                          onClick={() => navigate("/transactions?filter=rejected")}
+                        >
+                          Open transactions
+                        </Button>
                       </div>
-                      <div className="text-sm text-slate-600 mt-1">
-                        Critical documents needed before closing dates
-                      </div>
-                      <Button size="sm" variant="outline" className="mt-2">
-                        Review Now
-                      </Button>
                     </div>
-                  </div>
 
-                  <div className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                    <Clock className="h-5 w-5 text-amber-600 mt-0.5" />
-                    <div className="flex-1">
-                      <div className="font-medium text-slate-900">
-                        12 Overdue Agent Tasks
+                    <div className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                      <FileText className="h-5 w-5 text-amber-600 mt-0.5 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-slate-900">
+                          {complianceOverview.legend.missing} Transactions Missing Documents
+                        </div>
+                        <div className="text-sm text-slate-600 mt-1">
+                          Required compliance documents still need to be attached or completed for
+                          these transactions.
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="mt-2"
+                          onClick={() => navigate("/transactions?filter=missing")}
+                        >
+                          Open transactions
+                        </Button>
                       </div>
-                      <div className="text-sm text-slate-600 mt-1">
-                        Tasks past their due date across 5 agents
-                      </div>
-                      <Button size="sm" variant="outline" className="mt-2">
-                        View Tasks
-                      </Button>
                     </div>
-                  </div>
 
-                  <div className="flex items-start gap-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                    <CheckCircle2 className="h-5 w-5 text-blue-600 mt-0.5" />
-                    <div className="flex-1">
-                      <div className="font-medium text-slate-900">
-                        3 Transactions Closing This Week
+                    <div className="flex items-start gap-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                      <Clock className="h-5 w-5 text-blue-600 mt-0.5 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-slate-900">
+                          {complianceOverview.legend.pendingReview} Awaiting Review
+                        </div>
+                        <div className="text-sm text-slate-600 mt-1">
+                          Submitted documents are waiting on compliance review in these transactions.
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="mt-2"
+                          onClick={() => navigate("/transactions?filter=pending_review")}
+                        >
+                          Open transactions
+                        </Button>
                       </div>
-                      <div className="text-sm text-slate-600 mt-1">
-                        Final reviews and preparations needed
-                      </div>
-                      <Button size="sm" variant="outline" className="mt-2">
-                        View Details
-                      </Button>
                     </div>
                   </div>
-                </div>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -405,11 +517,29 @@ export function Dashboard() {
               </div>
             </div>
 
-            {selectedTransaction.missingDocs && (
+            {selectedTransaction.missingDocs != null && selectedTransaction.missingDocs > 0 && (
               <AlertBanner
-                type="error"
-                title="Missing Documents"
-                message={`This transaction is missing ${selectedTransaction.missingDocs} required documents. Please upload them as soon as possible.`}
+                type={
+                  selectedTransaction.statusLabel === "Rejected"
+                    ? "error"
+                    : selectedTransaction.statusLabel === "Pending review"
+                      ? "info"
+                      : "error"
+                }
+                title={
+                  selectedTransaction.statusLabel === "Rejected"
+                    ? "Rejected documents"
+                    : selectedTransaction.statusLabel === "Pending review"
+                      ? "Pending review"
+                      : "Missing documents"
+                }
+                message={
+                  selectedTransaction.statusLabel === "Rejected"
+                    ? `${selectedTransaction.missingDocs} required document(s) are rejected and need to be addressed.`
+                    : selectedTransaction.statusLabel === "Pending review"
+                      ? `${selectedTransaction.missingDocs} required document(s) are awaiting compliance review.`
+                      : `This transaction is missing ${selectedTransaction.missingDocs} required document(s). Please upload them as soon as possible.`
+                }
               />
             )}
 

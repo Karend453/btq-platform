@@ -19,13 +19,13 @@ export type CommentRow = {
 
 export type CommentShape = {
   id: string;
-  authorRole: "Admin" | "Agent";
+  authorRole: "Admin" | "Agent" | "Broker";
   authorName: string;
   createdAt: Date;
   message: string;
   visibility: "Internal" | "Shared";
   type?: "Comment" | "StatusChange" | "System";
-  unread?: { Admin?: boolean; Agent?: boolean };
+  unread?: { Admin?: boolean; Agent?: boolean; Broker?: boolean };
   pageNumber?: number;
   locationNote?: string;
 };
@@ -34,7 +34,7 @@ function rowToCommentShape(row: CommentRow): CommentShape {
   const unread = row.unread as Record<string, boolean> | null | undefined;
   return {
     id: row.id,
-    authorRole: row.author_role as "Admin" | "Agent",
+    authorRole: row.author_role as "Admin" | "Agent" | "Broker",
     authorName: row.author_name,
     createdAt: new Date(row.created_at),
     message: row.message,
@@ -79,14 +79,14 @@ export async function fetchCommentsByTransactionId(
 export type InsertCommentInput = {
   transactionId: string;
   checklistItemId: string;
-  authorRole: "Admin" | "Agent";
+  authorRole: "Admin" | "Agent" | "Broker";
   authorName: string;
   message: string;
   visibility: "Internal" | "Shared";
   type?: "Comment" | "StatusChange" | "System";
   pageNumber?: number;
   locationNote?: string;
-  unread?: { Admin?: boolean; Agent?: boolean };
+  unread?: { Admin?: boolean; Agent?: boolean; Broker?: boolean };
 };
 
 /**

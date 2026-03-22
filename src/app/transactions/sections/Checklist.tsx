@@ -32,6 +32,7 @@ import {
   checklistItemToEngineDocument,
   buildEngineUser,
 } from "../../../lib/documents/adapter";
+import { uiTransactionRoleToEngineRole } from "../../../services/auth";
 import type { DocumentStatus } from "../../../lib/documents/types";
 
 function formatRelativeTime(date: Date) {
@@ -117,18 +118,23 @@ function getReviewStatusBadge(status: DocumentStatus, waived?: boolean) {
 
 function hasUnreadComments(
   item: ChecklistItem,
-  currentUserRole: "Admin" | "Agent"
+  currentUserRole: "Admin" | "Agent" | "Broker"
 ): boolean {
   const comments = item.comments as Array<{
     type?: string;
     visibility?: string;
-    unread?: { Admin?: boolean; Agent?: boolean };
+    unread?: { Admin?: boolean; Agent?: boolean; Broker?: boolean };
   }>;
   return comments.some((comment) => {
     const isVisible =
       currentUserRole === "Admin" ||
+      currentUserRole === "Broker" ||
       (currentUserRole === "Agent" && comment.visibility === "Shared");
-    return isVisible && comment.unread?.[currentUserRole] === true;
+    const unreadForViewer =
+      currentUserRole === "Broker"
+        ? comment.unread?.Broker ?? comment.unread?.Admin
+        : comment.unread?.[currentUserRole];
+    return isVisible && unreadForViewer === true;
   });
 }
 
@@ -152,10 +158,10 @@ export type ChecklistProps = {
   onInboxDocumentsChange: (docs: InboxDocument[]) => void;
   transactionContext?: TransactionContextForChecklist | null;
   currentUserId?: string;
-  currentUserRole?: "Admin" | "Agent";
+  currentUserRole?: "Admin" | "Agent" | "Broker";
   isReadOnly?: boolean;
   addActivityEntry?: (entry: {
-    actor: "System" | "Agent" | "Admin";
+    actor: "System" | "Agent" | "Admin" | "Broker";
     category: "docs" | "forms" | "system";
     type: string;
     message: string;
@@ -189,7 +195,7 @@ export default function Checklist({
 }: ChecklistProps) {
   const engineUser = buildEngineUser({
     id: currentUserId,
-    roles: [currentUserRole === "Admin" ? "ADMIN" : "AGENT"],
+    roles: [uiTransactionRoleToEngineRole(currentUserRole)],
     officeIds: transactionContext ? [transactionContext.officeId ?? ""] : [],
   });
   const engineTxn = transactionContext
@@ -213,7 +219,7 @@ export default function Checklist({
       ) ?? checklistItems[0];
     const eu = buildEngineUser({
       id: currentUserId,
-      roles: [currentUserRole === "Admin" ? "ADMIN" : "AGENT"],
+      roles: [uiTransactionRoleToEngineRole(currentUserRole)],
       officeIds: transactionContext ? [transactionContext.officeId ?? ""] : [],
     });
     const et = transactionContext

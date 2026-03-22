@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/ca
 export interface ActivityLogEntry {
   id: string;
   timestamp: Date;
-  actor: "System" | "Agent" | "Admin";
+  actor: "System" | "Agent" | "Admin" | "Broker";
   category: "docs" | "forms" | "system" | "transaction";
   type: string;
   message: string;
