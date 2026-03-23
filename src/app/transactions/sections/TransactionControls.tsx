@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { Archive, Download, Activity as ActivityIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "../../components/ui/button";
@@ -34,6 +35,8 @@ export interface ChecklistItemForControls {
   attachedDocument?: {
     updatedAt: Date;
   };
+  /** When set, item is excluded from readiness and health (aligned with checklist archive). */
+  archivedAt?: string | null;
 }
 
 export interface ArchiveMetadata {
@@ -118,8 +121,12 @@ export default function TransactionControls({
   intakeEmail,
   onCopyIntakeEmail,
 }: TransactionControlsProps) {
-  const closeValidation = computeCloseValidation(checklistItems);
-  const archiveValidation = computeArchiveValidation(transactionStatus, checklistItems);
+  const activeChecklistItems = useMemo(
+    () => checklistItems.filter((i) => !i.archivedAt),
+    [checklistItems]
+  );
+  const closeValidation = computeCloseValidation(activeChecklistItems);
+  const archiveValidation = computeArchiveValidation(transactionStatus, activeChecklistItems);
   const showReadiness =
     !isReadOnly && transactionStatus !== "Closed" && transactionStatus !== "Archived";
 
@@ -166,7 +173,7 @@ export default function TransactionControls({
         </CardHeader>
         <CardContent className="px-4 pb-3 pt-0">
           <div className="space-y-2.5">
-            {showReadiness && <TransactionHealth checklistItems={checklistItems} />}
+            {showReadiness && <TransactionHealth checklistItems={activeChecklistItems} />}
 
             <div
               className={

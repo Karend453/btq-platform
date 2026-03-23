@@ -9,7 +9,9 @@ import {
 type DbChecklistItem = {
   id: string;
   transaction_id: string;
-  template_item_id: string;
+  template_item_id: string | null;
+  template_section_id: string | null;
+  sort_order: number;
   name: string;
   required: boolean;
   is_compliance_document?: boolean | null;
@@ -17,6 +19,22 @@ type DbChecklistItem = {
   reviewstatus: string | null;
   reviewnote: string | null;
   document_id: string | null;
+  archived_at?: string | null;
+  archive_group_id?: string | null;
+  checklist_archive_groups?:
+    | {
+        id: string;
+        label: string;
+        note: string | null;
+        created_at: string;
+      }
+    | {
+        id: string;
+        label: string;
+        note: string | null;
+        created_at: string;
+      }[]
+    | null;
 };
 
 function parseReviewStatus(
@@ -35,6 +53,21 @@ function uiStatusFromReview(
   return "pending";
 }
 
+function getTemplateItem(
+  row: DbChecklistItem,
+  itemById: Map<string, ChecklistTemplateItemRow>
+): ChecklistTemplateItemRow | undefined {
+  if (!row.template_item_id) return undefined;
+  return itemById.get(row.template_item_id);
+}
+
+function resolveSectionId(
+  row: DbChecklistItem,
+  templateItem: ChecklistTemplateItemRow | undefined
+): string | null {
+  return row.template_section_id ?? templateItem?.section_id ?? null;
+}
+
 function sortChecklistRowsByTemplate(
   rows: DbChecklistItem[],
   sections: ChecklistTemplateSectionRow[],
@@ -46,25 +79,18 @@ function sortChecklistRowsByTemplate(
   const getSectionSortOrder = (sectionId: string | null) =>
     sectionId ? (sectionMap.get(sectionId)?.sortOrder ?? 999) : 999;
 
-  const itemMeta = new Map(
-    items.map((i) => [
-      i.id,
-      {
-        sectionOrder: getSectionSortOrder(i.section_id),
-        itemOrder: i.sort_order ?? 999,
-      },
-    ])
-  );
+  const itemById = new Map(items.map((i) => [i.id, i]));
 
   return [...rows].sort((a, b) => {
-    const ma = itemMeta.get(a.template_item_id);
-    const mb = itemMeta.get(b.template_item_id);
-    if (ma && mb) {
-      if (ma.sectionOrder !== mb.sectionOrder) return ma.sectionOrder - mb.sectionOrder;
-      return ma.itemOrder - mb.itemOrder;
-    }
-    if (ma && !mb) return -1;
-    if (!ma && mb) return 1;
+    const ta = getTemplateItem(a, itemById);
+    const tb = getTemplateItem(b, itemById);
+    const secA = resolveSectionId(a, ta);
+    const secB = resolveSectionId(b, tb);
+    const orderA = getSectionSortOrder(secA);
+    const orderB = getSectionSortOrder(secB);
+    if (orderA !== orderB) return orderA - orderB;
+    const so = (a.sort_order ?? 0) - (b.sort_order ?? 0);
+    if (so !== 0) return so;
     return a.name.localeCompare(b.name);
   });
 }
@@ -82,9 +108,12 @@ function mapRowsToChecklist(
   const sorted = sortChecklistRowsByTemplate(rows, sections, items);
 
   return sorted.map((row) => {
-    const templateItem = itemById.get(row.template_item_id);
-    const section = templateItem?.section_id ? sectionMap.get(templateItem.section_id) : undefined;
+    const templateItem = getTemplateItem(row, itemById);
+    const sectionId = resolveSectionId(row, templateItem);
+    const section = sectionId ? sectionMap.get(sectionId) : undefined;
     const reviewStatus = parseReviewStatus(row.reviewstatus);
+    const grp = row.checklist_archive_groups;
+    const groupRow = Array.isArray(grp) ? grp[0] : grp;
 
     return {
       id: row.id,
@@ -98,41 +127,49 @@ function mapRowsToChecklist(
       version: 1,
       sectionname: section?.name ?? undefined,
       sectionTitle: section?.name ?? "Other",
-      section_id: templateItem?.section_id ?? null,
+      section_id: sectionId,
       section: section
         ? { name: section.name ?? "Other", sort_order: section.sortOrder }
         : undefined,
-      sort_order: templateItem?.sort_order ?? 9999,
+      sort_order: row.sort_order ?? 0,
       documentId: row.document_id ?? null,
       reviewNote: row.reviewnote ?? null,
       isComplianceDocument: row.is_compliance_document !== false,
+      template_item_id: row.template_item_id,
+      archivedAt: row.archived_at ?? null,
+      archiveGroupId: row.archive_group_id ?? null,
+      archiveGroupLabel: groupRow?.label ?? null,
+      archiveGroupNote: groupRow?.note ?? null,
+      archiveGroupCreatedAt: groupRow?.created_at ?? null,
     };
   });
 }
 
 /**
- * Seed checklist_items from the template when a transaction has a template but no rows yet.
+ * Seed checklist_items from the template when a transaction has no template-backed rows yet.
  */
 export async function ensureChecklistItemsForTransaction(
   transactionId: string,
   templateId: string
 ): Promise<boolean> {
-  const { data: existing, error: countErr } = await supabase
+  const { data: activeTemplateRows, error: activeErr } = await supabase
     .from("checklist_items")
     .select("id")
     .eq("transaction_id", transactionId)
+    .not("template_item_id", "is", null)
+    .is("archived_at", null)
     .limit(1);
 
-  if (countErr) {
-    console.error("ensureChecklistItemsForTransaction", countErr);
+  if (activeErr) {
+    console.error("ensureChecklistItemsForTransaction", activeErr);
     return false;
   }
 
-  if (existing && existing.length > 0) return false;
+  if (activeTemplateRows && activeTemplateRows.length > 0) return false;
 
   const { data: items, error } = await supabase
     .from("checklist_template_items")
-    .select("id, name, requirement, is_compliance_document")
+    .select("id, name, requirement, is_compliance_document, section_id, sort_order")
     .eq("template_id", templateId);
 
   if (error || !items?.length) {
@@ -140,24 +177,44 @@ export async function ensureChecklistItemsForTransaction(
     return false;
   }
 
-  const rows = items.map((ti) => ({
-    transaction_id: transactionId,
-    template_item_id: ti.id,
-    name: ti.name,
-    required: ti.requirement !== "optional",
-    is_compliance_document: (ti as { is_compliance_document?: boolean | null }).is_compliance_document !== false,
-    status: "pending",
-    reviewstatus: "pending",
-    reviewnote: null as string | null,
-  }));
+  const { data: existingRows, error: exErr } = await supabase
+    .from("checklist_items")
+    .select("template_item_id")
+    .eq("transaction_id", transactionId)
+    .not("template_item_id", "is", null);
 
-  const { error: upsertError } = await supabase.from("checklist_items").upsert(rows, {
-    onConflict: "transaction_id,template_item_id",
-    ignoreDuplicates: true,
-  });
+  if (exErr) {
+    console.error("ensureChecklistItemsForTransaction: existing rows", exErr);
+    return false;
+  }
 
-  if (upsertError) {
-    console.error("ensureChecklistItemsForTransaction upsert", upsertError);
+  const existingTemplateIds = new Set(
+    (existingRows ?? [])
+      .map((r) => r.template_item_id as string | null)
+      .filter((id): id is string => id != null && String(id).trim() !== "")
+  );
+
+  const rows = items
+    .filter((ti) => !existingTemplateIds.has(ti.id))
+    .map((ti) => ({
+      transaction_id: transactionId,
+      template_item_id: ti.id,
+      template_section_id: ti.section_id,
+      sort_order: ti.sort_order ?? 0,
+      name: ti.name,
+      required: ti.requirement !== "optional",
+      is_compliance_document: (ti as { is_compliance_document?: boolean | null }).is_compliance_document !== false,
+      status: "pending",
+      reviewstatus: "pending",
+      reviewnote: null as string | null,
+    }));
+
+  if (rows.length === 0) return false;
+
+  const { error: insertError } = await supabase.from("checklist_items").insert(rows);
+
+  if (insertError) {
+    console.error("ensureChecklistItemsForTransaction insert", insertError);
     return false;
   }
 
@@ -165,7 +222,7 @@ export async function ensureChecklistItemsForTransaction(
 }
 
 /**
- * Replace all checklist rows for a transaction (e.g. user picked a checklist type).
+ * Replace template-sourced checklist rows only; preserves transaction-only custom items (template_item_id IS NULL).
  */
 export async function replaceChecklistItemsFromTemplate(
   transactionId: string,
@@ -174,7 +231,9 @@ export async function replaceChecklistItemsFromTemplate(
   const { error: delErr } = await supabase
     .from("checklist_items")
     .delete()
-    .eq("transaction_id", transactionId);
+    .eq("transaction_id", transactionId)
+    .not("template_item_id", "is", null)
+    .is("archived_at", null);
 
   if (delErr) {
     console.error("replaceChecklistItemsFromTemplate delete", delErr);
@@ -183,7 +242,7 @@ export async function replaceChecklistItemsFromTemplate(
 
   const { data: items, error } = await supabase
     .from("checklist_template_items")
-    .select("id, name, requirement, is_compliance_document")
+    .select("id, name, requirement, is_compliance_document, section_id, sort_order")
     .eq("template_id", templateId);
 
   if (error || !items?.length) {
@@ -191,16 +250,39 @@ export async function replaceChecklistItemsFromTemplate(
     return;
   }
 
-  const rows = items.map((ti) => ({
-    transaction_id: transactionId,
-    template_item_id: ti.id,
-    name: ti.name,
-    required: ti.requirement !== "optional",
-    is_compliance_document: (ti as { is_compliance_document?: boolean | null }).is_compliance_document !== false,
-    status: "pending",
-    reviewstatus: "pending",
-    reviewnote: null as string | null,
-  }));
+  const { data: existingAfterDelete, error: exErr } = await supabase
+    .from("checklist_items")
+    .select("template_item_id")
+    .eq("transaction_id", transactionId)
+    .not("template_item_id", "is", null);
+
+  if (exErr) {
+    console.error("replaceChecklistItemsFromTemplate existing template ids", exErr);
+    return;
+  }
+
+  const existingTemplateIds = new Set(
+    (existingAfterDelete ?? [])
+      .map((r) => r.template_item_id as string | null)
+      .filter((id): id is string => id != null && String(id).trim() !== "")
+  );
+
+  const rows = items
+    .filter((ti) => !existingTemplateIds.has(ti.id))
+    .map((ti) => ({
+      transaction_id: transactionId,
+      template_item_id: ti.id,
+      template_section_id: ti.section_id,
+      sort_order: ti.sort_order ?? 0,
+      name: ti.name,
+      required: ti.requirement !== "optional",
+      is_compliance_document: (ti as { is_compliance_document?: boolean | null }).is_compliance_document !== false,
+      status: "pending",
+      reviewstatus: "pending",
+      reviewnote: null as string | null,
+    }));
+
+  if (rows.length === 0) return;
 
   const { error: insertError } = await supabase.from("checklist_items").insert(rows);
 
@@ -210,8 +292,75 @@ export async function replaceChecklistItemsFromTemplate(
 }
 
 /**
- * Load persisted checklist rows for a transaction and merge template metadata for section order/labels.
+ * Insert a transaction-only checklist item (no template item row).
  */
+export async function insertCustomChecklistItem(params: {
+  transactionId: string;
+  templateId: string;
+  templateSectionId: string;
+  name: string;
+  required: boolean;
+}): Promise<DbChecklistItem> {
+  const trimmed = params.name.trim();
+  if (!trimmed) {
+    const err = new Error("Checklist item name cannot be empty");
+    console.error("[insertCustomChecklistItem]", err.message);
+    throw err;
+  }
+
+  const { data: sectionRow, error: secErr } = await supabase
+    .from("checklist_template_sections")
+    .select("id, template_id")
+    .eq("id", params.templateSectionId)
+    .maybeSingle();
+
+  if (secErr || !sectionRow || sectionRow.template_id !== params.templateId) {
+    const err = new Error("Invalid checklist section for this template");
+    console.error("[insertCustomChecklistItem]", err.message, secErr);
+    throw err;
+  }
+
+  const { data: maxRows, error: maxErr } = await supabase
+    .from("checklist_items")
+    .select("sort_order")
+    .eq("transaction_id", params.transactionId)
+    .eq("template_section_id", params.templateSectionId)
+    .order("sort_order", { ascending: false })
+    .limit(1);
+
+  if (maxErr) {
+    console.error("[insertCustomChecklistItem] max sort_order", maxErr);
+    throw maxErr;
+  }
+
+  const maxSort = maxRows?.[0]?.sort_order;
+  const nextSort = (typeof maxSort === "number" ? maxSort : 0) + 1;
+
+  const { data, error } = await supabase
+    .from("checklist_items")
+    .insert({
+      transaction_id: params.transactionId,
+      template_item_id: null,
+      template_section_id: params.templateSectionId,
+      sort_order: nextSort,
+      name: trimmed,
+      required: params.required,
+      is_compliance_document: true,
+      status: "pending",
+      reviewstatus: "pending",
+      reviewnote: null as string | null,
+    })
+    .select()
+    .single();
+
+  if (error || !data) {
+    console.error("[insertCustomChecklistItem] insert", error);
+    throw error ?? new Error("Insert failed");
+  }
+
+  return data as DbChecklistItem;
+}
+
 /**
  * Compliance-only counts per transaction (for transaction list indicators).
  */
@@ -223,7 +372,7 @@ export async function fetchComplianceDocCountsByTransactionIds(
 
   const { data, error } = await supabase
     .from("checklist_items")
-    .select("transaction_id, reviewstatus, is_compliance_document, document_id")
+    .select("transaction_id, reviewstatus, is_compliance_document, document_id, archived_at")
     .in("transaction_id", transactionIds);
 
   if (error) {
@@ -236,11 +385,11 @@ export async function fetchComplianceDocCountsByTransactionIds(
   }
 
   for (const row of data ?? []) {
+    if (row.archived_at != null) continue;
     const tid = row.transaction_id as string;
     if (!tid || !empty[tid]) continue;
     const isComp = row.is_compliance_document !== false;
     if (!isComp) continue;
-    // Match documentEngine/adapter: no attachment => NOT_SUBMITTED, not SUBMITTED/REJECTED.
     const hasDoc = row.document_id != null;
     if (!hasDoc) continue;
     const rs = String(row.reviewstatus ?? "").toLowerCase();
@@ -258,7 +407,7 @@ export async function fetchChecklistItemsForTransaction(
   const { data: rows, error } = await supabase
     .from("checklist_items")
     .select(
-      "id, transaction_id, template_item_id, name, required, is_compliance_document, status, reviewstatus, reviewnote, document_id"
+      "id, transaction_id, template_item_id, template_section_id, sort_order, name, required, is_compliance_document, status, reviewstatus, reviewnote, document_id, archived_at, archive_group_id, checklist_archive_groups ( id, label, note, created_at )"
     )
     .eq("transaction_id", transactionId);
 
@@ -283,13 +432,41 @@ export async function updateChecklistItem(
     reviewNote?: string | null;
     required?: boolean;
     status?: string;
+    name?: string;
   }
 ) {
+  const { data: existing, error: loadErr } = await supabase
+    .from("checklist_items")
+    .select("archived_at")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (loadErr) {
+    console.error("[updateChecklistItem] load archived_at", loadErr);
+    throw loadErr;
+  }
+
+  const archivedAt = (existing as { archived_at?: string | null } | null)?.archived_at;
+  if (archivedAt != null && String(archivedAt).trim() !== "") {
+    const err = new Error("Cannot modify an archived checklist item");
+    console.error("[updateChecklistItem]", err.message);
+    throw err;
+  }
+
   const patch: Record<string, unknown> = {};
   if (updates.reviewStatus !== undefined) patch.reviewstatus = updates.reviewStatus;
   if (updates.reviewNote !== undefined) patch.reviewnote = updates.reviewNote;
   if (updates.required !== undefined) patch.required = updates.required;
   if (updates.status !== undefined) patch.status = updates.status;
+  if (updates.name !== undefined) {
+    const trimmed = updates.name.trim();
+    if (!trimmed) {
+      const err = new Error("Checklist item name cannot be empty");
+      console.error("[updateChecklistItem]", err.message);
+      throw err;
+    }
+    patch.name = trimmed;
+  }
 
   const { data, error } = await supabase
     .from("checklist_items")
@@ -304,4 +481,63 @@ export async function updateChecklistItem(
   }
 
   return data;
+}
+
+/**
+ * Create an archive group for the transaction and move the checklist item into archived state.
+ */
+export async function archiveChecklistItem(params: {
+  transactionId: string;
+  checklistItemId: string;
+}): Promise<void> {
+  const label = `Archive — ${new Date().toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  })}`;
+  const { data: group, error: gErr } = await supabase
+    .from("checklist_archive_groups")
+    .insert({ transaction_id: params.transactionId, label })
+    .select("id")
+    .single();
+
+  if (gErr || !group) {
+    console.error("[archiveChecklistItem] group", gErr);
+    throw gErr ?? new Error("Failed to create archive group");
+  }
+
+  const { error: uErr } = await supabase
+    .from("checklist_items")
+    .update({
+      archived_at: new Date().toISOString(),
+      archive_group_id: group.id,
+    })
+    .eq("id", params.checklistItemId)
+    .eq("transaction_id", params.transactionId);
+
+  if (uErr) {
+    console.error("[archiveChecklistItem] update", uErr);
+    throw uErr;
+  }
+}
+
+/**
+ * Restore a checklist item to the active checklist (clears archive columns).
+ */
+export async function restoreChecklistItem(params: {
+  transactionId: string;
+  checklistItemId: string;
+}): Promise<void> {
+  const { error } = await supabase
+    .from("checklist_items")
+    .update({ archived_at: null, archive_group_id: null })
+    .eq("id", params.checklistItemId)
+    .eq("transaction_id", params.transactionId);
+
+  if (error) {
+    console.error("[restoreChecklistItem]", error);
+    throw error;
+  }
 }

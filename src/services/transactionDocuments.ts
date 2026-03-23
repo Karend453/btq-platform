@@ -113,6 +113,39 @@ export async function uploadDocument(
   return rowToInboxDocument(inserted as TransactionDocumentRow);
 }
 
+const MAX_DISPLAY_NAME_LENGTH = 255;
+
+/**
+ * Update the display name only (`transaction_documents.file_name`). Does not move or rename storage objects.
+ */
+export async function renameTransactionDocumentDisplayName(
+  transactionId: string,
+  documentId: string,
+  displayName: string
+): Promise<boolean> {
+  const trimmed = displayName.trim();
+  if (!trimmed) {
+    console.error("[renameTransactionDocumentDisplayName] empty display name");
+    return false;
+  }
+  if (trimmed.length > MAX_DISPLAY_NAME_LENGTH) {
+    console.error("[renameTransactionDocumentDisplayName] display name too long");
+    return false;
+  }
+
+  const { error } = await supabase
+    .from("transaction_documents")
+    .update({ file_name: trimmed })
+    .eq("id", documentId)
+    .eq("transaction_id", transactionId);
+
+  if (error) {
+    console.error("[renameTransactionDocumentDisplayName] failed:", error);
+    return false;
+  }
+  return true;
+}
+
 /**
  * Attach or detach a document to/from a checklist item.
  * Persists checklist_items.document_id (FK to transaction_documents).
@@ -139,12 +172,18 @@ export async function attachDocumentToChecklistItem(
 
   const { data: current, error: fetchError } = await supabase
     .from("checklist_items")
-    .select("document_id, reviewstatus, is_compliance_document")
+    .select("document_id, reviewstatus, is_compliance_document, archived_at")
     .eq("id", checklistItemId)
     .single();
 
   if (fetchError) {
     console.error("[attachDocumentToChecklistItem] load checklist row failed:", fetchError);
+    return false;
+  }
+
+  const archivedAt = (current as { archived_at?: string | null } | null)?.archived_at;
+  if (archivedAt != null && String(archivedAt).trim() !== "") {
+    console.error("[attachDocumentToChecklistItem] checklist item is archived");
     return false;
   }
 

@@ -9,6 +9,7 @@ import {
   Filter,
   Upload,
   Eye,
+  Pencil,
 } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
@@ -30,7 +31,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../components/ui/select";
-import { uploadDocument, getSignedUrl, attachDocumentToChecklistItem } from "../../../services/transactionDocuments";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../../components/ui/dialog";
+import {
+  uploadDocument,
+  getSignedUrl,
+  attachDocumentToChecklistItem,
+  renameTransactionDocumentDisplayName,
+} from "../../../services/transactionDocuments";
 
 export interface InboxDocument {
   id: string;
@@ -53,6 +67,11 @@ export interface ChecklistItem {
   version: number;
   /** Section/group title for visual grouping (from template). */
   sectionTitle?: string;
+  /** Template section id for placement (custom items use this; template rows backfilled). */
+  section_id?: string | null;
+  sort_order?: number;
+  /** Null when transaction-only custom item. */
+  template_item_id?: string | null;
   attachedDocument?: {
     id: string;
     filename: string;
@@ -71,6 +90,12 @@ export interface ChecklistItem {
   reviewNote?: string | null;
   /** false = reference/supplemental; not reviewed for compliance. */
   isComplianceDocument?: boolean;
+  /** ISO timestamp when archived; omitted/null = active in the main checklist. */
+  archivedAt?: string | null;
+  archiveGroupId?: string | null;
+  archiveGroupLabel?: string | null;
+  archiveGroupNote?: string | null;
+  archiveGroupCreatedAt?: string | null;
 }
 
 type InboxFilter = "all" | "unattached" | "recent";
@@ -92,6 +117,8 @@ export type TransactionInboxProps = {
     checklistItemId?: string | null;
   }) => void;
   currentUserRole?: "Admin" | "Agent" | "Broker";
+  /** When true, uploads and renames are disabled (e.g. archived transaction). */
+  isReadOnly?: boolean;
   /** When provided, attach drawer can be opened from outside (e.g. Checklist) */
   attachDrawerOpen?: boolean;
   attachTargetItem?: ChecklistItem | null;
@@ -129,6 +156,7 @@ export default function TransactionInbox({
   onChecklistItemsChange,
   addActivityEntry,
   currentUserRole = "Admin",
+  isReadOnly = false,
   attachDrawerOpen: controlledAttachDrawerOpen,
   attachTargetItem: controlledAttachTargetItem,
   onAttachDrawerOpenChange,
@@ -142,6 +170,9 @@ export default function TransactionInbox({
   const [inboxFilter, setInboxFilter] = useState<InboxFilter>("all");
   const [inboxSearchQuery, setInboxSearchQuery] = useState("");
   const [isUploading, setIsUploading] = useState(false);
+  const [renameDocId, setRenameDocId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [renameSaving, setRenameSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isControlled = controlledAttachDrawerOpen !== undefined && onAttachDrawerOpenChange !== undefined;
@@ -350,6 +381,35 @@ export default function TransactionInbox({
     else toast.error("Could not open document");
   };
 
+  const openRenameDialog = (doc: InboxDocument) => {
+    setRenameDocId(doc.id);
+    setRenameDraft(doc.filename);
+  };
+
+  const handleConfirmRename = async () => {
+    if (!transactionId || !renameDocId) return;
+    const next = renameDraft.trim();
+    if (!next) {
+      toast.error("Enter a file name");
+      return;
+    }
+    setRenameSaving(true);
+    try {
+      const ok = await renameTransactionDocumentDisplayName(transactionId, renameDocId, next);
+      if (!ok) {
+        toast.error("Could not rename document");
+        return;
+      }
+      onInboxDocumentsChange(
+        inboxDocuments.map((d) => (d.id === renameDocId ? { ...d, filename: next } : d))
+      );
+      toast.success("Document renamed");
+      setRenameDocId(null);
+    } finally {
+      setRenameSaving(false);
+    }
+  };
+
   const getFilteredInboxDocuments = () => {
     let filtered = inboxDocuments;
 
@@ -374,22 +434,22 @@ export default function TransactionInbox({
   return (
     <>
       {/* Document Inbox Card */}
-      <Card className="gap-2 border-slate-200 shadow-sm">
-        <CardHeader className="space-y-0 px-4 py-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex min-w-0 items-center gap-2">
-              <CardTitle className="flex items-center gap-1.5 text-base font-semibold">
-                <Inbox className="h-4 w-4 shrink-0 text-slate-600" />
+      <Card className="gap-0 overflow-hidden border-slate-200/90 bg-white shadow-sm">
+        <CardHeader className="space-y-3 border-b border-slate-100 px-4 py-4 sm:space-y-0">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+              <CardTitle className="flex items-center gap-1.5 text-base font-semibold text-slate-900">
+                <Inbox className="h-4 w-4 shrink-0 text-slate-500" />
                 Document Inbox
               </CardTitle>
               <Badge
                 variant="outline"
-                className="shrink-0 border-blue-200 bg-blue-50/90 text-xs font-normal text-blue-700"
+                className="shrink-0 border-slate-200 bg-slate-50 text-xs font-normal text-slate-600"
               >
-                Unattached: {unattachedCount}
+                {unattachedCount} unattached
               </Badge>
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-shrink-0 flex-wrap gap-2">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -400,87 +460,90 @@ export default function TransactionInbox({
               <Button
                 variant="outline"
                 size="sm"
-                disabled={!transactionId || isUploading}
+                disabled={!transactionId || isUploading || isReadOnly}
                 onClick={() => fileInputRef.current?.click()}
+                className="border-slate-200"
               >
-                <Upload className="h-4 w-4 mr-2" />
+                <Upload className="mr-2 h-4 w-4" />
                 {isUploading ? "Uploading…" : "Upload"}
               </Button>
               <Button
-                variant="outline"
+                variant="default"
                 size="sm"
+                className="bg-slate-900 text-white hover:bg-slate-800"
                 onClick={() => handleOpenAttachDrawer()}
               >
-                <Inbox className="h-4 w-4 mr-2" />
-                View Inbox
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => handleOpenAttachDrawer()}
-              >
-                <Paperclip className="h-4 w-4 mr-2" />
-                Attach from Inbox
+                <Inbox className="mr-2 h-4 w-4" />
+                Open inbox
               </Button>
             </div>
           </div>
         </CardHeader>
-        <CardContent className="px-4 pb-4 pt-0">
+        <CardContent className="px-4 pb-5 pt-4">
           {previewInboxDocs.length === 0 ? (
-            <div className="py-6 text-center text-sm text-slate-500">
-              <Inbox className="mx-auto mb-2 h-10 w-10 text-slate-300" />
-              <p>No unattached documents in inbox</p>
+            <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50/50 py-8 text-center text-sm text-slate-500">
+              <Inbox className="mx-auto mb-2 h-9 w-9 text-slate-300" />
+              <p>No unattached documents</p>
+              <p className="mt-1 text-xs text-slate-400">Upload a file or open the inbox to see all documents.</p>
             </div>
           ) : (
             <div className="space-y-2">
               {previewInboxDocs.map((doc) => (
                 <div
                   key={doc.id}
-                  className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50/90 p-2.5 transition-colors hover:border-slate-300"
+                  className="flex items-center gap-3 rounded-lg border border-slate-200/90 bg-slate-50/40 px-3 py-2.5 transition-colors hover:bg-slate-50"
                 >
-                  <div className="flex min-w-0 flex-1 items-center gap-2">
-                    <FileText className="h-4 w-4 shrink-0 text-blue-600" />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm text-slate-900">
-                        {doc.filename}
-                      </div>
-                      <div className="text-[11px] text-slate-500">
-                        {formatRelativeTime(doc.receivedAt)}
-                      </div>
-                    </div>
+                  <FileText className="h-4 w-4 shrink-0 text-slate-500" aria-hidden />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium text-slate-900">{doc.filename}</div>
+                    <div className="text-[11px] text-slate-500">{formatRelativeTime(doc.receivedAt)}</div>
                   </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <Badge
-                      variant="outline"
-                      className="border-slate-200 bg-white text-xs font-normal text-slate-600"
-                    >
-                      Unattached
-                    </Badge>
+                  <div className="flex shrink-0 items-center gap-1">
+                    {!isReadOnly && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-slate-600"
+                        title="Rename"
+                        onClick={() => openRenameDialog(doc)}
+                      >
+                        <Pencil className="h-4 w-4" />
+                        <span className="sr-only">Rename</span>
+                      </Button>
+                    )}
                     <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleViewDocument(doc)}
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-slate-600"
+                      title="View"
+                      onClick={() => void handleViewDocument(doc)}
                     >
-                      <Eye className="h-3 w-3 mr-1.5" />
-                      View
+                      <Eye className="h-4 w-4" />
+                      <span className="sr-only">View</span>
                     </Button>
                     <Button
-                      variant="outline"
-                      size="sm"
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-slate-600"
+                      title="Attach to checklist"
                       onClick={() => handleOpenAttachDrawer()}
                     >
-                      <Paperclip className="h-3 w-3 mr-1.5" />
-                      Attach
+                      <Paperclip className="h-4 w-4" />
+                      <span className="sr-only">Attach</span>
                     </Button>
                   </div>
                 </div>
               ))}
               {unattachedCount > 3 && (
                 <button
+                  type="button"
                   onClick={() => handleOpenAttachDrawer()}
-                  className="text-sm font-normal text-blue-600 hover:text-blue-700"
+                  className="w-full rounded-md py-1.5 text-center text-sm text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                 >
-                  View all inbox documents ({unattachedCount})
+                  View all {unattachedCount} documents in inbox
                 </button>
               )}
             </div>
@@ -496,22 +559,22 @@ export default function TransactionInbox({
           if (!open) setAttachTargetItem(null);
         }}
       >
-        <SheetContent side="right" className="w-full sm:max-w-lg overflow-y-auto">
-          <SheetHeader>
+        <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-lg">
+          <SheetHeader className="space-y-1 border-b border-slate-100 pb-4">
             <SheetTitle>Attach a Document</SheetTitle>
             <SheetDescription>
               {attachTargetItem
                 ? `Select a document to attach to "${attachTargetItem.name}"`
-                : "Select a document from inbox"}
+                : "Select a document from the inbox"}
             </SheetDescription>
             {attachTargetItem?.isComplianceDocument === false && (
-              <p className="text-xs text-slate-600 mt-2">
+              <p className="mt-2 text-xs text-slate-600">
                 Reference documents are not reviewed for compliance
               </p>
             )}
           </SheetHeader>
 
-          <div className="space-y-4 py-4">
+          <div className="space-y-5 py-5">
             {/* Search Bar */}
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -532,12 +595,13 @@ export default function TransactionInbox({
             </div>
 
             {/* Filter Chips */}
-            <div className="flex items-center gap-2">
-              <Filter className="h-4 w-4 text-slate-500" />
-              <div className="flex gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Filter className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
+              <div className="flex flex-wrap gap-1.5">
                 <button
+                  type="button"
                   onClick={() => setInboxFilter("all")}
-                  className={`px-3 py-1 text-xs font-medium rounded-full transition-colors ${
+                  className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
                     inboxFilter === "all"
                       ? "bg-slate-900 text-white"
                       : "bg-slate-100 text-slate-700 hover:bg-slate-200"
@@ -546,21 +610,23 @@ export default function TransactionInbox({
                   All
                 </button>
                 <button
+                  type="button"
                   onClick={() => setInboxFilter("unattached")}
-                  className={`px-3 py-1 text-xs font-medium rounded-full transition-colors ${
+                  className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
                     inboxFilter === "unattached"
-                      ? "bg-blue-600 text-white"
-                      : "bg-blue-100 text-blue-700 hover:bg-blue-200"
+                      ? "bg-slate-900 text-white"
+                      : "bg-slate-100 text-slate-700 hover:bg-slate-200"
                   }`}
                 >
                   Unattached
                 </button>
                 <button
+                  type="button"
                   onClick={() => setInboxFilter("recent")}
-                  className={`px-3 py-1 text-xs font-medium rounded-full transition-colors ${
+                  className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
                     inboxFilter === "recent"
-                      ? "bg-purple-600 text-white"
-                      : "bg-purple-100 text-purple-700 hover:bg-purple-200"
+                      ? "bg-slate-900 text-white"
+                      : "bg-slate-100 text-slate-700 hover:bg-slate-200"
                   }`}
                 >
                   Recent
@@ -609,42 +675,40 @@ export default function TransactionInbox({
 
             {/* Document List */}
             <div>
-              <Label className="mb-2 block text-sm font-medium text-slate-600">
-                Inbox Documents ({filteredInboxDocuments.length})
+              <Label className="mb-2 block text-sm font-medium text-slate-700">
+                Documents ({filteredInboxDocuments.length})
               </Label>
-              <div className="max-h-[400px] space-y-1.5 overflow-y-auto">
+              <div className="max-h-[min(400px,50vh)] space-y-2 overflow-y-auto pr-0.5">
                 {filteredInboxDocuments.length === 0 ? (
-                  <div className="text-center py-8 text-slate-500">
-                    <Inbox className="h-12 w-12 mx-auto mb-3 text-slate-300" />
-                    <p className="text-sm">No documents found</p>
+                  <div className="rounded-lg border border-dashed border-slate-200 py-8 text-center text-slate-500">
+                    <Inbox className="mx-auto mb-2 h-10 w-10 text-slate-300" />
+                    <p className="text-sm">No documents match this filter</p>
                   </div>
                 ) : (
                   filteredInboxDocuments.map((doc) => (
                     <div
                       key={doc.id}
-                      className={`w-full p-3 rounded-lg border-2 transition-all flex items-start gap-3 ${
+                      className={`flex w-full items-start gap-2 rounded-lg border p-3 transition-colors ${
                         selectedDocumentForAttach === doc.id
-                          ? "border-blue-600 bg-blue-50"
+                          ? "border-blue-500 bg-blue-50/80"
                           : "border-slate-200 bg-white hover:border-slate-300"
                       }`}
                     >
                       <button
+                        type="button"
                         onClick={() => setSelectedDocumentForAttach(doc.id)}
-                        className="flex min-w-0 flex-1 items-start gap-2 text-left"
+                        className="flex min-w-0 flex-1 items-start gap-2.5 text-left"
                       >
                         <FileText
-                          className={`h-4 w-4 flex-shrink-0 ${
-                            selectedDocumentForAttach === doc.id
-                              ? "text-blue-600"
-                              : "text-slate-600"
+                          className={`mt-0.5 h-4 w-4 shrink-0 ${
+                            selectedDocumentForAttach === doc.id ? "text-blue-600" : "text-slate-500"
                           }`}
+                          aria-hidden
                         />
                         <div className="min-w-0 flex-1">
                           <div
-                            className={`text-sm ${
-                              selectedDocumentForAttach === doc.id
-                                ? "text-blue-900"
-                                : "text-slate-900"
+                            className={`text-sm font-medium leading-snug ${
+                              selectedDocumentForAttach === doc.id ? "text-blue-950" : "text-slate-900"
                             }`}
                           >
                             {doc.filename}
@@ -653,23 +717,47 @@ export default function TransactionInbox({
                             {formatRelativeTime(doc.receivedAt)}
                           </div>
                           {doc.isAttached && (
-                            <Badge className="mt-2 bg-slate-100 text-slate-600 border-slate-200 text-xs">
-                              Already Attached
+                            <Badge
+                              variant="outline"
+                              className="mt-2 border-slate-200 bg-slate-50 text-[10px] font-normal text-slate-600"
+                            >
+                              On checklist
                             </Badge>
                           )}
                         </div>
                       </button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleViewDocument(doc);
-                        }}
-                      >
-                        <Eye className="h-3 w-3 mr-1.5" />
-                        View
-                      </Button>
+                      <div className="flex shrink-0 gap-1">
+                        {!isReadOnly && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-slate-600"
+                            title="Rename"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openRenameDialog(doc);
+                            }}
+                          >
+                            <Pencil className="h-4 w-4" />
+                            <span className="sr-only">Rename</span>
+                          </Button>
+                        )}
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-slate-600"
+                          title="View"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void handleViewDocument(doc);
+                          }}
+                        >
+                          <Eye className="h-4 w-4" />
+                          <span className="sr-only">View</span>
+                        </Button>
+                      </div>
                     </div>
                   ))
                 )}
@@ -694,6 +782,59 @@ export default function TransactionInbox({
           </SheetFooter>
         </SheetContent>
       </Sheet>
+
+      <Dialog
+        open={renameDocId !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRenameDocId(null);
+            setRenameDraft("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Rename document</DialogTitle>
+            <DialogDescription>
+              This updates the display name only. The stored file and checklist links stay the same.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-1">
+            <Label htmlFor="rename-doc-input" className="text-sm text-slate-700">
+              File name
+            </Label>
+            <Input
+              id="rename-doc-input"
+              value={renameDraft}
+              onChange={(e) => setRenameDraft(e.target.value)}
+              className="mt-1.5"
+              maxLength={255}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void handleConfirmRename();
+                }
+              }}
+            />
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setRenameDocId(null);
+                setRenameDraft("");
+              }}
+              disabled={renameSaving}
+            >
+              Cancel
+            </Button>
+            <Button type="button" onClick={() => void handleConfirmRename()} disabled={renameSaving}>
+              {renameSaving ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

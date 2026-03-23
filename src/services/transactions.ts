@@ -416,6 +416,7 @@ type ChecklistItemDbRow = {
   is_compliance_document?: boolean | null;
   reviewstatus: string | null;
   document_id: string | null;
+  archived_at?: string | null;
 };
 
 function dbChecklistRowToShape(row: ChecklistItemDbRow): ChecklistItemShape {
@@ -531,8 +532,9 @@ async function fetchChecklistRowsForTransactions(
     const chunk = transactionIds.slice(i, i + CHECKLIST_BATCH_SIZE);
     const { data, error } = await supabase
       .from("checklist_items")
-      .select("id, transaction_id, required, is_compliance_document, reviewstatus, document_id")
-      .in("transaction_id", chunk);
+      .select("id, transaction_id, required, is_compliance_document, reviewstatus, document_id, archived_at")
+      .in("transaction_id", chunk)
+      .is("archived_at", null);
 
     if (error) {
       console.error("[fetchChecklistRowsForTransactions]", error);

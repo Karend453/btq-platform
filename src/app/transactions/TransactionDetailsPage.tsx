@@ -9,9 +9,12 @@ import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Input } from "../components/ui/input";
 import {
+  archiveChecklistItem,
   ensureChecklistItemsForTransaction,
   fetchChecklistItemsForTransaction,
+  insertCustomChecklistItem,
   replaceChecklistItemsFromTemplate,
+  restoreChecklistItem,
   updateChecklistItem,
 } from "../../services/checklistItems";
 import { Checkbox } from "../components/ui/checkbox";
@@ -146,6 +149,34 @@ function mergeInboxIntoChecklistItems(
         : undefined,
     };
   });
+}
+
+/** Extension from storage object key first, then display name — used for iframe vs img vs fallback only. */
+function getReviewPreviewExtensionHint(
+  storagePath: string | undefined,
+  displayFilename: string | undefined
+): string {
+  const segment = (storagePath ?? "").trim().split("/").filter(Boolean).pop() ?? "";
+  let lastDot = segment.lastIndexOf(".");
+  if (lastDot >= 0 && lastDot < segment.length - 1) {
+    return segment.slice(lastDot).toLowerCase();
+  }
+  const name = (displayFilename ?? "").trim();
+  lastDot = name.lastIndexOf(".");
+  if (lastDot >= 0 && lastDot < name.length - 1) {
+    return name.slice(lastDot).toLowerCase();
+  }
+  return "";
+}
+
+function getReviewInlinePreviewKind(
+  storagePath: string | undefined,
+  displayFilename: string | undefined
+): "pdf" | "image" | "other" {
+  const ext = getReviewPreviewExtensionHint(storagePath, displayFilename);
+  if (ext === ".pdf") return "pdf";
+  if (/^\.(jpe?g|png|gif|webp)$/i.test(ext)) return "image";
+  return "other";
 }
 
 export default function TransactionDetailsPage() {
@@ -358,6 +389,24 @@ export default function TransactionDetailsPage() {
   function handleAttachDrawerOpenChange(open: boolean) {
     setAttachDrawerOpen(open);
     if (!open) setAttachTargetItem(null);
+  }
+
+  async function handleRenameChecklistItem(item: ChecklistItem, newName: string) {
+    const trimmed = newName.trim();
+    if (!trimmed) {
+      toast.error("Name cannot be empty");
+      throw new Error("empty name");
+    }
+    try {
+      await updateChecklistItem(item.id, { name: trimmed });
+    } catch {
+      toast.error("Could not save checklist item name");
+      throw new Error("save failed");
+    }
+    setChecklistItems((prev) =>
+      prev.map((i) => (i.id === item.id ? { ...i, name: trimmed } : i))
+    );
+    toast.success("Checklist item renamed");
   }
 
   function handleOpenComments(item: ChecklistItem) {
@@ -880,6 +929,84 @@ export default function TransactionDetailsPage() {
     }
   }
 
+  async function handleAddCustomChecklistItem(args: {
+    templateSectionId: string;
+    name: string;
+    required: boolean;
+  }) {
+    if (!id || !checklistTemplateId) {
+      throw new Error("Missing transaction id or checklist template id");
+    }
+    try {
+      await insertCustomChecklistItem({
+        transactionId: id,
+        templateId: checklistTemplateId,
+        templateSectionId: args.templateSectionId,
+        name: args.name,
+        required: args.required,
+      });
+      const [items, commentsByItem] = await Promise.all([
+        fetchChecklistItemsForTransaction(id, checklistTemplateId),
+        fetchCommentsByTransactionId(id),
+      ]);
+      const withComments: ChecklistItem[] = items.map((item) => ({
+        ...item,
+        comments: commentsByItem.get(String(item.id)) ?? [],
+      })) as ChecklistItem[];
+      setChecklistItems(mergeInboxIntoChecklistItems(withComments, inboxDocumentsRef.current));
+      toast.success("Checklist item added");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not add checklist item");
+      throw e;
+    }
+  }
+
+  async function handleArchiveChecklistItem(item: ChecklistItem) {
+    if (!id || !checklistTemplateId) {
+      toast.error("Missing transaction or checklist");
+      return;
+    }
+    try {
+      await archiveChecklistItem({ transactionId: id, checklistItemId: item.id });
+      const [items, commentsByItem] = await Promise.all([
+        fetchChecklistItemsForTransaction(id, checklistTemplateId),
+        fetchCommentsByTransactionId(id),
+      ]);
+      const withComments: ChecklistItem[] = items.map((row) => ({
+        ...row,
+        comments: commentsByItem.get(String(row.id)) ?? [],
+      })) as ChecklistItem[];
+      setChecklistItems(mergeInboxIntoChecklistItems(withComments, inboxDocumentsRef.current));
+      toast.success("Checklist item archived");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not archive checklist item");
+      throw e;
+    }
+  }
+
+  async function handleRestoreChecklistItem(item: ChecklistItem) {
+    if (!id || !checklistTemplateId) {
+      toast.error("Missing transaction or checklist");
+      return;
+    }
+    try {
+      await restoreChecklistItem({ transactionId: id, checklistItemId: item.id });
+      const [items, commentsByItem] = await Promise.all([
+        fetchChecklistItemsForTransaction(id, checklistTemplateId),
+        fetchCommentsByTransactionId(id),
+      ]);
+      const withComments: ChecklistItem[] = items.map((row) => ({
+        ...row,
+        comments: commentsByItem.get(String(row.id)) ?? [],
+      })) as ChecklistItem[];
+      setChecklistItems(mergeInboxIntoChecklistItems(withComments, inboxDocumentsRef.current));
+      toast.success("Checklist item restored");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not restore checklist item");
+      throw e;
+    }
+  }
+
   function handleOpenArchiveModal() {
     if (transactionStatus !== "Closed") return;
     const confirmed = window.confirm(
@@ -887,7 +1014,8 @@ export default function TransactionDetailsPage() {
     );
     if (!confirmed) return;
     const txn = transaction as TransactionRow & { identifier?: string; office?: string; agent?: string };
-    const engineDocs = checklistItems.map((item) =>
+    const activeForReadiness = checklistItems.filter((i) => !i.archivedAt);
+    const engineDocs = activeForReadiness.map((item) =>
       checklistItemForControlsToEngineDocument(item)
     );
     const readiness = getTransactionClosingReadiness(engineDocs);
@@ -905,10 +1033,10 @@ export default function TransactionDetailsPage() {
         documentSummary: {
           requiredComplete: readiness.acceptedRequiredCount - (readiness.waivedRequiredCount ?? 0),
           requiredWaived: readiness.waivedRequiredCount ?? 0,
-          optionalComplete: checklistItems.filter(
+          optionalComplete: activeForReadiness.filter(
             (i) => i.requirement === "optional" && i.reviewStatus === "complete"
           ).length,
-          totalDocuments: checklistItems.length,
+          totalDocuments: activeForReadiness.length,
         },
         activityLogCount: 0,
       },
@@ -1018,8 +1146,13 @@ export default function TransactionDetailsPage() {
           onCopyIntakeEmail={handleCopyIntakeEmail}
         />
 
-        <div className="space-y-2">
-          <h2 className="text-sm font-semibold text-slate-900 tracking-tight">Documents</h2>
+        <div className="space-y-3">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900 tracking-tight">Documents</h2>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Upload files to the inbox, then attach them to checklist items.
+            </p>
+          </div>
           <TransactionInbox
             transactionId={id}
             inboxDocuments={inboxDocuments}
@@ -1028,6 +1161,7 @@ export default function TransactionDetailsPage() {
             onChecklistItemsChange={setChecklistItems}
             addActivityEntry={addActivityEntry}
             currentUserRole={currentUserRole}
+            isReadOnly={isReadOnly}
             attachDrawerOpen={attachDrawerOpen}
             attachTargetItem={attachTargetItem}
             onAttachDrawerOpenChange={handleAttachDrawerOpenChange}
@@ -1063,6 +1197,10 @@ export default function TransactionDetailsPage() {
           onOpenAttachDrawer={handleOpenAttachDrawer}
           onOpenComments={handleOpenComments}
           onOpenReviewModal={handleOpenReviewModal}
+          onRenameChecklistItem={isReadOnly ? undefined : handleRenameChecklistItem}
+          onAddCustomChecklistItem={isReadOnly ? undefined : handleAddCustomChecklistItem}
+          onArchiveChecklistItem={isReadOnly ? undefined : handleArchiveChecklistItem}
+          onRestoreChecklistItem={isReadOnly ? undefined : handleRestoreChecklistItem}
         />
 
         <TransactionActivity
@@ -1140,27 +1278,33 @@ export default function TransactionDetailsPage() {
                     )}
                     {reviewDocUrl && !reviewDocUrlLoading && !reviewDocUrlError && (
                       <div className="bg-white rounded-lg shadow-sm overflow-hidden h-full min-h-[400px]">
-                        {selectedItem.attachedDocument?.filename?.toLowerCase().endsWith(".pdf") ? (
-                          <iframe
-                            src={reviewDocUrl}
-                            title={selectedItem.attachedDocument?.filename ?? "Document"}
-                            className="w-full h-full border-0"
-                          />
-                        ) : /\.(jpg|jpeg|png|gif|webp)$/i.test(selectedItem.attachedDocument?.filename ?? "") ? (
-                          <img
-                            src={reviewDocUrl}
-                            alt={selectedItem.attachedDocument?.filename ?? "Document"}
-                            className="max-w-full h-auto object-contain"
-                          />
-                        ) : (
-                          <div className="flex flex-col items-center justify-center h-full gap-3 p-8 text-slate-600">
-                            <p>Preview not available for this file type.</p>
-                            <Button variant="outline" onClick={handleOpenReviewDocInNewTab}>
-                              <ExternalLink className="h-4 w-4 mr-2" />
-                              Open in new tab
-                            </Button>
-                          </div>
-                        )}
+                        {(() => {
+                          const kind = getReviewInlinePreviewKind(
+                            selectedItem.attachedDocument?.storage_path,
+                            selectedItem.attachedDocument?.filename
+                          );
+                          return kind === "pdf" ? (
+                            <iframe
+                              src={reviewDocUrl}
+                              title={selectedItem.attachedDocument?.filename ?? "Document"}
+                              className="w-full h-full border-0"
+                            />
+                          ) : kind === "image" ? (
+                            <img
+                              src={reviewDocUrl}
+                              alt={selectedItem.attachedDocument?.filename ?? "Document"}
+                              className="max-w-full h-auto object-contain"
+                            />
+                          ) : (
+                            <div className="flex flex-col items-center justify-center h-full gap-3 p-8 text-slate-600">
+                              <p>Preview not available for this file type.</p>
+                              <Button variant="outline" onClick={handleOpenReviewDocInNewTab}>
+                                <ExternalLink className="h-4 w-4 mr-2" />
+                                Open in new tab
+                              </Button>
+                            </div>
+                          );
+                        })()}
                       </div>
                     )}
                     {!selectedItem.attachedDocument && (

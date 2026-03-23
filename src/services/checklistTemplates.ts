@@ -25,6 +25,14 @@ export interface ChecklistItemFromTemplate {
   reviewNote?: string | null;
   /** false = reference/supplemental only (not sent to compliance when attached). */
   isComplianceDocument?: boolean;
+  /** Null = transaction-only custom item (no template line). */
+  template_item_id?: string | null;
+  /** ISO timestamp when archived; omitted/null = active in the main checklist. */
+  archivedAt?: string | null;
+  archiveGroupId?: string | null;
+  archiveGroupLabel?: string | null;
+  archiveGroupNote?: string | null;
+  archiveGroupCreatedAt?: string | null;
 }
 
 export type ChecklistTemplateSectionRow = {
