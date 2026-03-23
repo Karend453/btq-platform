@@ -2,6 +2,19 @@ import React from "react";
 import { Button } from "../../components/ui/button";
 import type { TransactionRow } from "../../../services/transactions";
 
+/** Compact list/buyer commission % for summary: `3% / 3%`, one side, or — */
+function formatCommissionPercentSummary(
+  row: Pick<TransactionRow, "listcommissionpercent" | "buyercommissionpercent">
+): string {
+  const list = (row.listcommissionpercent ?? "").trim();
+  const buyer = (row.buyercommissionpercent ?? "").trim();
+  const withPct = (s: string) => (s.endsWith("%") ? s : `${s}%`);
+  if (!list && !buyer) return "—";
+  if (list && buyer) return `${withPct(list)} / ${withPct(buyer)}`;
+  if (list) return withPct(list);
+  return withPct(buyer);
+}
+
 type TransactionOverviewSectionProps = {
   row: TransactionRow & {
     intake_email?: string | null;
@@ -79,8 +92,11 @@ export default function TransactionOverviewSection({
         <SummaryField label="Type" value={row.type || "—"} />
         <SummaryField label="Checklist Type" value={row.checklisttype || "—"} />
         <SummaryField label="Office" value={officeValue} />
-        <SummaryField label="Side of Transaction" value={row.transaction_side || "—"} />
-        <SummaryField label="Transaction Category" value={row.transaction_category || "—"} />
+        <SummaryField
+          label="Commission"
+          value={formatCommissionPercentSummary(row)}
+        />
+        <SummaryField label="GCI" value={formatCurrency(row.gci)} />
         <SummaryField label="Sale Price" value={formatCurrency(row.saleprice)} />
       </div>
     </div>

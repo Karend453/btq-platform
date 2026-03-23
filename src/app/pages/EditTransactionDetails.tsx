@@ -1,30 +1,36 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { getTransaction, updateTransaction, type TransactionRow } from "../../services/transactions";
+import {
+  formatAgentLabelForList,
+  getAssignedAgentDisplayNameFromRow,
+  getTransaction,
+  updateTransaction,
+  type TransactionRow,
+} from "../../services/transactions";
+
+/** DB numeric columns: '' → null; '0' → 0 */
+function parseNullableNumber(raw: string): number | null {
+  const t = raw.trim();
+  if (t === "") return null;
+  const n = Number(t);
+  if (!Number.isFinite(n)) return null;
+  return n;
+}
+
+/** Commission text columns: '' → null; '0' preserved */
+function parseNullableCommissionString(raw: string): string | null {
+  const t = raw.trim();
+  if (t === "") return null;
+  return t;
+}
 
 type FormData = {
-  listAgent: string;
-  buyerAgent: string;
-  clientName: string;
-  identifier: string;
-  sellerNames: string;
-  buyerNames: string;
   salePrice: string;
-  type: string;
-  checklistType: string;
-  office: string;
   listCommissionPercent: string;
   buyerCommissionPercent: string;
   listCommissionAmount: string;
   buyerCommissionAmount: string;
-  contractDate: string;
-  closingDate: string;
-  admin: string;
-  status: string;
-  transactionSide: string;
-  transactionCategory: string;
-  leadSource: string;
   gci: string;
   referralFeeAmount: string;
 };
@@ -37,27 +43,11 @@ export default function EditTransactionDetails() {
   const [transaction, setTransaction] = useState<TransactionRow | null>(null);
 
   const [formData, setFormData] = useState<FormData>({
-    identifier: "",
-    clientName: "",
-    listAgent: "",
-    buyerAgent: "",
-    sellerNames: "",
-    buyerNames: "",
     salePrice: "",
-    type: "",
-    checklistType: "",
-    office: "",
     listCommissionPercent: "",
     buyerCommissionPercent: "",
     listCommissionAmount: "",
     buyerCommissionAmount: "",
-    contractDate: "",
-    closingDate: "",
-    admin: "",
-    status: "",
-    transactionSide: "",
-    transactionCategory: "",
-    leadSource: "",
     gci: "",
     referralFeeAmount: "",
   });
@@ -65,55 +55,45 @@ export default function EditTransactionDetails() {
   useEffect(() => {
     async function loadTransaction() {
       if (!id) return;
-  
+
       setIsLoading(true);
-  
+      setTransaction(null);
+
       const tx = await getTransaction(id);
-  
+
       if (!tx) {
         setTransaction(null);
         setIsLoading(false);
         return;
       }
-  
+
       setTransaction(tx);
-  
+
       setFormData({
-        identifier: tx.identifier ?? "",
-        clientName: tx.clientname ?? "",
-        listAgent: tx.listagent ?? "",
-        buyerAgent: tx.buyeragent ?? "",
-        sellerNames: tx.sellernames ?? "",
-        buyerNames: tx.buyernames ?? "",
         salePrice: tx.saleprice != null ? String(tx.saleprice) : "",
-        type: tx.type ?? "",
-        checklistType: tx.checklisttype ?? "",
-        office: tx.office ?? "",
         listCommissionPercent: tx.listcommissionpercent ?? "",
         buyerCommissionPercent: tx.buyercommissionpercent ?? "",
         listCommissionAmount: tx.listcommissionamount ?? "",
         buyerCommissionAmount: tx.buyercommissionamount ?? "",
-        contractDate: tx.contractdate ?? "",
-        closingDate: tx.closing_date ?? "",
-        admin: tx.assignedadmin ?? "",
-        status: tx.status ?? "",
-        transactionSide: tx.transaction_side ?? "",
-        transactionCategory: tx.transaction_category ?? "",
-        leadSource: tx.lead_source ?? "",
         gci: tx.gci != null ? String(tx.gci) : "",
         referralFeeAmount:
           tx.referral_fee_amount != null ? String(tx.referral_fee_amount) : "",
       });
-  
+
       setIsLoading(false);
     }
-  
+
     loadTransaction();
   }, [id]);
 
-  const handleChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
-  ) => {
+  const agentDisplayLabel = useMemo(() => {
+    if (!transaction) return "—";
+    const raw = getAssignedAgentDisplayNameFromRow(transaction);
+    const formatted = formatAgentLabelForList(raw).trim();
+    return formatted || "Unassigned";
+  }, [transaction]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
 
     setFormData((prev) => ({
@@ -123,43 +103,27 @@ export default function EditTransactionDetails() {
   };
 
   const handleSave = async () => {
-    console.log("SAVE CLICKED");
-    console.log("id:", id);
-    console.log("formData:", formData);
-  
     if (!id) {
-      console.log("No id, stopping save");
       return;
     }
-  
+
     try {
       const { data, error } = await updateTransaction(id, {
-        type: formData.type || null,
-        office: formData.office || null,
-        status: formData.status || null,
-        admin: formData.admin || null,
-        contractDate: formData.contractDate || null,
-        closingDate: formData.closingDate || null,
-      
-        sellerNames: formData.sellerNames || null,
-        buyerNames: formData.buyerNames || null,
-        salePrice: formData.salePrice ? Number(formData.salePrice) : null,
-        checklistType: formData.checklistType || null,
-      
-        listAgent: formData.listAgent || null,
-        buyerAgent: formData.buyerAgent || null,
-        listCommissionPercent: formData.listCommissionPercent || null,
-        buyerCommissionPercent: formData.buyerCommissionPercent || null,
-        listCommissionAmount: formData.listCommissionAmount || null,
-        buyerCommissionAmount: formData.buyerCommissionAmount || null,
-
-        transactionSide: formData.transactionSide || null,
-        transactionCategory: formData.transactionCategory || null,
-        leadSource: formData.leadSource || null,
-        gci: formData.gci ? Number(formData.gci) : null,
-        referralFeeAmount: formData.referralFeeAmount
-          ? Number(formData.referralFeeAmount)
-          : null,
+        salePrice: parseNullableNumber(formData.salePrice),
+        listCommissionPercent: parseNullableCommissionString(
+          formData.listCommissionPercent
+        ),
+        buyerCommissionPercent: parseNullableCommissionString(
+          formData.buyerCommissionPercent
+        ),
+        listCommissionAmount: parseNullableCommissionString(
+          formData.listCommissionAmount
+        ),
+        buyerCommissionAmount: parseNullableCommissionString(
+          formData.buyerCommissionAmount
+        ),
+        gci: parseNullableNumber(formData.gci),
+        referralFeeAmount: parseNullableNumber(formData.referralFeeAmount),
       });
 
       if (error || !data) {
@@ -188,51 +152,19 @@ export default function EditTransactionDetails() {
 
       <section className="space-y-4">
         <h2 className="text-lg font-semibold">People</h2>
-        <div className="grid grid-cols-2 gap-4">
-          <input
-            className="border rounded px-3 py-2"
-            name="listAgent"
-            value={formData.listAgent}
-            placeholder="List Agent"
-            onChange={handleChange}
-          />
-
-          <input
-            className="border rounded px-3 py-2"
-            name="buyerAgent"
-            value={formData.buyerAgent}
-            placeholder="Buyer Agent"
-            onChange={handleChange}
-          />
-
-          <input
-            className="border rounded px-3 py-2"
-            name="sellerNames"
-            value={formData.sellerNames}
-            placeholder="Seller Names"
-            onChange={handleChange}
-          />
-
-          <input
-            className="border rounded px-3 py-2"
-            name="buyerNames"
-            value={formData.buyerNames}
-            placeholder="Buyer Names"
-            onChange={handleChange}
-          />
-
-          <input
-            className="border rounded px-3 py-2"
-            name="admin"
-            value={formData.admin}
-            placeholder="Assigned Admin / Reviewer"
-            onChange={handleChange}
-          />
+        <div className="max-w-md">
+          <div className="mb-1 text-xs font-medium text-slate-500">Agent</div>
+          <div
+            className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900"
+            aria-readonly
+          >
+            {agentDisplayLabel}
+          </div>
         </div>
       </section>
 
       <section className="space-y-4">
-        <h2 className="text-lg font-semibold">Intake + Pricing + Commission</h2>
+        <h2 className="text-lg font-semibold">Financial Details</h2>
         <div className="grid grid-cols-2 gap-4">
           <input
             className="border rounded px-3 py-2"
@@ -271,46 +203,6 @@ export default function EditTransactionDetails() {
             name="buyerCommissionAmount"
             value={formData.buyerCommissionAmount}
             placeholder="Buyer Commission $"
-            onChange={handleChange}
-          />
-        </div>
-      </section>
-
-      <section className="space-y-4">
-        <h2 className="text-lg font-semibold">Reporting + Classification</h2>
-        <div className="grid grid-cols-2 gap-4">
-          <select
-            className="border rounded px-3 py-2"
-            name="transactionSide"
-            value={formData.transactionSide}
-            onChange={handleChange}
-          >
-            <option value="">Side of Transaction</option>
-            <option value="Buyer">Buyer</option>
-            <option value="Seller">Seller</option>
-            <option value="Dual">Dual</option>
-            <option value="Referral">Referral</option>
-          </select>
-
-          <select
-            className="border rounded px-3 py-2"
-            name="transactionCategory"
-            value={formData.transactionCategory}
-            onChange={handleChange}
-          >
-            <option value="">Transaction Category</option>
-            <option value="Resale">Resale</option>
-            <option value="New Construction">New Construction</option>
-            <option value="Land">Land</option>
-            <option value="Lease">Lease</option>
-            <option value="Referral">Referral</option>
-          </select>
-
-          <input
-            className="border rounded px-3 py-2"
-            name="leadSource"
-            value={formData.leadSource}
-            placeholder="Lead Source"
             onChange={handleChange}
           />
 

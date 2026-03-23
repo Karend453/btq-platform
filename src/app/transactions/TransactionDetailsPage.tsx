@@ -1089,35 +1089,21 @@ export default function TransactionDetailsPage() {
     );
   }
 
-  const row = transaction as TransactionRow & {
-    identifier?: string | null;
-    address?: string | null;
-    address_identifier?: string | null;
-    client?: string | null;
-    client_name?: string | null;
-    checklist_type?: string | null;
-    office?: string | null;
-    office_name?: string | null;
-    assigned_admin?: string | null;
-    intake_email?: string | null;
-    sale_price?: number | string | null;
-    status?: string | null;
-    type?: string | null;
-  };
-
   const title =
-    row.address_identifier ||
-    row.address ||
-    row.identifier ||
-    `Transaction ${row.id}`;
+    (transaction.identifier && String(transaction.identifier).trim()) ||
+    `Transaction ${transaction.id}`;
 
-  const officeValue = row.office_name || row.office || "—";
+  const officeValue = transaction.office ?? "—";
+
+  const intakeEmail =
+    (transaction as TransactionRow & { intake_email?: string | null })
+      .intake_email ?? null;
 
   return (
     <div className="min-h-screen bg-slate-50 p-5">
       <div className="mx-auto flex max-w-[1080px] flex-col gap-6">
         <TransactionOverview
-          row={row}
+          row={transaction}
           title={title}
           officeValue={officeValue}
           agentDisplayName={assignedAgentName}
@@ -1142,7 +1128,7 @@ export default function TransactionDetailsPage() {
           onOpenArchiveModal={handleOpenArchiveModal}
           onDownloadArchivePackage={handleDownloadArchivePackage}
           onViewArchivedActivityLog={() => {}}
-          intakeEmail={row.intake_email}
+          intakeEmail={intakeEmail}
           onCopyIntakeEmail={handleCopyIntakeEmail}
         />
 
