@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
@@ -12,7 +12,9 @@ import {
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Input } from "../components/ui/input";
+import { toast } from "sonner";
 import { createTransaction } from "../../services/transactions";
+import { getCurrentOffice } from "../../services/offices";
 import { Label } from "../components/ui/label";
 
 interface TransactionData {
@@ -48,6 +50,28 @@ export function NewTransaction() {
     clientName: "",
     officeId: "",
   });
+  /** `offices.id` (UUID) → display label for the select and review step. */
+  const [officeOptions, setOfficeOptions] = useState<{ id: string; name: string }[]>([]);
+  const [officeLoadState, setOfficeLoadState] = useState<"loading" | "ready" | "empty">(
+    "loading"
+  );
+
+  useEffect(() => {
+    void getCurrentOffice().then((o) => {
+      if (!o) {
+        setOfficeOptions([]);
+        setOfficeLoadState("empty");
+        return;
+      }
+      const label = (o.display_name ?? o.name).trim() || o.name;
+      setOfficeOptions([{ id: o.id, name: label }]);
+      setOfficeLoadState("ready");
+      setTransactionData((prev) => ({
+        ...prev,
+        officeId: prev.officeId || o.id,
+      }));
+    });
+  }, []);
 
   const steps = [
     { number: 1, title: "Transaction Type", icon: FileText },
@@ -61,12 +85,6 @@ export function NewTransaction() {
     { value: "Listing", label: "Listing", description: "Seller representation" },
     { value: "Lease", label: "Lease", description: "Rental transaction" },
     { value: "Other", label: "Other", description: "Custom transaction type" },
-  ];
-
-  const officeOptions = [
-    { id: "downtown", name: "Downtown" },
-    { id: "east-side", name: "East Side" },
-    { id: "miami", name: "Miami" },
   ];
 
   // Generate intake email based on identifier
@@ -88,21 +106,24 @@ export function NewTransaction() {
   };
 
   const handleSubmit = async () => {
-    console.log("handleSubmit fired");
-    const created = await createTransaction({
-      identifier: transactionData.identifier,
-      type: transactionData.type,
-      clientName: transactionData.clientName,
-      officeId: transactionData.officeId,
-      transactionSide: transactionSideFromWizardType(transactionData.type),
-    });
-  
-    if (!created) {
-      console.error("Failed to create transaction");
-      return;
+    try {
+      const created = await createTransaction({
+        identifier: transactionData.identifier,
+        type: transactionData.type,
+        clientName: transactionData.clientName,
+        officeId: transactionData.officeId,
+        transactionSide: transactionSideFromWizardType(transactionData.type),
+      });
+
+      if (!created) {
+        toast.error("Could not create transaction");
+        return;
+      }
+
+      navigate(`/transactions/${created.id}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not create transaction");
     }
-  
-    navigate(`/transactions/${created.id}`);
   };
 
   const isStepValid = () => {
@@ -113,6 +134,7 @@ export function NewTransaction() {
         return transactionData.identifier.trim() !== "";
       case 3:
         return (
+          officeLoadState === "ready" &&
           transactionData.clientName.trim() !== "" &&
           transactionData.officeId.trim() !== ""
         );
@@ -357,7 +379,7 @@ export function NewTransaction() {
                       {transactionData.clientName}
                     </div>
                     <div className="text-sm text-slate-600 mt-1">
-                      {transactionData.officeId}
+                      {officeOptions.find((o) => o.id === transactionData.officeId)?.name ?? "—"}
                     </div>
                   </div>
 

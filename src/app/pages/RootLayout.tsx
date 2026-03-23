@@ -11,6 +11,7 @@ import {
   BarChart3,
   Building2,
   Settings,
+  ClipboardList,
 } from "lucide-react";
 
 /** Default (admin / agent): full management + insights. */
@@ -90,6 +91,11 @@ const navSectionsBroker: NavSection[] = [
         label: "Analytics",
         href: "/analytics",
         icon: BarChart3,
+      },
+      {
+        label: "Office Templates",
+        href: "/office/checklist-templates",
+        icon: ClipboardList,
       },
     ],
   },

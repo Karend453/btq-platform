@@ -5,7 +5,6 @@ import { ManageSubagentsTab } from "./ManageSubagentsTab";
 import { MyOfficeTab } from "./MyOfficeTab";
 import { MySubscriptionsTab } from "./MySubscriptionsTab";
 import { MyWalletTab } from "./MyWalletTab";
-
 const TAB_CONFIG = [
   { value: "office", label: "My Office", icon: Building2 },
   { value: "subscriptions", label: "My Subscriptions", icon: CreditCard },

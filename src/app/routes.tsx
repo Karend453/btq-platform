@@ -8,6 +8,7 @@ import { Transactions } from "./pages/Transactions";
 import { Analytics } from "./pages/Analytics";
 import { Offices } from "./pages/Offices";
 import { SettingsPage } from "./pages/SettingsPage";
+import { OfficeChecklistTemplatesPage } from "./pages/OfficeChecklistTemplatesPage";
 import TransactionDetail from "./transactions/TransactionDetailsPage";
 import { NewTransaction } from "./pages/NewTransaction";
 import Login from "./Login";
@@ -30,6 +31,7 @@ export const router = createBrowserRouter([
       { path: "test-route", element: <div>Test Route Works</div> },
       { path: "analytics", element: <Analytics /> },
       { path: "offices", element: <Offices /> },
+      { path: "office/checklist-templates", element: <OfficeChecklistTemplatesPage /> },
       { path: "settings", element: <SettingsPage /> },
 
     ],

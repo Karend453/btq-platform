@@ -6,6 +6,21 @@ import {
   type ChecklistTemplateSectionRow,
 } from "./checklistTemplates";
 
+/** Any row counts (archived, custom, rejected, etc.) — used for template-switch lock. */
+export async function countChecklistItemsForTransaction(transactionId: string): Promise<number> {
+  const { count, error } = await supabase
+    .from("checklist_items")
+    .select("*", { count: "exact", head: true })
+    .eq("transaction_id", transactionId);
+
+  if (error) {
+    console.error("[countChecklistItemsForTransaction]", error);
+    return 0;
+  }
+
+  return count ?? 0;
+}
+
 type DbChecklistItem = {
   id: string;
   transaction_id: string;

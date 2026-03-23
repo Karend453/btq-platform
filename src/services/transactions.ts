@@ -220,7 +220,10 @@ export async function createTransaction(input: CreateTransactionInput): Promise<
     return null;
   }
 
-  const checklistTemplate = await resolveChecklistTemplateForNewTransaction(input.type);
+  const checklistTemplate = await resolveChecklistTemplateForNewTransaction(
+    input.officeId,
+    input.type
+  );
   const transactionSide = input.transactionSide ?? null;
   const sessionEmail = user.email?.trim() ?? "";
   const agentFields = sessionAgentNameFieldsForTransactionSide(transactionSide, sessionEmail);
@@ -237,12 +240,8 @@ export async function createTransaction(input: CreateTransactionInput): Promise<
     transaction_side: transactionSide,
     listagent: agentFields.listagent,
     buyeragent: agentFields.buyeragent,
-    ...(checklistTemplate
-      ? {
-          checklist_template_id: checklistTemplate.id,
-          checklisttype: checklistTemplate.name,
-        }
-      : {}),
+    checklist_template_id: checklistTemplate.id,
+    checklisttype: checklistTemplate.name,
   };
 
   // TODO: remove after RLS insert path verified

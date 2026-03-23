@@ -1,6 +1,7 @@
+
 import { useState, useEffect } from "react";
-import { getTransaction, updateTransaction } from "../../services/transactions";
 import { useParams, useNavigate } from "react-router-dom";
+import { getCurrentUser } from "../../services/auth";
 import { toast } from "sonner";
 import {
   ArrowLeft,
@@ -33,6 +34,7 @@ import {
   Download,
 } from "lucide-react";
 import { Button } from "../components/ui/button";
+import { getTransactionById, type TransactionRow } from "../../services/transactions";
 import { Badge } from "../components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import {
@@ -131,7 +133,7 @@ interface ActivityLogEntry {
   id: string;
   timestamp: Date;
   actor: "System" | "Agent" | "Admin";
-  category: "docs" | "forms" | "system" | "transaction";
+  category: "docs" | "forms" | "system";
   type: string;
   message: string;
   meta?: {
@@ -141,17 +143,58 @@ interface ActivityLogEntry {
     [key: string]: any;
   };
 }
+
 type ActivityFilter = "all" | "docs" | "forms" | "system" | "transaction";
 type InboxFilter = "all" | "unattached" | "recent";
 
-export function TransactionDetail() {
+export default function TransactionDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [transaction, setTransaction] = useState<TransactionRow | null>(null);
+  const [isLoadingTransaction, setIsLoadingTransaction] = useState(true);
   const [copySuccess, setCopySuccess] = useState(false);
   const [lastZipFormsLaunchAt, setLastZipFormsLaunchAt] = useState<Date | null>(null);
   const [activityLog, setActivityLog] = useState<ActivityLogEntry[]>([]);
   const [activityFilter, setActivityFilter] = useState<ActivityFilter>("all");
   const [isDemoOpen, setIsDemoOpen] = useState(false);
+
+  useEffect(() => {
+    async function loadTransaction() {
+      if (!id) {
+        setIsLoadingTransaction(false);
+        return;
+      }
+  
+      try {
+        const data = await getTransactionById(id);
+        setTransaction(data);
+
+        const user = await getCurrentUser();
+       setCurrentUserName(user?.email ?? "Unknown User");
+  
+        if (data) {
+          setAssignedAdmin(data.assignedadmin);
+          setClosingDate(data.closingdate);
+          setContractDate(data.contractdate);
+        }
+  
+      } catch (error) {
+        console.error("Failed to load transaction:", error);
+        setTransaction(null);
+      } finally {
+        setIsLoadingTransaction(false);
+      }
+    }
+  
+    loadTransaction();
+  }, [id]);
+  return (
+    <div className="p-6">
+      <h1 className="text-2xl font-semibold">Transaction Detail</h1>
+      <p>Transaction ID: {id}</p>
+      <p>This page is temporarily restored so routing works.</p>
+    </div>
+  );
   
   // Admin Review Modal State
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
@@ -207,151 +250,23 @@ export function TransactionDetail() {
 
   // Transaction-level operational fields
   const [transactionStatus, setTransactionStatus] = useState<"Pre-Contract" | "Under Contract" | "Closed" | "Archived">("Pre-Contract");
-  const [assignedAdmin, setAssignedAdmin] = useState<string>("");
-  const [closingDate, setClosingDate] = useState<string>("");
-  const [contractDate, setContractDate] = useState<string>("");
+  const [assignedAdmin, setAssignedAdmin] = useState<string | null>(null);
+const [closingDate, setClosingDate] = useState<string | null>(null);
+const [contractDate, setContractDate] = useState<string | null>(null);
+const adminOptions = ["Admin", "Compliance", "Final Review"];
 
-  // Mock current user role (controllable via dropdown)
-  const [currentUserRole, setCurrentUserRole] = useState<"Admin" | "Agent">("Admin");
-  const currentUserName = currentUserRole === "Admin" ? "Admin User" : "Sarah Johnson";
+  // Current user role (controllable via dropdown)
+  const [currentUserName, setCurrentUserName] = useState<string>("Loading...");
 
-  const [loadedTransaction, setLoadedTransaction] = useState<any | null>(null);
-const [loadingTransaction, setLoadingTransaction] = useState(true);
-
-  // Mock transaction database lookup
-  const mockTransactionDatabase: Record<string, any> = {
-    "TXN-2401": {
-      id: "TXN-2401",
-      identifier: "123 Oak Street, Chicago, IL",
-      type: "Sale",
-      status: "Pre-Contract",
-      clientName: "Sarah Johnson",
-      clientEmail: "sarah.j@email.com",
-      assignedAgent: "Sarah Johnson",
-      office: "Downtown Chicago Office",
-      intakeEmail: "txn-2401@docs.btq.app",
-      createdAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-    },
-    "TXN-2402": {
-      id: "TXN-2402",
-      identifier: "456 Maple Ave, Chicago, IL",
-      type: "Purchase",
-      status: "Pre-Contract",
-      clientName: "Michael Chen",
-      clientEmail: "m.chen@email.com",
-      assignedAgent: "Michael Chen",
-      office: "Northside Office",
-      intakeEmail: "txn-2402@docs.btq.app",
-      createdAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
-    },
-    "TXN-2403": {
-      id: "TXN-2403",
-      identifier: "789 Pine Road, Evanston, IL",
-      type: "Sale",
-      status: "Under Contract",
-      clientName: "Emily Rodriguez",
-      clientEmail: "emily.r@email.com",
-      assignedAgent: "Emily Rodriguez",
-      office: "West End Office",
-      intakeEmail: "txn-2403@docs.btq.app",
-      createdAt: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString(),
-    },
-    "TXN-2404": {
-      id: "TXN-2404",
-      identifier: "321 Birch Lane, Oak Park, IL",
-      type: "Lease",
-      status: "Pre-Contract",
-      clientName: "David Kim",
-      clientEmail: "d.kim@email.com",
-      assignedAgent: "David Kim",
-      office: "Downtown Chicago Office",
-      intakeEmail: "txn-2404@docs.btq.app",
-      createdAt: new Date(Date.now() - 12 * 24 * 60 * 60 * 1000).toISOString(),
-    },
-    "TXN-2405": {
-      id: "TXN-2405",
-      identifier: "654 Cedar Court, Naperville, IL",
-      type: "Sale",
-      status: "Pre-Contract",
-      clientName: "Jessica Martinez",
-      clientEmail: "j.martinez@email.com",
-      assignedAgent: "Jessica Martinez",
-      office: "Northside Office",
-      intakeEmail: "txn-2405@docs.btq.app",
-      createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
-    },
-  };
-
-// // Look up transaction or use default
-const mockTransaction = loadedTransaction
-  ? {
-      id: loadedTransaction.id,
-      identifier: loadedTransaction.identifier,
-      type: loadedTransaction.type,
-      status: loadedTransaction.statusLabel || "Pre-Contract",
-      clientName: loadedTransaction.owner || "",
-      clientEmail: "",
-      assignedAgent: loadedTransaction.owner || "Unassigned",
-      office: loadedTransaction.organizationName || "New Transaction",
-      intakeEmail: "",
-      createdAt: new Date().toISOString(),
-      assignedAdmin: "",
-      closingDate: loadedTransaction.dueDate || "",
-      contractDate: "",
-    }
-    : id
-      ? null
-      : {
-      id: "NEW",
-      identifier: "",
-      type: "Sale",
-      status: "Pre-Contract",
-      clientName: "",
-      clientEmail: "",
-      assignedAgent: "Unassigned",
-      office: "New Transaction",
-      intakeEmail: "",
-      createdAt: new Date().toISOString(),
-      assignedAdmin: "",
-      closingDate: "",
-      contractDate: "",
-    };
   // Get assigned agent name from transaction
-  const assignedAgentName = mockTransaction?.assignedAgent || "Sarah Johnson";
+  const assignedAgentName = transaction?.agent || "Unassigned";
 
-  useEffect(() => {
-    async function loadTransaction() {
-      setLoadingTransaction(true);
-  
-      if (!id) {
-        setLoadingTransaction(false);
-        return;
-      }
-  
-      const txn = await getTransaction(id);
-      setLoadedTransaction(txn);
-      setLoadingTransaction(false);
-    }
-  
-    loadTransaction();
-  }, [id]);
+  // Document Inbox
+  const [inboxDocuments, setInboxDocuments] = useState<InboxDocument[]>([]);
 
-  useEffect(() => {
-    if (!mockTransaction || typeof mockTransaction === "string") return;
-  
-    setTransactionStatus(
-      (mockTransaction.status as typeof transactionStatus) || "Pre-Contract"
-    );
-    setAssignedAdmin(mockTransaction.assignedAdmin || "");
-    setClosingDate(mockTransaction.closingDate || "");
-    setContractDate(mockTransaction.contractDate || "");
-  }, [id]);
-
-// Document Inbox
-const [inboxDocuments, setInboxDocuments] = useState<InboxDocument[]>([]);
-
-  // Checklist items
-  const [checklistItems, setChecklistItems] = useState<ChecklistItem[]>([]);
+  // Checklist items with suggested attachments
+  const [checklistItems, setChecklistItems] = useState<ChecklistItem[]>([
+  ]);
 
   const addActivityEntry = (entry: Omit<ActivityLogEntry, "id" | "timestamp">) => {
     const newEntry: ActivityLogEntry = {
@@ -361,36 +276,9 @@ const [inboxDocuments, setInboxDocuments] = useState<InboxDocument[]>([]);
     };
     setActivityLog((prev) => [newEntry, ...prev]);
   };
-  useEffect(() => {
-    if (!mockTransaction || typeof mockTransaction === "string") return;
-  
-    setActivityLog((prev) => {
-      const alreadyHasCreatedEntry = prev.some(
-        (entry) => entry.type === "TRANSACTION_CREATED"
-      );
-  
-      if (alreadyHasCreatedEntry) return prev;
-  
-      const createdAt = mockTransaction.createdAt
-        ? new Date(mockTransaction.createdAt)
-        : new Date();
-  
-      return [
-        {
-          id: `act-created-${mockTransaction.id}`,
-          timestamp: createdAt,
-          actor: "System",
-          category: "system",
-          type: "TRANSACTION_CREATED",
-          message: "Transaction created",
-        },
-        ...prev,
-      ];
-    });
-  }, [mockTransaction]);
 
   const handleCopyEmail = () => {
-    navigator.clipboard.writeText(mockTransaction.intakeEmail);
+    navigator.clipboard.writeText("");
     setCopySuccess(true);
     setTimeout(() => setCopySuccess(false), 2000);
   };
@@ -406,42 +294,50 @@ const [inboxDocuments, setInboxDocuments] = useState<InboxDocument[]>([]);
     toast.success("ZipForms session launched. Activity logged.");
   };
 
-  const handleSimulateDocReceived = () => {
-    const mockDocNames = [
-      "Title Report.pdf",
-      "Inspection Report.pdf",
-      "Appraisal Document.pdf",
-      "HOA Documents.pdf",
-      "Wire Instructions.pdf",
-    ];
-    const randomDoc = mockDocNames[Math.floor(Math.random() * mockDocNames.length)];
-    addActivityEntry({
-      actor: "Agent",
-      category: "docs",
-      type: "DOC_RECEIVED",
-      message: `Document received: "${randomDoc}"`,
-      meta: { docName: randomDoc },
-    });
-    toast.success(`Document received: ${randomDoc}`);
-  };
+  const handleDocReceived = () => {
+    const handleDocReceived = () => {
+      const docNames = [
+        "Title Report.pdf",
+        "Inspection Report.pdf",
+        "Appraisal Document.pdf",
+        "HOA Documents.pdf",
+        "Wire Instructions.pdf",
+      ];
+    
+      const randomDoc = docNames[Math.floor(Math.random() * docNames.length)];
+    
+      addActivityEntry({
+        actor: "Agent",
+        category: "docs",
+        type: "DOC_RECEIVED",
+        message: `Document received: "${randomDoc}"`,
+        meta: { docName: randomDoc },
+      });
+    
+      toast.success(`Document received: ${randomDoc}`);
+    };
 
-  const handleSimulateDocDeleted = () => {
-    const mockDocNames = [
-      "Draft Contract.pdf",
-      "Outdated Disclosure.pdf",
-      "Test Document.pdf",
-      "Duplicate Form.pdf",
-    ];
-    const randomDoc = mockDocNames[Math.floor(Math.random() * mockDocNames.length)];
-    addActivityEntry({
-      actor: "Admin",
-      category: "docs",
-      type: "DOC_DELETED",
-      message: `Document deleted: "${randomDoc}"`,
-      meta: { docName: randomDoc },
-    });
-    toast.info(`Document deleted: ${randomDoc}`);
-  };
+  const handleDocDeleted = () => {
+    const handleDocDeleted = () => {
+      const docNames = [
+        "Draft Contract.pdf",
+        "Outdated Disclosure.pdf",
+        "Test Document.pdf",
+        "Duplicate Form.pdf",
+      ];
+    
+      const randomDoc = docNames[Math.floor(Math.random() * docNames.length)];
+    
+      addActivityEntry({
+        actor: "Admin",
+        category: "docs",
+        type: "DOC_DELETED",
+        message: `Document deleted: "${randomDoc}"`,
+        meta: { docName: randomDoc },
+      });
+    
+      toast.info(`Document deleted: ${randomDoc}`);
+    };
 
   const handleSimulateAgentUpload = (itemId: string) => {
     const item = checklistItems.find((i) => i.id === itemId);
@@ -617,22 +513,6 @@ const [inboxDocuments, setInboxDocuments] = useState<InboxDocument[]>([]);
           reason: reviewNote || waivedReason || undefined,
         },
       });
-    }
-
-    // Handle agent notification
-    if (notifyAgent && reviewStatus === "rejected") {
-      addActivityEntry({
-        actor: "Admin",
-        category: "docs",
-        type: "AGENT_NOTIFIED",
-        message: `Notification sent to Agent: ${assignedAgentName} — Document rejected: ${selectedItem.name}`,
-        meta: {
-          agentName: assignedAgentName,
-          checklistItem: selectedItem.name,
-          notificationType: "rejection",
-        },
-      });
-      toast.success("Agent notified (demo)");
     }
 
     toast.success("Review saved successfully");
@@ -957,22 +837,6 @@ const [inboxDocuments, setInboxDocuments] = useState<InboxDocument[]>([]);
       },
     });
 
-    // Handle agent notification for Admin shared comments
-    if (currentUserRole === "Admin" && commentVisibility === "Shared" && notifyAgentOnComment) {
-      addActivityEntry({
-        actor: "Admin",
-        category: "docs",
-        type: "AGENT_NOTIFIED",
-        message: `Notification sent to Agent: ${assignedAgentName} — New comment on ${commentsTargetItem.name}`,
-        meta: {
-          agentName: assignedAgentName,
-          checklistItem: commentsTargetItem.name,
-          notificationType: "comment",
-        },
-      });
-      toast.success("Agent notified (demo)");
-    }
-
     setNewCommentText("");
     toast.success("Comment posted");
   };
@@ -1034,7 +898,8 @@ const [inboxDocuments, setInboxDocuments] = useState<InboxDocument[]>([]);
   })();
 
   // Transaction field change handlers
-  const handleStatusChange = async (newStatus: typeof transactionStatus) => {
+  const handleStatusChange = (newStatus: typeof transactionStatus) => {
+    // Validate if trying to close
     if (newStatus === "Closed") {
       const validation = canCloseTransaction();
       if (!validation.allowed) {
@@ -1042,25 +907,10 @@ const [inboxDocuments, setInboxDocuments] = useState<InboxDocument[]>([]);
         return;
       }
     }
-  
+
     const oldStatus = transactionStatus;
-setTransactionStatus(newStatus);
-
-console.log("STATUS HANDLER FIRED", { id, oldStatus, newStatus });
-
-if (id) {
-  const updated = await updateTransaction(id, {
-    status: newStatus,
-    statusLabel: newStatus,
-  });
-
-  console.log("status handler updated:", updated);
-
-  if (updated) {
-    setLoadedTransaction(updated);
-  }
-}
-  
+    setTransactionStatus(newStatus);
+    
     addActivityEntry({
       actor: currentUserRole,
       category: "transaction",
@@ -1071,24 +921,14 @@ if (id) {
         to: newStatus,
       },
     });
-  
+    
     toast.success(`Status updated to ${newStatus}`);
   };
 
-  const handleAssignedAdminChange = async (newAdmin: string) => {
-
+  const handleAssignedAdminChange = (newAdmin: string) => {
     const oldAdmin = assignedAdmin;
-  
-    console.log("Assigned admin change fired", { id, oldAdmin, newAdmin });
-  
     setAssignedAdmin(newAdmin);
-  
-    if (id) {
-      await updateTransaction(id, {
-        assignedAdmin: newAdmin,
-      });
-    }
-  
+    
     addActivityEntry({
       actor: currentUserRole,
       category: "transaction",
@@ -1099,19 +939,13 @@ if (id) {
         to: newAdmin,
       },
     });
-  
+    
     toast.success(`Admin assigned: ${newAdmin}`);
   };
 
-  const handleClosingDateChange = async (newDate: string) => {
+  const handleClosingDateChange = (newDate: string) => {
     setClosingDate(newDate);
-  
-    if (id) {
-      await updateTransaction(id, {
-        closingDate: newDate,
-      });
-    }
-  
+    
     addActivityEntry({
       actor: currentUserRole,
       category: "transaction",
@@ -1122,19 +956,13 @@ if (id) {
         field: "closing",
       },
     });
-  
+    
     toast.success("Closing date updated");
   };
 
-  const handleContractDateChange = async (newDate: string) => {
+  const handleContractDateChange = (newDate: string) => {
     setContractDate(newDate);
-  
-    if (id) {
-      await updateTransaction(id, {
-        contractDate: newDate,
-      });
-    }
-  
+    
     addActivityEntry({
       actor: currentUserRole,
       category: "transaction",
@@ -1145,7 +973,7 @@ if (id) {
         field: "contract",
       },
     });
-  
+    
     toast.success("Contract date updated");
   };
 
@@ -1178,10 +1006,10 @@ if (id) {
     // Create archive receipt
     const archiveReceipt = {
       transactionSummary: {
-        identifier: mockTransaction?.identifier || "Unknown",
+        identifier: transaction?.identifier || "Unknown",
         id: id || "Unknown",
-        office: mockTransaction?.office || "Unknown Office",
-        assignedAgent: mockTransaction?.assignedAgent || assignedAgentName,
+        office: transaction?.office || "Unknown Office",
+        assignedAgent: transaction?.agent || assignedAgentName,
         status: "Closed",
       },
       documentSummary,
@@ -1235,10 +1063,10 @@ if (id) {
     const archivePackage = {
       transaction: {
         id: id || "Unknown",
-        identifier: mockTransaction?.identifier || "Unknown",
-        type: mockTransaction?.type || "Unknown",
+        identifier:transaction?.identifier || "Unknown",
+        type: transaction?.type || "Unknown",
         status: transactionStatus,
-        office: mockTransaction?.office || "Unknown Office",
+        office: transaction?.office || "Unknown Office",
         assignedAgent: assignedAgentName,
         closingDate,
         contractDate,
@@ -1530,17 +1358,7 @@ if (id) {
   const filteredInboxDocuments = getFilteredInboxDocuments();
 
   // If transaction not found, show error state
-  if (loadingTransaction) {
-    return (
-      <div className="flex-1 flex items-center justify-center bg-slate-50 p-6 min-h-screen">
-        <div className="bg-white rounded-lg shadow-lg p-8 text-center">
-          Loading transaction...
-        </div>
-      </div>
-    );
-  }
-  
-  if (!mockTransaction) {
+  if (!transaction) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center bg-slate-50 p-6 min-h-screen">
         <div className="max-w-md w-full bg-white rounded-lg shadow-lg p-8 text-center">
@@ -1580,12 +1398,11 @@ if (id) {
           <div className="flex-1">
             <div className="flex items-center gap-3 mb-2">
               <h1 className="text-3xl font-semibold text-slate-900">
-                {mockTransaction.identifier}
+                {transaction.identifier}
               </h1>
               <Badge
-                className={`${getStatusColor(mockTransaction.status)} border`}
-              >
-                {mockTransaction.status}
+                <Badge className={`${getStatusColor(transaction?.status || "unknown")} border`}>
+                {transaction.status || "Unknown"}
               </Badge>
               {needsAttention && (
                 <Badge className="bg-red-600 text-white border-0">
@@ -1597,15 +1414,15 @@ if (id) {
             <div className="flex items-center gap-4 text-sm text-slate-600">
               <div className="flex items-center gap-1.5">
                 <FileText className="h-4 w-4" />
-                <span>{mockTransaction.type}</span>
+                <span>{transaction.type}</span>
               </div>
               <div className="flex items-center gap-1.5">
                 <User className="h-4 w-4" />
-                <span>{mockTransaction.assignedAgent}</span>
+                <span>{transaction.assignedAgent}</span>
               </div>
               <div className="flex items-center gap-1.5">
                 <Building2 className="h-4 w-4" />
-                <span>{mockTransaction.office}</span>
+                <span>{transaction.office}</span>
               </div>
             </div>
           </div>
@@ -1700,39 +1517,185 @@ if (id) {
                 </div>
               )}
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                {/* Status Dropdown */}
-                <div>
-                  <Label htmlFor="transaction-status" className="text-sm font-medium text-slate-700 mb-1.5 block">
-                    Status
-                  </Label>
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <div>
-                          <Select value={transactionStatus} onValueChange={handleStatusChange} disabled={isReadOnly}>
-                            <SelectTrigger id="transaction-status">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="Pre-Contract">Pre-Contract</SelectItem>
-                              <SelectItem value="Under Contract">Under Contract</SelectItem>
-                              <SelectItem value="Closed" disabled={!closeValidation.allowed}>
-                                Closed {!closeValidation.allowed && "🔒"}
-                              </SelectItem>
-                              <SelectItem value="Archived" disabled>Archived (use Archive button)</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </TooltipTrigger>
-                      {!closeValidation.allowed && transactionStatus !== "Closed" && (
-                        <TooltipContent side="right">
-                          <p className="text-sm">Resolve required document issues before closing</p>
-                        </TooltipContent>
-                      )}
-                    </Tooltip>
-                  </TooltipProvider>
+              {/* Transaction Operational Controls */}
+<Card>
+  <CardHeader>
+    <div className="flex items-center justify-between">
+      <CardTitle className="text-lg">Transaction Controls</CardTitle>
+      {currentUserRole === "Admin" && !isReadOnly && (
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleOpenArchiveModal}
+                  disabled={!archiveValidation.allowed}
+                  className="text-slate-700 border-slate-300"
+                >
+                  <Archive className="h-4 w-4 mr-2" />
+                  Archive Transaction
+                </Button>
+              </span>
+            </TooltipTrigger>
+            {!archiveValidation.allowed && (
+              <TooltipContent>
+                <div className="text-sm max-w-xs">
+                  <p className="font-medium mb-1">Cannot archive:</p>
+                  <ul className="space-y-0.5">
+                    {archiveValidation.issues.map((issue, idx) => (
+                      <li key={idx}>• {issue}</li>
+                    ))}
+                  </ul>
                 </div>
+              </TooltipContent>
+            )}
+          </Tooltip>
+        </TooltipProvider>
+      )}
+    </div>
+  </CardHeader>
+
+  <CardContent>
+    <div className="space-y-4">
+      {/* Ready to Close Indicator */}
+      {!isReadOnly &&
+        transactionStatus !== "Closed" &&
+        transactionStatus !== "Archived" && (
+          <div className="flex items-start gap-2 p-3 rounded-lg border border-slate-200 bg-slate-50">
+            {closeValidation.allowed ? (
+              <>
+                <CheckCircle2 className="h-5 w-5 text-green-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-medium text-green-900">Ready to Close</p>
+                  <p className="text-xs text-green-700 mt-0.5">
+                    All required documents are complete
+                  </p>
+                </div>
+              </>
+            ) : (
+              <>
+                <AlertCircle className="h-5 w-5 text-slate-500 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-medium text-slate-700">Not Ready to Close</p>
+                  <ul className="text-xs text-slate-600 mt-1 space-y-0.5">
+                    {closeValidation.issues.map((issue, idx) => (
+                      <li key={idx}>• {issue}</li>
+                    ))}
+                  </ul>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Status Dropdown */}
+        <div>
+          <Label
+            htmlFor="transaction-status"
+            className="text-sm font-medium text-slate-700 mb-1.5 block"
+          >
+            Status
+          </Label>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div>
+                  <Select
+                    value={transactionStatus}
+                    onValueChange={handleStatusChange}
+                    disabled={isReadOnly}
+                  >
+                    <SelectTrigger id="transaction-status">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Pre-Contract">Pre-Contract</SelectItem>
+                      <SelectItem value="Under Contract">Under Contract</SelectItem>
+                      <SelectItem value="Closed" disabled={!closeValidation.allowed}>
+                        Closed {!closeValidation.allowed && "🔒"}
+                      </SelectItem>
+                      <SelectItem value="Archived" disabled>
+                        Archived (use Archive button)
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </TooltipTrigger>
+              {!closeValidation.allowed && transactionStatus !== "Closed" && (
+                <TooltipContent side="right">
+                  <p className="text-sm">
+                    Resolve required document issues before closing
+                  </p>
+                </TooltipContent>
+              )}
+            </Tooltip>
+          </TooltipProvider>
+        </div>
+
+        {/* Assigned Admin Dropdown */}
+        <div>
+          <Label
+            htmlFor="assigned-admin"
+            className="text-sm font-medium text-slate-700 mb-1.5 block"
+          >
+            Assigned Admin
+          </Label>
+          <Select
+            value={assignedAdmin}
+            onValueChange={handleAssignedAdminChange}
+            disabled={isReadOnly}
+          >
+            <SelectTrigger id="assigned-admin">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="Karen Admin">Karen Admin</SelectItem>
+              <SelectItem value="Tina Review">Tina Review</SelectItem>
+              <SelectItem value="Jordan Ops">Jordan Ops</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Contract Date */}
+        <div>
+          <Label
+            htmlFor="contract-date"
+            className="text-sm font-medium text-slate-700 mb-1.5 block"
+          >
+            Contract Date
+          </Label>
+          <Input
+            id="contract-date"
+            type="date"
+            value={contractDate || ""}
+            onChange={(e) => setContractDate(e.target.value)}
+            disabled={isReadOnly}
+          />
+        </div>
+
+        {/* Closing Date */}
+        <div>
+          <Label
+            htmlFor="closing-date"
+            className="text-sm font-medium text-slate-700 mb-1.5 block"
+          >
+            Closing Date
+          </Label>
+          <Input
+            id="closing-date"
+            type="date"
+            value={closingDate || ""}
+            onChange={(e) => setClosingDate(e.target.value)}
+            disabled={isReadOnly}
+          />
+        </div>
+      </div>
+    </div>
+  </CardContent>
+</Card>
 
                 {/* Assigned Admin Dropdown */}
                 <div>
@@ -1744,9 +1707,9 @@ if (id) {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                  <SelectItem value="Admin">Admin</SelectItem>
-                 <SelectItem value="Compliance">Compliance</SelectItem>
-                 <SelectItem value="Final Review">Final Review</SelectItem>
+                    <SelectItem value="Karen Admin">Karen Admin</SelectItem>
+                    <SelectItem value="Tina Review">Tina Review</SelectItem>
+                    <SelectItem value="Jordan Ops">Jordan Ops</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -1910,7 +1873,7 @@ if (id) {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={handleSimulateDocReceived}
+                      onClick={handleDocReceived}
                     >
                       <Upload className="h-4 w-4 mr-2" />
                       Simulate Doc Received
@@ -1918,7 +1881,7 @@ if (id) {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={handleSimulateDocDeleted}
+                      onClick={handleDocDeleted}
                     >
                       <Trash2 className="h-4 w-4 mr-2" />
                       Simulate Doc Deleted
@@ -2035,7 +1998,7 @@ if (id) {
             <div className="space-y-3">
               <div className="flex items-center gap-3">
                 <div className="flex-1 font-mono text-sm text-blue-600 bg-blue-50 px-4 py-3 rounded-lg border border-blue-200">
-                  {mockTransaction.intakeEmail}
+                  {transaction.intakeemail}
                 </div>
                 <Button
                   variant="outline"
@@ -2427,38 +2390,31 @@ if (id) {
               <div>
                 <div className="text-sm text-slate-600 mb-1">Transaction ID</div>
                 <div className="font-medium text-slate-900 font-mono text-sm">
-                  {mockTransaction.id}
+                {transaction?.id}
                 </div>
               </div>
               <div>
                 <div className="text-sm text-slate-600 mb-1">Created Date</div>
                 <div className="font-medium text-slate-900">
-                  {new Date(mockTransaction.createdAt).toLocaleDateString(
-                    "en-US",
-                    {
-                      year: "numeric",
-                      month: "long",
-                      day: "numeric",
-                    }
-                  )}
+                <div className="font-medium text-slate-900">—</div>
                 </div>
               </div>
               <div>
                 <div className="text-sm text-slate-600 mb-1">Primary Client</div>
                 <div className="font-medium text-slate-900">
-                  {mockTransaction.clientName}
+                {transaction.sellername1 || transaction.buyername1 || "—"}
                 </div>
                 <div className="text-sm text-slate-600">
-                  {mockTransaction.clientEmail}
+                {transaction.selleremail1 || transaction.buyeremail1 || "—"}
                 </div>
               </div>
               <div>
                 <div className="text-sm text-slate-600 mb-1">Assigned Agent</div>
                 <div className="font-medium text-slate-900">
-                  {mockTransaction.assignedAgent}
+                {transaction.agent || "Unassigned"}
                 </div>
                 <div className="text-sm text-slate-600">
-                  {mockTransaction.office}
+                  {transaction.office}
                 </div>
               </div>
               <div>
@@ -2754,7 +2710,7 @@ if (id) {
               <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
                 <div>
                   <span className="text-slate-600">Transaction:</span>
-                  <p className="text-slate-900 font-medium">{mockTransaction?.identifier || "Unknown"}</p>
+                  <p className="text-slate-900 font-medium">{transaction?.identifier || "Unknown"}</p>
                 </div>
                 <div>
                   <span className="text-slate-600">Transaction ID:</span>
@@ -2762,7 +2718,7 @@ if (id) {
                 </div>
                 <div>
                   <span className="text-slate-600">Office:</span>
-                  <p className="text-slate-900">{mockTransaction?.office || "Unknown Office"}</p>
+                  <p className="text-slate-900">{transaction?.office || "Unknown Office"}</p>
                 </div>
                 <div>
                   <span className="text-slate-600">Assigned Agent:</span>

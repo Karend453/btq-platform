@@ -358,6 +358,15 @@ export default function TransactionInbox({
       const doc = await uploadDocument(transactionId, file);
       if (doc) {
         onInboxDocumentsChange([doc, ...inboxDocuments]);
+        if (addActivityEntry) {
+          addActivityEntry({
+            actor: currentUserRole,
+            category: "docs",
+            type: "document_uploaded",
+            message: `Document uploaded: ${doc.filename}`,
+            documentId: doc.id,
+          });
+        }
         toast.success(`Uploaded "${file.name}"`);
       } else {
         toast.error("Upload failed");

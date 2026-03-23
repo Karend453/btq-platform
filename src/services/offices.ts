@@ -52,3 +52,27 @@ export async function getCurrentOffice(): Promise<Office | null> {
 
   return office;
 }
+
+/**
+ * Read-only: load `public.offices` by primary key (e.g. `transactions.office` UUID).
+ * Returns null on empty id, missing row, or query error (e.g. RLS).
+ */
+export async function getOfficeById(officeId: string): Promise<Office | null> {
+  const id = officeId.trim();
+  if (!id) return null;
+
+  const { data: office, error: officeError } = await supabase
+    .from("offices")
+    .select(
+      "id, name, display_name, state, address_line1, city, postal_code, broker_name, broker_email, mls_name"
+    )
+    .eq("id", id)
+    .maybeSingle();
+
+  if (officeError) {
+    console.warn("[getOfficeById] offices:", officeError.message);
+    return null;
+  }
+
+  return office;
+}

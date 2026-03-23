@@ -166,6 +166,8 @@ export type ChecklistProps = {
   checklistTemplates: ChecklistTemplate[];
   isLoadingTemplates?: boolean;
   isSavingChecklist?: boolean;
+  /** When true, template dropdown is disabled (e.g. checklist already materialized). */
+  templateSwitchDisabled?: boolean;
   onChecklistTemplateSelect: (templateId: string) => void;
   checklistItems: ChecklistItem[];
   onChecklistItemsChange: (items: ChecklistItem[]) => void;
@@ -204,6 +206,7 @@ export default function Checklist({
   checklistTemplates,
   isLoadingTemplates = false,
   isSavingChecklist = false,
+  templateSwitchDisabled = false,
   onChecklistTemplateSelect,
   checklistItems,
   onChecklistItemsChange,
@@ -840,10 +843,9 @@ export default function Checklist({
               <Select
               value={checklistTemplateId ?? ""}
               onValueChange={(v) => {
-                console.log("REAL SELECT CHANGED:", v);
                 onChecklistTemplateSelect(v);
               }}
-              disabled={false}
+              disabled={templateSwitchDisabled || isSavingChecklist || isLoadingTemplates}
             >
               <SelectTrigger
                 className="w-[280px] h-9 px-3.5 py-2 border border-slate-200 bg-white shadow-sm"
@@ -855,7 +857,9 @@ export default function Checklist({
                       ? "Loading..."
                       : isSavingChecklist
                       ? "Saving..."
-                      : "Select checklist type"
+                      : templateSwitchDisabled
+                      ? "Checklist locked"
+                      : "Select checklist template"
                   }
                 />
               </SelectTrigger>

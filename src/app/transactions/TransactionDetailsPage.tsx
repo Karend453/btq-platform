@@ -64,7 +64,12 @@ import {
   transactionRowToEngineTransaction,
   checklistItemForControlsToEngineDocument,
 } from "../../lib/documents/adapter";
-import { fetchChecklistTemplates, type ChecklistTemplate } from "../../services/checklistTemplates";
+import {
+  fetchOfficeChecklistTemplatesForTransactionSelect,
+  type ChecklistTemplate,
+} from "../../services/checklistTemplates";
+import { getOfficeById } from "../../services/offices";
+import { countChecklistItemsForTransaction } from "../../services/checklistItems";
 import TransactionOverview from "./sections/TransactionOverview";
 import TransactionInbox from "./sections/TransactionInbox";
 import TransactionControls from "./sections/TransactionControls";
@@ -188,6 +193,8 @@ export default function TransactionDetailsPage() {
 
   const [loading, setLoading] = useState(true);
   const [transaction, setTransaction] = useState<TransactionRow | null>(null);
+  /** Resolved label for overview; `undefined` = loading when `transactions.office` is set. */
+  const [officeDisplayLabel, setOfficeDisplayLabel] = useState<string | undefined>(undefined);
   const [inboxDocuments, setInboxDocuments] = useState<InboxDocument[]>([]);
   const inboxDocumentsRef = useRef(inboxDocuments);
   inboxDocumentsRef.current = inboxDocuments;
@@ -195,6 +202,8 @@ export default function TransactionDetailsPage() {
   const [checklistTemplates, setChecklistTemplates] = useState<ChecklistTemplate[]>([]);
   const [isLoadingTemplates, setIsLoadingTemplates] = useState(true);
   const [isSavingChecklist, setIsSavingChecklist] = useState(false);
+  /** True if any checklist_items row exists — locks template switching. */
+  const [checklistMaterialized, setChecklistMaterialized] = useState(false);
 
   const [transactionStatus, setTransactionStatus] = useState<TransactionStatus>("Pre-Contract");
   const [assignedAdmin, setAssignedAdmin] = useState<string | null>(null);
@@ -359,11 +368,11 @@ export default function TransactionDetailsPage() {
       console.warn("[addActivityEntry] skipped: no transaction id");
       return;
     }
-    if (authLoading || !authUser) {
-      console.warn("[addActivityEntry] skipped: auth not ready", { authLoading, hasUser: !!authUser });
+    if (authLoading) {
+      console.warn("[addActivityEntry] skipped: auth still loading");
       return;
     }
-    const inserted = await insertActivityEntry({
+    const insertPayload = {
       transactionId: id,
       actor: entry.actor,
       category: entry.category,
@@ -373,7 +382,17 @@ export default function TransactionDetailsPage() {
       documentId: entry.documentId ?? null,
       checklistItemId: entry.checklistItemId ?? null,
       actorUserId: sessionUserId || null,
+    };
+    console.log("[BTQ activity debug] addActivityEntry start", {
+      activity_type: entry.type,
+      fromUpload: entry.type === "document_uploaded",
     });
+    console.log("[BTQ activity debug] addActivityEntry payload → insertActivityEntry", insertPayload);
+    const inserted = await insertActivityEntry(insertPayload);
+    console.log(
+      "[BTQ activity debug] addActivityEntry insertActivityEntry returned",
+      inserted ? { id: inserted.id, activity_type: inserted.type } : null
+    );
     if (inserted) {
       setActivityLog((prev) => [inserted as ActivityLogEntry, ...prev]);
     } else {
@@ -468,20 +487,6 @@ export default function TransactionDetailsPage() {
       meta: { checklistItem: commentsTargetItem.name, visibility: commentVisibility },
       checklistItemId: commentsTargetItem.id,
     });
-    if (
-      (currentUserRole === "Admin" || currentUserRole === "Broker") &&
-      commentVisibility === "Shared" &&
-      notifyAgentOnComment
-    ) {
-      addActivityEntry({
-        actor: "Admin",
-        category: "docs",
-        type: "AGENT_NOTIFIED",
-        message: `Notification sent to Agent: ${assignedAgentName} — New comment on ${commentsTargetItem.name}`,
-        meta: { agentName: assignedAgentName, checklistItem: commentsTargetItem.name, notificationType: "comment" },
-      });
-      toast.success("Agent notified (demo)");
-    }
     setNewCommentText("");
     toast.success("Comment posted");
     setIsCommentsDrawerOpen(false);
@@ -661,17 +666,6 @@ export default function TransactionDetailsPage() {
       });
     }
 
-    if (notifyAgent && reviewStatus === "rejected") {
-      addActivityEntry({
-        actor: currentUserRole === "Broker" ? "Broker" : "Admin",
-        category: "docs",
-        type: "AGENT_NOTIFIED",
-        message: `Notification sent to Agent: ${assignedAgentName} — Document rejected: ${selectedItem.name}`,
-        meta: { agentName: assignedAgentName, checklistItem: selectedItem.name, notificationType: "rejection" },
-      });
-      toast.success("Agent notified (demo)");
-    }
-
     toast.success("Review saved successfully");
     setIsReviewModalOpen(false);
     setSelectedItem(null);
@@ -832,18 +826,61 @@ export default function TransactionDetailsPage() {
 
   useEffect(() => {
     let cancelled = false;
+    const officeId = transaction?.office?.trim() ?? "";
+    if (!officeId) {
+      setChecklistTemplates([]);
+      setIsLoadingTemplates(false);
+      return () => {
+        cancelled = true;
+      };
+    }
     async function load() {
       setIsLoadingTemplates(true);
       try {
-        const templates = await fetchChecklistTemplates();
+        const templates = await fetchOfficeChecklistTemplatesForTransactionSelect(officeId);
         if (!cancelled) setChecklistTemplates(templates);
       } finally {
         if (!cancelled) setIsLoadingTemplates(false);
       }
     }
-    load();
-    return () => { cancelled = true; };
-  }, []);
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [transaction?.office]);
+
+  useEffect(() => {
+    const oid = transaction?.office?.trim() ?? "";
+    if (!oid) {
+      setOfficeDisplayLabel("");
+      return;
+    }
+    setOfficeDisplayLabel(undefined);
+    let cancelled = false;
+    void getOfficeById(oid).then((office) => {
+      if (cancelled) return;
+      if (!office) {
+        setOfficeDisplayLabel(oid);
+        return;
+      }
+      const label = (office.display_name ?? office.name).trim() || office.name;
+      setOfficeDisplayLabel(label);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [transaction?.office]);
+
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    void countChecklistItemsForTransaction(id).then((n) => {
+      if (!cancelled) setChecklistMaterialized(n > 0);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
 
   useEffect(() => {
     if (!checklistTemplateId || !id) {
@@ -855,6 +892,8 @@ export default function TransactionDetailsPage() {
     let cancelled = false;
     async function loadChecklist() {
       await ensureChecklistItemsForTransaction(transactionId, templateId);
+      const cnt = await countChecklistItemsForTransaction(transactionId);
+      if (!cancelled) setChecklistMaterialized(cnt > 0);
       const [items, commentsByItem] = await Promise.all([
         fetchChecklistItemsForTransaction(transactionId, templateId),
         fetchCommentsByTransactionId(transactionId),
@@ -869,8 +908,10 @@ export default function TransactionDetailsPage() {
         );
       }
     }
-    loadChecklist();
-    return () => { cancelled = true; };
+    void loadChecklist();
+    return () => {
+      cancelled = true;
+    };
     // inboxDocuments merged in the effect below so inbox refreshes do not re-run template seeding.
   }, [checklistTemplateId, id]);
 
@@ -914,6 +955,10 @@ export default function TransactionDetailsPage() {
 
   async function handleChecklistTemplateSelect(templateId: string) {
     if (!id || isSavingChecklist) return;
+    if (checklistMaterialized) {
+      toast.error("Checklist is already in use. Template cannot be changed.");
+      return;
+    }
     setIsSavingChecklist(true);
     try {
       const { error } = await updateTransaction(id, { checklistTemplateId: templateId });
@@ -923,6 +968,8 @@ export default function TransactionDetailsPage() {
         return;
       }
       await replaceChecklistItemsFromTemplate(id, templateId);
+      const n = await countChecklistItemsForTransaction(id);
+      setChecklistMaterialized(n > 0);
       await reloadTransaction();
     } finally {
       setIsSavingChecklist(false);
@@ -1093,7 +1140,12 @@ export default function TransactionDetailsPage() {
     (transaction.identifier && String(transaction.identifier).trim()) ||
     `Transaction ${transaction.id}`;
 
-  const officeValue = transaction.office ?? "—";
+  const officeValue =
+    !transaction.office?.trim()
+      ? "—"
+      : officeDisplayLabel === undefined
+        ? "…"
+        : officeDisplayLabel;
 
   const intakeEmail =
     (transaction as TransactionRow & { intake_email?: string | null })
@@ -1160,6 +1212,7 @@ export default function TransactionDetailsPage() {
           checklistTemplates={checklistTemplates}
           isLoadingTemplates={isLoadingTemplates}
           isSavingChecklist={isSavingChecklist}
+          templateSwitchDisabled={checklistMaterialized || isReadOnly}
           onChecklistTemplateSelect={handleChecklistTemplateSelect}
           checklistItems={checklistItems}
           onChecklistItemsChange={setChecklistItems}
