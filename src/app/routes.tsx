@@ -24,7 +24,7 @@ export const router = createBrowserRouter([
   },
   {
     path: "/",
-    element: <div style={{ padding: 40 }}>ROOT WORKING</div>,
+    element: <RootLayout />,
     children: [
       { index: true, element: <Dashboard /> },
       { path: "agents", element: <Agents /> },
