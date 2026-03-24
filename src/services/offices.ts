@@ -76,3 +76,66 @@ export async function getOfficeById(officeId: string): Promise<Office | null> {
 
   return office;
 }
+
+/**
+ * Back Office: full office list **only** via `list_offices_for_back_office` (no client `select` on
+ * `public.offices` for the list). The RPC enforces a temporary **`admin`-only** BTQ wall in the DB
+ * (same semantics as `canAccessBtqBackOffice` in `auth.ts`); not the final role model.
+ */
+export async function listOfficesForBackOffice(): Promise<{
+  offices: Office[];
+  error: string | null;
+}> {
+  const { data, error } = await supabase.rpc("list_offices_for_back_office");
+
+  if (error) {
+    console.warn("[listOfficesForBackOffice]", error.message);
+    return { offices: [], error: error.message };
+  }
+
+  return { offices: (data ?? []) as Office[], error: null };
+}
+
+export type CreateOfficeForBackOfficeInput = {
+  name: string;
+  display_name?: string | null;
+  state?: string | null;
+  address_line1?: string | null;
+  city?: string | null;
+  postal_code?: string | null;
+  broker_name?: string | null;
+  broker_email?: string | null;
+  mls_name?: string | null;
+};
+
+/**
+ * Back Office: insert via `create_office_for_back_office` only (temporary `admin` gate in DB).
+ */
+export async function createOfficeForBackOffice(
+  input: CreateOfficeForBackOfficeInput
+): Promise<{ id: string | null; error: string | null }> {
+  const name = input.name.trim();
+  if (!name) {
+    return { id: null, error: "Name is required." };
+  }
+
+  const { data, error } = await supabase.rpc("create_office_for_back_office", {
+    p_name: name,
+    p_display_name: input.display_name ?? null,
+    p_state: input.state ?? null,
+    p_address_line1: input.address_line1 ?? null,
+    p_city: input.city ?? null,
+    p_postal_code: input.postal_code ?? null,
+    p_broker_name: input.broker_name ?? null,
+    p_broker_email: input.broker_email ?? null,
+    p_mls_name: input.mls_name ?? null,
+  });
+
+  if (error) {
+    console.warn("[createOfficeForBackOffice]", error.message);
+    return { id: null, error: error.message };
+  }
+
+  const id = data as string | undefined;
+  return { id: id ?? null, error: null };
+}

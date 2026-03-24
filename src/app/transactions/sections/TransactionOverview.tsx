@@ -17,7 +17,6 @@ function formatCommissionPercentSummary(
 
 type TransactionOverviewSectionProps = {
   row: TransactionRow & {
-    intake_email?: string | null;
     client_name?: string | null;
     client?: string | null;
     office_name?: string | null;

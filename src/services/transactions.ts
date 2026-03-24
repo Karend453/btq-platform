@@ -53,6 +53,8 @@ export type TransactionRow = {
   referral_fee_amount: number | null;
   isarchived: boolean | null;
   archivedat: string | null;
+  /** Unique address for signed-doc intake (e.g. ZipForms); format txn-{id}@docs.btqrlt.com */
+  intake_email: string | null;
 };
 
 /** Stable admin auth UID: prefer `assigned_admin_user_id`, else legacy `assignedadmin` when it holds the UID. */
@@ -213,7 +215,15 @@ type CreateTransactionInput = {
   transactionSide?: string | null;
 };
 
-export async function createTransaction(input: CreateTransactionInput): Promise<WorkItem | null> {
+const INTAKE_EMAIL_DOMAIN = "docs.btqrlt.com";
+
+/** Stable unique intake address derived from the transaction id (single insert with client UUID). */
+function intakeEmailForTransactionId(transactionId: string): string {
+  const compact = transactionId.replace(/-/g, "").toLowerCase();
+  return `txn-${compact}@${INTAKE_EMAIL_DOMAIN}`;
+}
+
+export async function createTransaction(input: CreateTransactionInput): Promise<TransactionRow | null> {
   const user = await getCurrentUser();
   if (!user?.id) {
     console.error("[createTransaction] no authenticated user; cannot set agent_user_id");
@@ -228,7 +238,11 @@ export async function createTransaction(input: CreateTransactionInput): Promise<
   const sessionEmail = user.email?.trim() ?? "";
   const agentFields = sessionAgentNameFieldsForTransactionSide(transactionSide, sessionEmail);
 
+  const id = crypto.randomUUID();
+  const intake_email = intakeEmailForTransactionId(id);
+
   const payload = {
+    id,
     identifier: input.identifier,
     type: input.type,
     clientname: input.clientName,
@@ -242,6 +256,7 @@ export async function createTransaction(input: CreateTransactionInput): Promise<
     buyeragent: agentFields.buyeragent,
     checklist_template_id: checklistTemplate.id,
     checklisttype: checklistTemplate.name,
+    intake_email,
   };
 
   // TODO: remove after RLS insert path verified
@@ -260,7 +275,7 @@ export async function createTransaction(input: CreateTransactionInput): Promise<
     return null;
   }
 
-  return data ? toWorkItem(data as TransactionRow) : null;
+  return data ? (data as TransactionRow) : null;
 }
 export type UpdateTransactionInput = {
   type?: string | null;

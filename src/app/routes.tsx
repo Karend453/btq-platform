@@ -12,6 +12,10 @@ import { OfficeChecklistTemplatesPage } from "./pages/OfficeChecklistTemplatesPa
 import TransactionDetail from "./transactions/TransactionDetailsPage";
 import { NewTransaction } from "./pages/NewTransaction";
 import Login from "./Login";
+import { BackOfficeRouteGuard } from "./pages/back-office/BackOfficeRouteGuard";
+import { OrgManagementPage } from "./pages/back-office/OrgManagementPage";
+import { BackOfficeAddOfficePage } from "./pages/back-office/BackOfficeAddOfficePage";
+import { BackOfficeOfficeDetailPage } from "./pages/back-office/BackOfficeOfficeDetailPage";
 
 export const router = createBrowserRouter([
   {
@@ -33,7 +37,15 @@ export const router = createBrowserRouter([
       { path: "offices", element: <Offices /> },
       { path: "office/checklist-templates", element: <OfficeChecklistTemplatesPage /> },
       { path: "settings", element: <SettingsPage /> },
-
+      {
+        path: "back-office",
+        element: <BackOfficeRouteGuard />,
+        children: [
+          { path: "org", element: <OrgManagementPage /> },
+          { path: "org/new", element: <BackOfficeAddOfficePage /> },
+          { path: "org/:officeId", element: <BackOfficeOfficeDetailPage /> },
+        ],
+      },
     ],
   },
 ]);

@@ -87,12 +87,6 @@ export function NewTransaction() {
     { value: "Other", label: "Other", description: "Custom transaction type" },
   ];
 
-  // Generate intake email based on identifier
-  const generateIntakeEmail = () => {
-    const randomId = Math.floor(Math.random() * 10000);
-    return `txn-${randomId}@docs.btq.app`;
-  };
-
   const handleNext = () => {
     if (currentStep < 4) {
       setCurrentStep(currentStep + 1);
@@ -118,6 +112,13 @@ export function NewTransaction() {
       if (!created) {
         toast.error("Could not create transaction");
         return;
+      }
+
+      const intake = (created.intake_email ?? "").trim();
+      if (intake) {
+        toast.success("Transaction created", { description: intake });
+      } else {
+        toast.success("Transaction created");
       }
 
       navigate(`/transactions/${created.id}`);
@@ -288,7 +289,7 @@ export function NewTransaction() {
                     className="mt-1.5"
                   />
                   <p className="text-sm text-slate-500 mt-2">
-                    This will generate the transaction file name and intake email.
+                    This will be used as the transaction file name.
                   </p>
                 </div>
               </div>
@@ -383,18 +384,10 @@ export function NewTransaction() {
                     </div>
                   </div>
 
-                  <div className="border-t border-slate-200 pt-4">
-                    <div className="text-sm text-slate-600 mb-1">
-                      Generated Intake Email
-                    </div>
-                    <div className="font-mono text-sm text-blue-600 bg-blue-50 px-3 py-2 rounded border border-blue-200 inline-block">
-                      {generateIntakeEmail()}
-                    </div>
-                    <p className="text-xs text-slate-500 mt-2">
-                      Documents sent to this email will automatically be added to
-                      this transaction
-                    </p>
-                  </div>
+                  <p className="text-xs text-slate-500 border-t border-slate-200 pt-4">
+                    When you create this transaction, BTQ will assign a unique intake email. It will
+                    appear in your confirmation and on the transaction page.
+                  </p>
                 </div>
               </div>
             )}

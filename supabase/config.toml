@@ -1,0 +1,5 @@
+# Local / CI reference. Configure project_id and other settings when using `supabase link`.
+# Edge Function: public Resend webhook (no Supabase JWT).
+
+[functions.resend-inbound]
+verify_jwt = false

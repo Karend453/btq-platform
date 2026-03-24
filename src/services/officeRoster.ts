@@ -9,6 +9,36 @@ export type OfficeRosterRow = {
   role: string | null;
 };
 
+async function fetchOfficeRosterByOfficeId(
+  officeId: string
+): Promise<{ rows: OfficeRosterRow[]; error: string | null }> {
+  const { data, error } = await supabase
+    .from("user_profiles")
+    .select("id, display_name, email, role")
+    .eq("office_id", officeId)
+    .order("display_name", { ascending: true, nullsFirst: false })
+    .order("email", { ascending: true });
+
+  if (error) {
+    return { rows: [], error: error.message };
+  }
+
+  return { rows: (data ?? []) as OfficeRosterRow[], error: null };
+}
+
+/**
+ * Same roster rows as {@link getOfficeRosterForCurrentBroker}, keyed by `offices.id`
+ * (`user_profiles.office_id`). For Back Office read-only views; caller should enforce route auth.
+ */
+export async function getOfficeRosterForOfficeId(officeId: string): Promise<{
+  rows: OfficeRosterRow[];
+  error: string | null;
+}> {
+  const id = officeId.trim();
+  if (!id) return { rows: [], error: null };
+  return fetchOfficeRosterByOfficeId(id);
+}
+
 /**
  * Profiles in the same office as the signed-in user, when their profile role is `broker`.
  * Requires RLS policy `user_profiles_select_same_office_broker` (see migrations).
@@ -34,17 +64,11 @@ export async function getOfficeRosterForCurrentBroker(): Promise<OfficeRosterRow
   const officeId = viewer?.office_id as string | null | undefined;
   if (officeId == null || officeId === "") return [];
 
-  const { data, error } = await supabase
-    .from("user_profiles")
-    .select("id, display_name, email, role")
-    .eq("office_id", officeId)
-    .order("display_name", { ascending: true, nullsFirst: false })
-    .order("email", { ascending: true });
-
+  const { rows, error } = await fetchOfficeRosterByOfficeId(officeId);
   if (error) {
-    console.warn("[getOfficeRosterForCurrentBroker] roster:", error.message);
+    console.warn("[getOfficeRosterForCurrentBroker] roster:", error);
     return [];
   }
 
-  return (data ?? []) as OfficeRosterRow[];
+  return rows;
 }

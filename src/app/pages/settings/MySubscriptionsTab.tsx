@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { CreditCard } from "lucide-react";
-import { getCurrentOffice, type Office } from "../../../services/offices";
+import { getOfficeById, type Office } from "../../../services/offices";
+import { useSettingsProfile } from "./SettingsProfileContext";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 
 function OrganizationFields({ office }: { office: Office }) {
@@ -24,21 +25,29 @@ function OrganizationFields({ office }: { office: Office }) {
 }
 
 /**
- * Broker-facing subscription context (read-only). Office comes from `getCurrentOffice()`;
+ * Broker-facing subscription context (read-only). Office from shared settings profile + `offices`;
  * billing product data is not wired yet.
  */
 export function MySubscriptionsTab() {
+  const { profile } = useSettingsProfile();
   const [office, setOffice] = useState<Office | null | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
-    getCurrentOffice().then((row) => {
+    const oid = profile?.office_id?.trim();
+    if (!oid) {
+      setOffice(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+    getOfficeById(oid).then((row) => {
       if (!cancelled) setOffice(row);
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [profile?.office_id]);
 
   const loading = office === undefined;
 

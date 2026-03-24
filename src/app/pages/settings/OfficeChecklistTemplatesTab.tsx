@@ -16,7 +16,8 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
-import { getCurrentOffice, type Office } from "../../../services/offices";
+import { getCurrentOffice, getOfficeById, type Office } from "../../../services/offices";
+import { useOptionalSettingsProfile } from "./SettingsProfileContext";
 import {
   archiveOfficeChecklistTemplate,
   cloneBtqStarterToOffice,
@@ -101,6 +102,10 @@ function InertTransactionActionIcons() {
 }
 
 export function OfficeChecklistTemplatesTab() {
+  const settingsProfile = useOptionalSettingsProfile();
+  const hasSettingsProfile = settingsProfile !== undefined;
+  const officeIdFromSettings = settingsProfile?.profile?.office_id?.trim() ?? "";
+
   const [office, setOffice] = useState<Office | null | undefined>(undefined);
   const [templates, setTemplates] = useState<OfficeChecklistTemplateRow[]>([]);
   const [starters, setStarters] = useState<BtqChecklistStarterRow[]>([]);
@@ -121,13 +126,19 @@ export function OfficeChecklistTemplatesTab() {
 
   useEffect(() => {
     let cancelled = false;
-    void getCurrentOffice().then((o) => {
+    void (async () => {
+      let o: Office | null = null;
+      if (hasSettingsProfile) {
+        o = officeIdFromSettings ? await getOfficeById(officeIdFromSettings) : null;
+      } else {
+        o = await getCurrentOffice();
+      }
       if (!cancelled) setOffice(o);
-    });
+    })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [hasSettingsProfile, officeIdFromSettings]);
 
   useEffect(() => {
     if (!office?.id) {

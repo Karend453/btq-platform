@@ -80,6 +80,22 @@ export async function getUserProfileRoleKey(): Promise<"admin" | "agent" | "brok
 }
 
 /**
+ * Whether the signed-in user may access BTQ Back Office routes and nav (org management, etc.).
+ *
+ * **Temporary BTQ wall:** returns true only when `user_profiles.role === 'admin'`. The `admin`
+ * string is reused as a stand-in for a future dedicated BTQ/internal role; this is **not** the
+ * final long-term role model. Do **not** rename `admin` to `superadmin` (or anything else) for
+ * this purpose in this step — keep the existing role values as-is.
+ *
+ * Mirrors the authorization check inside `public.list_offices_for_back_office` (SECURITY DEFINER).
+ */
+export function canAccessBtqBackOffice(
+  roleKey: "admin" | "agent" | "broker" | null
+): boolean {
+  return roleKey === "admin";
+}
+
+/**
  * Canonical runtime role for transaction screens (RLS + document engine). Does not map broker → admin.
  * Unknown/missing profile defaults to `"admin"` to match legacy fallback behavior.
  */
@@ -128,6 +144,32 @@ export type AccountInfoReadonly = {
   email: string | null;
   role: string | null;
 };
+
+/** Single-row profile for Settings: one query shared across `/settings` tabs (see SettingsProfileProvider). */
+export type UserProfileSnapshot = {
+  id: string;
+  email: string | null;
+  role: string | null;
+  display_name: string | null;
+  office_id: string | null;
+};
+
+export async function getCurrentUserProfileSnapshot(): Promise<UserProfileSnapshot | null> {
+  const user = await getCurrentUser();
+  if (!user?.id) return null;
+
+  const { data, error } = await supabase
+    .from("user_profiles")
+    .select("id, email, role, display_name, office_id")
+    .eq("id", user.id)
+    .single();
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+  return data as UserProfileSnapshot;
+}
 
 export async function getAccountInfoReadonly(): Promise<AccountInfoReadonly | null> {
   const user = await getCurrentUser();

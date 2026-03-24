@@ -1,7 +1,6 @@
-import { useEffect, useState } from "react";
 import { User } from "lucide-react";
-import { getAccountInfoReadonly, type AccountInfoReadonly } from "../../../services/auth";
 import { getUserDisplayName, useAuth } from "../../contexts/AuthContext";
+import { useSettingsProfile } from "./SettingsProfileContext";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 
 function ReadonlyField({ label, value }: { label: string; value: string | null | undefined }) {
@@ -25,20 +24,9 @@ function roleLabelForDisplay(raw: string | null | undefined): string {
 /** Read-only personal account details (not office / brokerage). */
 export function AccountInfoTab() {
   const { user, loading: authLoading } = useAuth();
-  const [profile, setProfile] = useState<AccountInfoReadonly | null | undefined>(undefined);
+  const { profile } = useSettingsProfile();
 
-  useEffect(() => {
-    if (authLoading) return;
-    let cancelled = false;
-    getAccountInfoReadonly().then((row) => {
-      if (!cancelled) setProfile(row);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [authLoading]);
-
-  const loading = authLoading || profile === undefined;
+  const loading = authLoading;
   const profileDisplayName = profile?.display_name?.trim();
   const displayName =
     profileDisplayName && profileDisplayName !== "" ? profileDisplayName : getUserDisplayName(user);

@@ -1147,9 +1147,7 @@ export default function TransactionDetailsPage() {
         ? "…"
         : officeDisplayLabel;
 
-  const intakeEmail =
-    (transaction as TransactionRow & { intake_email?: string | null })
-      .intake_email ?? null;
+  const intakeEmail = transaction.intake_email ?? null;
 
   return (
     <div className="min-h-screen bg-slate-50 p-5">

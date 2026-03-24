@@ -3,7 +3,7 @@ import { Outlet, useNavigate } from "react-router-dom";
 import { DashboardSidebar, NavSection } from "../components/dashboard/DashboardSidebar";
 import { useAuth } from "../contexts/AuthContext";
 import { Toaster } from "../components/ui/sonner";
-import { getUserProfileRoleKey } from "../../services/auth";
+import { canAccessBtqBackOffice, getUserProfileRoleKey } from "../../services/auth";
 import {
   LayoutDashboard,
   Users,
@@ -12,6 +12,7 @@ import {
   Building2,
   Settings,
   ClipboardList,
+  Shield,
 } from "lucide-react";
 
 /** Default (admin / agent): full management + insights. */
@@ -83,6 +84,11 @@ const navSectionsBroker: NavSection[] = [
     title: "Oversight",
     items: [
       {
+        label: "Agents",
+        href: "/settings",
+        icon: Users,
+      },
+      {
         label: "Transactions",
         href: "/transactions",
         icon: FileText,
@@ -135,10 +141,29 @@ export function RootLayout() {
     };
   }, [user?.id]);
 
-  const navSections = useMemo(
-    () => (profileRoleKey === "broker" ? navSectionsBroker : navSectionsDefault),
-    [profileRoleKey]
-  );
+  const navSections = useMemo(() => {
+    if (profileRoleKey === "broker") return navSectionsBroker;
+    // Back Office link only when `canAccessBtqBackOffice` — temporary `admin` BTQ wall; see auth.ts.
+    if (!canAccessBtqBackOffice(profileRoleKey ?? null)) return navSectionsDefault;
+
+    const system = navSectionsDefault[3];
+    return [
+      navSectionsDefault[0],
+      navSectionsDefault[1],
+      navSectionsDefault[2],
+      {
+        ...system,
+        items: [
+          ...system.items,
+          {
+            label: "Back Office",
+            href: "/back-office/org",
+            icon: Shield,
+          },
+        ],
+      },
+    ];
+  }, [profileRoleKey]);
 
   const isBroker = profileRoleKey === "broker";
 
