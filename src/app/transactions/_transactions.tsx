@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useTerminology } from "../../hooks_temp/useTerminology";
+import { useTerminology } from "../../hooks/useTerminology";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Search, Plus, AlertCircle, FileX, Archive } from "lucide-react";
 
