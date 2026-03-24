@@ -1,15 +1,6 @@
+import { RouterProvider } from "react-router-dom";
+import { router } from "./routes";
+
 export default function App() {
-  return (
-    <div
-      style={{
-        background: "black",
-        color: "lime",
-        minHeight: "100vh",
-        padding: 40,
-        fontSize: 32,
-      }}
-    >
-      APP ROOT TEST
-    </div>
-  );
+  return <RouterProvider router={router} />;
 }
