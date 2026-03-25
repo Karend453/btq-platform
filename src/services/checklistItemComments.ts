@@ -90,15 +90,24 @@ export type InsertCommentInput = {
 };
 
 /**
+ * DB CHECK only allows Admin | Agent. Broker is a distinct app role for compliance review;
+ * we persist Broker-authored comments as Admin until/unless author_role is expanded to include Broker.
+ */
+function authorRoleForDb(role: InsertCommentInput["authorRole"]): "Admin" | "Agent" {
+  return role === "Broker" ? "Admin" : role;
+}
+
+/**
  * Insert a comment and return it as CommentShape.
  */
 export async function insertComment(input: InsertCommentInput): Promise<CommentShape | null> {
+  const storedRole = authorRoleForDb(input.authorRole);
   const { data, error } = await supabase
     .from("checklist_item_comments")
     .insert({
       transaction_id: input.transactionId,
       checklist_item_id: String(input.checklistItemId),
-      author_role: input.authorRole,
+      author_role: storedRole,
       author_name: input.authorName,
       message: input.message,
       visibility: input.visibility,
