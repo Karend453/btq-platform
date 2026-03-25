@@ -1,36 +1,84 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
-import { User } from "@supabase/supabase-js";
-import { supabase } from "../../lib/supabaseClient";
+import type { User } from "@supabase/supabase-js";
+import { supabase, supabaseInitError, supabaseConfig } from "../../lib/supabaseClient";
 
 type AuthContextValue = {
   user: User | null;
   loading: boolean;
+  error: string | null;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(supabaseInitError);
 
   useEffect(() => {
-    const loadUser = async () => {
-      const { data } = await supabase.auth.getUser();
-      setUser(data.user);
+    if (!supabase) {
+      setError(
+        supabaseInitError ??
+          `Supabase client unavailable (urlPresent=${supabaseConfig.urlPresent}, keyPresent=${supabaseConfig.keyPresent})`
+      );
       setLoading(false);
+      return;
+    }
+
+    let isMounted = true;
+    setLoading(true);
+
+    const loadUser = async () => {
+      try {
+        const { data, error } = await supabase.auth.getUser();
+        if (error) {
+          throw error;
+        }
+        if (isMounted) {
+          setUser(data.user ?? null);
+          setError(null);
+        }
+      } catch (err) {
+        if (isMounted) {
+          setError(err instanceof Error ? err.message : "Auth load failed");
+          setUser(null);
+        }
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
     };
+
     loadUser();
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (isMounted) {
+        setUser(session?.user ?? null);
+      }
     });
 
-    return () => sub.subscription.unsubscribe();
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading }}>
-      {children}
+    <AuthContext.Provider value={{ user, loading, error }}>
+      {error ? (
+        <div style={{ padding: 16, fontFamily: "sans-serif" }}>
+          <h2>Auth Init Error</h2>
+          <div>{error}</div>
+          <div style={{ marginTop: 8 }}>
+            urlPresent: {String(supabaseConfig.urlPresent)} | keyPresent: {String(supabaseConfig.keyPresent)}
+          </div>
+        </div>
+      ) : (
+        children
+      )}
     </AuthContext.Provider>
   );
 }
@@ -41,7 +89,6 @@ export function useAuth() {
   return ctx;
 }
 
-/** Display name: user_metadata.display_name or email (before @) or email */
 export function getUserDisplayName(user: User | null): string {
   if (!user) return "";
   const meta = user.user_metadata as { display_name?: string } | undefined;
