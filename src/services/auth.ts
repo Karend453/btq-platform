@@ -29,7 +29,7 @@ export async function getCurrentUser() {
 /**
  * UI role for legacy transaction flows (comments, controls, etc.).
  *
- * Canonical app role is always `public.user_profiles.role` (lowercase: admin | agent | broker).
+ * Canonical app role is always `public.user_profiles.role` (lowercase: admin | agent | broker | btq_admin).
  * Broker accounts must have `user_profiles.role = 'broker'` in Supabase.
  *
  * Transitional bridge: `getCurrentUserRole()` maps broker → Admin so existing screens keep working
@@ -41,7 +41,20 @@ const TEST_ROLE: UserRole = "Admin";
 
 async function fetchUserProfileRoleRaw(): Promise<string | null> {
   const user = await getCurrentUser();
-  if (!user?.id) return null;
+  if (!user?.id) {
+    // TEMP DEBUG — remove after diagnosing profile role / RLS
+    console.log("[DEBUG auth] fetchUserProfileRoleRaw: no auth user id", {
+      hasUser: !!user,
+      email: user?.email ?? null,
+    });
+    return null;
+  }
+
+  // TEMP DEBUG — remove after diagnosing profile role / RLS
+  console.log("[DEBUG auth] fetchUserProfileRoleRaw: auth user", {
+    id: user.id,
+    email: user.email ?? null,
+  });
 
   const { data, error } = await supabase
     .from("user_profiles")
@@ -49,12 +62,27 @@ async function fetchUserProfileRoleRaw(): Promise<string | null> {
     .eq("id", user.id)
     .maybeSingle();
 
+  const rawRole = (data?.role as string | undefined) ?? null;
+
   if (error) {
     console.warn("[fetchUserProfileRoleRaw] user_profiles:", error.message);
+    // TEMP DEBUG — remove after diagnosing profile role / RLS
+    console.log("[DEBUG auth] fetchUserProfileRoleRaw: Supabase error", {
+      message: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+    });
     return null;
   }
 
-  return (data?.role as string | undefined) ?? null;
+  // TEMP DEBUG — remove after diagnosing profile role / RLS
+  console.log("[DEBUG auth] fetchUserProfileRoleRaw: user_profiles row", {
+    rawRoleFromDb: rawRole,
+    dataWasNull: data == null,
+  });
+
+  return rawRole;
 }
 
 function mapProfileRoleToUserRole(raw: string | null | undefined): UserRole | null {
@@ -70,29 +98,38 @@ function mapProfileRoleToUserRole(raw: string | null | undefined): UserRole | nu
  * Reads `public.user_profiles.role` (canonical). Broker users: ensure the column is `'broker'`.
  * Use for broker-only UI (e.g. dashboard). Returns null if unauthenticated, missing row, or unknown role.
  */
-export async function getUserProfileRoleKey(): Promise<"admin" | "agent" | "broker" | null> {
+export async function getUserProfileRoleKey(): Promise<"admin" | "agent" | "broker" | "btq_admin" | null> {
   const raw = await fetchUserProfileRoleRaw();
   const r = (raw ?? "").trim().toLowerCase();
-  if (r === "admin") return "admin";
-  if (r === "agent") return "agent";
-  if (r === "broker") return "broker";
-  return null;
+  let key: "admin" | "agent" | "broker" | "btq_admin" | null = null;
+  if (r === "admin") key = "admin";
+  else if (r === "agent") key = "agent";
+  else if (r === "broker") key = "broker";
+  else if (r === "btq_admin") key = "btq_admin";
+
+  // TEMP DEBUG — remove after diagnosing profile role / RLS
+  console.log("[DEBUG auth] getUserProfileRoleKey", {
+    rawRoleFromDb: raw,
+    normalizedLower: r,
+    key,
+  });
+
+  return key;
 }
 
 /**
  * Whether the signed-in user may access BTQ Back Office routes and nav (org management, etc.).
  *
- * **Temporary BTQ wall:** returns true only when `user_profiles.role === 'admin'`. The `admin`
- * string is reused as a stand-in for a future dedicated BTQ/internal role; this is **not** the
- * final long-term role model. Do **not** rename `admin` to `superadmin` (or anything else) for
- * this purpose in this step — keep the existing role values as-is.
+ * Returns true only when the profile role key is `"btq_admin"` (Brokerteq internal). Other profile
+ * roles, including `"admin"`, do not grant access here. This is intentionally separate from
+ * transaction/runtime role mappings.
  *
  * Mirrors the authorization check inside `public.list_offices_for_back_office` (SECURITY DEFINER).
  */
 export function canAccessBtqBackOffice(
-  roleKey: "admin" | "agent" | "broker" | null
+  roleKey: "admin" | "agent" | "broker" | "btq_admin" | null
 ): boolean {
-  return roleKey === "admin";
+  return roleKey === "btq_admin";
 }
 
 /**

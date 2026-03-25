@@ -1,6 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { Outlet, useNavigate } from "react-router-dom";
-import { canAccessBtqBackOffice, getUserProfileRoleKey } from "../../../services/auth";
+import {
+  canAccessBtqBackOffice,
+  getCurrentUser,
+  getUserProfileRoleKey,
+} from "../../../services/auth";
 
 /**
  * Route-level gate for BTQ Back Office (`/back-office/*`).
@@ -15,7 +19,15 @@ export function BackOfficeRouteGuard() {
 
   useEffect(() => {
     let cancelled = false;
-    getUserProfileRoleKey().then((key) => {
+    (async () => {
+      const user = await getCurrentUser();
+      if (cancelled) return;
+      if (!user?.id) {
+        navigate("/back-office/login", { replace: true });
+        setGate("denied");
+        return;
+      }
+      const key = await getUserProfileRoleKey();
       if (cancelled) return;
       if (!canAccessBtqBackOffice(key)) {
         navigate("/", { replace: true });
@@ -23,7 +35,7 @@ export function BackOfficeRouteGuard() {
         return;
       }
       setGate("ok");
-    });
+    })();
     return () => {
       cancelled = true;
     };

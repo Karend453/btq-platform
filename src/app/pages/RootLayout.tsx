@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Navigate, Outlet } from "react-router-dom";
+import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { DashboardSidebar, NavSection } from "../components/dashboard/DashboardSidebar";
 import { useAuth } from "../contexts/AuthContext";
 import { Toaster } from "../components/ui/sonner";
@@ -118,6 +118,7 @@ const navSectionsBroker: NavSection[] = [
 ];
 
 export function RootLayout() {
+  const location = useLocation();
   const { user, loading } = useAuth();
   const [profileRoleKey, setProfileRoleKey] = useState<
     "admin" | "agent" | "broker" | "btq_admin" | null | undefined
@@ -176,7 +177,10 @@ export function RootLayout() {
   }
 
   if (!user) {
-    return <Navigate to="/login" replace />;
+    const loginTarget = location.pathname.startsWith("/back-office")
+      ? "/back-office/login"
+      : "/login";
+    return <Navigate to={loginTarget} replace />;
   }
 
   return (

@@ -16,6 +16,8 @@ export default function Login() {
     let cancelled = false;
     (async () => {
       const key = await getUserProfileRoleKey();
+      // TEMP DEBUG — remove after diagnosing profile role / RLS
+      console.log("LOGIN role key", key);
       if (cancelled) return;
       navigate(key === "btq_admin" ? "/back-office/org" : "/", { replace: true });
     })();
@@ -32,6 +34,8 @@ export default function Login() {
     setLoading(false);
     if (result.success) {
       const key = await getUserProfileRoleKey();
+      // TEMP DEBUG — remove after diagnosing profile role / RLS
+      console.log("LOGIN role key", key);
       window.location.href = key === "btq_admin" ? "/back-office/org" : "/";
     } else {
       setError(result.message);

@@ -12,6 +12,7 @@ import { OfficeChecklistTemplatesPage } from "./pages/OfficeChecklistTemplatesPa
 import TransactionDetail from "./transactions/TransactionDetailsPage";
 import { NewTransaction } from "./pages/NewTransaction";
 import Login from "./Login";
+import { BackOfficeLogin } from "./pages/back-office/BackOfficeLogin";
 import { BackOfficeRouteGuard } from "./pages/back-office/BackOfficeRouteGuard";
 import { OrgManagementPage } from "./pages/back-office/OrgManagementPage";
 import { BackOfficeAddOfficePage } from "./pages/back-office/BackOfficeAddOfficePage";
@@ -21,6 +22,10 @@ export const router = createBrowserRouter([
   {
     path: "/login",
     element: <Login />,
+  },
+  {
+    path: "/back-office/login",
+    element: <BackOfficeLogin />,
   },
   {
     path: "/",
