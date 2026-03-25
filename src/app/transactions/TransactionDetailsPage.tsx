@@ -70,6 +70,7 @@ import {
 import { getOfficeById } from "../../services/offices";
 import { countChecklistItemsForTransaction } from "../../services/checklistItems";
 import TransactionOverview from "./sections/TransactionOverview";
+import FormsEngineLaunchDialog from "./sections/FormsEngineLaunchDialog";
 import TransactionInbox from "./sections/TransactionInbox";
 import TransactionControls from "./sections/TransactionControls";
 import TransactionActivity from "./sections/TransactionActivity";
@@ -91,10 +92,6 @@ type CommentShape = {
   pageNumber?: number;
   locationNote?: string;
 };
-function handleLaunchZipForms() {
-  alert("ZipForms launch coming soon");
-}
-
 function formatCurrency(value?: number | string | null) {
   if (value === null || value === undefined || value === "") return "—";
 
@@ -220,6 +217,9 @@ export default function TransactionDetailsPage() {
   const [newCommentText, setNewCommentText] = useState("");
   const [commentVisibility, setCommentVisibility] = useState<"Internal" | "Shared">("Shared");
   const [notifyAgentOnComment, setNotifyAgentOnComment] = useState(true);
+
+  const [zipFormsLaunchOpen, setZipFormsLaunchOpen] = useState(false);
+  const [dotloopLaunchOpen, setDotloopLaunchOpen] = useState(false);
 
   // Review modal state
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
@@ -1160,8 +1160,22 @@ export default function TransactionDetailsPage() {
           onSave={() => {
             void handleSaveTransactionControls();
           }}
-          onLaunchZipForms={handleLaunchZipForms}
+          onOpenZipFormsLaunch={() => setZipFormsLaunchOpen(true)}
+          onOpenDotloopLaunch={() => setDotloopLaunchOpen(true)}
           onEdit={handleEdit}
+        />
+
+        <FormsEngineLaunchDialog
+          variant="zipforms"
+          open={zipFormsLaunchOpen}
+          onOpenChange={setZipFormsLaunchOpen}
+          intakeEmail={intakeEmail}
+        />
+        <FormsEngineLaunchDialog
+          variant="dotloop"
+          open={dotloopLaunchOpen}
+          onOpenChange={setDotloopLaunchOpen}
+          intakeEmail={intakeEmail}
         />
 
         <TransactionControls

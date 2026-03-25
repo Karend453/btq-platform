@@ -3,3 +3,6 @@
 
 [functions.resend-inbound]
 verify_jwt = false
+
+[functions.super-handler]
+verify_jwt = false
