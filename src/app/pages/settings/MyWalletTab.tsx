@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { AlertCircle, CreditCard, FileText, Receipt, Wallet } from "lucide-react";
 import {
   createBillingPortalSession,

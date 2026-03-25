@@ -1,3 +1,4 @@
+import React from "react";
 import { Activity as ActivityIcon, ExternalLink, FileText, Filter } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 

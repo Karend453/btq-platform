@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import React from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { MessageSquare, Save, Archive, AlertTriangle, ExternalLink } from "lucide-react";
 import { Button } from "../components/ui/button";

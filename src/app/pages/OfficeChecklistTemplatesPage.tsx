@@ -1,3 +1,4 @@
+import React from "react";
 import { OfficeChecklistTemplatesTab } from "./settings/OfficeChecklistTemplatesTab";
 
 /** Standalone broker page; same content as former Settings tab. */

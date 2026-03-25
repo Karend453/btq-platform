@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Outlet, useNavigate } from "react-router-dom";
 import { canAccessBtqBackOffice, getUserProfileRoleKey } from "../../../services/auth";
 

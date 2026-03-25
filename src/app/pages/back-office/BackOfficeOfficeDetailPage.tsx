@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ArrowLeft, Building2, Users } from "lucide-react";
 import { getOfficeById, type Office } from "../../../services/offices";

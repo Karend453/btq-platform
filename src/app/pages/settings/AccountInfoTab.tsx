@@ -1,3 +1,4 @@
+import React from "react";
 import { User } from "lucide-react";
 import { getUserDisplayName, useAuth } from "../../contexts/AuthContext";
 import { useSettingsProfile } from "./SettingsProfileContext";

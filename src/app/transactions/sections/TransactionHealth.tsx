@@ -1,3 +1,4 @@
+import React from "react";
 import { AlertTriangle, CheckCircle2 } from "lucide-react";
 import { getTransactionHealthSectionMetrics } from "../../../lib/documents/documentEngine";
 import { checklistItemForControlsToEngineDocument } from "../../../lib/documents/adapter";

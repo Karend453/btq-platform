@@ -1,3 +1,4 @@
+import React from "react";
 import { Badge } from "../ui/badge";
 
 export type StatusType = "success" | "warning" | "error" | "info" | "pending";

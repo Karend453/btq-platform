@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { CreditCard } from "lucide-react";
 import { getOfficeById, type Office } from "../../../services/offices";
 import { useSettingsProfile } from "./SettingsProfileContext";

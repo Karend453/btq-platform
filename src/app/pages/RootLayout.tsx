@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Navigate, Outlet } from "react-router-dom";
 import { DashboardSidebar, NavSection } from "../components/dashboard/DashboardSidebar";
 import { useAuth } from "../contexts/AuthContext";

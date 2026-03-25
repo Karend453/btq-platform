@@ -1,3 +1,4 @@
+import React from "react";
 import { Building2, CreditCard, Settings, User, Users, Wallet } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { AccountInfoTab } from "./AccountInfoTab";

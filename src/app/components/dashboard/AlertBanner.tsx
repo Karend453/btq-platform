@@ -1,3 +1,4 @@
+import React from "react";
 import { AlertCircle, CheckCircle, Info, XCircle } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 
