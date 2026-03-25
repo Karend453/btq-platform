@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Outlet, useNavigate } from "react-router-dom";
+import { Navigate, Outlet } from "react-router-dom";
 import { DashboardSidebar, NavSection } from "../components/dashboard/DashboardSidebar";
 import { useAuth } from "../contexts/AuthContext";
 import { Toaster } from "../components/ui/sonner";
@@ -119,23 +119,22 @@ const navSectionsBroker: NavSection[] = [
 
 export function RootLayout() {
   const { user, loading } = useAuth();
-  const navigate = useNavigate();
   const [profileRoleKey, setProfileRoleKey] = useState<
     "admin" | "agent" | "broker" | null | undefined
   >(undefined);
 
   useEffect(() => {
-    if (loading) return;
-    if (!user) {
-      navigate("/login", { replace: true });
-    }
-  }, [user, loading, navigate]);
-
-  useEffect(() => {
     let cancelled = false;
+
+    if (!user) {
+      setProfileRoleKey(undefined);
+      return;
+    }
+
     getUserProfileRoleKey().then((key) => {
       if (!cancelled) setProfileRoleKey(key);
     });
+
     return () => {
       cancelled = true;
     };
@@ -143,7 +142,7 @@ export function RootLayout() {
 
   const navSections = useMemo(() => {
     if (profileRoleKey === "broker") return navSectionsBroker;
-    // Back Office link only when `canAccessBtqBackOffice` — temporary `admin` BTQ wall; see auth.ts.
+
     if (!canAccessBtqBackOffice(profileRoleKey ?? null)) return navSectionsDefault;
 
     const system = navSectionsDefault[3];
@@ -174,8 +173,9 @@ export function RootLayout() {
       </div>
     );
   }
+
   if (!user) {
-    return null;
+    return <Navigate to="/login" replace />;
   }
 
   return (
@@ -184,7 +184,7 @@ export function RootLayout() {
         logo={
           <div>
             <div className="text-xl font-semibold text-white">RealtyPro</div>
-            <div className="text-xs text-slate-400 mt-1">
+            <div className="mt-1 text-xs text-slate-400">
               {isBroker ? "Broker oversight" : "Broker Portal"}
             </div>
           </div>
