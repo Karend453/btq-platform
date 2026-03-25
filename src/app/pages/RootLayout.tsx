@@ -120,7 +120,7 @@ const navSectionsBroker: NavSection[] = [
 export function RootLayout() {
   const { user, loading } = useAuth();
   const [profileRoleKey, setProfileRoleKey] = useState<
-    "admin" | "agent" | "broker" | null | undefined
+    "admin" | "agent" | "broker" | "btq_admin" | null | undefined
   >(undefined);
 
   useEffect(() => {
@@ -165,6 +165,7 @@ export function RootLayout() {
   }, [profileRoleKey]);
 
   const isBroker = profileRoleKey === "broker";
+  const isBtqAdmin = profileRoleKey === "btq_admin";
 
   if (loading) {
     return (
@@ -183,9 +184,15 @@ export function RootLayout() {
       <DashboardSidebar
         logo={
           <div>
-            <div className="text-xl font-semibold text-white">RealtyPro</div>
+            <div className="text-xl font-semibold text-white">
+              {isBtqAdmin ? "Brokerteq" : "RealtyPro"}
+            </div>
             <div className="mt-1 text-xs text-slate-400">
-              {isBroker ? "Broker oversight" : "Broker Portal"}
+              {isBtqAdmin
+                ? "BTQ Back Office"
+                : isBroker
+                  ? "Broker oversight"
+                  : "Broker Portal"}
             </div>
           </div>
         }

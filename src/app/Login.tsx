@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { signIn } from "../services/auth";
+import { getUserProfileRoleKey, signIn } from "../services/auth";
 import { useAuth } from "./contexts/AuthContext";
 
 export default function Login() {
@@ -12,9 +12,16 @@ export default function Login() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!authLoading && user) {
-      navigate("/", { replace: true });
-    }
+    if (authLoading || !user) return;
+    let cancelled = false;
+    (async () => {
+      const key = await getUserProfileRoleKey();
+      if (cancelled) return;
+      navigate(key === "btq_admin" ? "/back-office/org" : "/", { replace: true });
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [user, authLoading, navigate]);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -24,7 +31,8 @@ export default function Login() {
     const result = await signIn(email, password);
     setLoading(false);
     if (result.success) {
-      window.location.href = "/";
+      const key = await getUserProfileRoleKey();
+      window.location.href = key === "btq_admin" ? "/back-office/org" : "/";
     } else {
       setError(result.message);
     }
