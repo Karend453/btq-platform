@@ -7,4 +7,8 @@ import "./styles/theme.css";
 import "./styles/fonts.css";
 import "./styles/index.css";
 
-document.getElementById("root")!.innerHTML = "HELLO FROM NEW BUILD";
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);

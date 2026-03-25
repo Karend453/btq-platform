@@ -1,16 +1,7 @@
-import { createBrowserRouter, RouterProvider } from "react-router-dom";
-
-const testRouter = createBrowserRouter([
-  {
-    path: "/",
-    element: <div style={{ padding: 40, fontSize: 24 }}>ROUTER ROOT TEST</div>,
-  },
-  {
-    path: "/login",
-    element: <div style={{ padding: 40, fontSize: 24 }}>ROUTER LOGIN TEST</div>,
-  },
-]);
+import { RouterProvider } from "react-router-dom";
+import { router } from "./routes";
+import { AuthProvider } from "./contexts/AuthContext";
 
 export default function App() {
-  return <RouterProvider router={testRouter} />;
+  return <div>APP TEMP TEST</div>;
 }
