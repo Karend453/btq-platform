@@ -32,7 +32,6 @@ export const router = createBrowserRouter([
       { path: "transactions/new", element: <NewTransaction /> },
       { path: "transactions/:id", element: <TransactionDetail /> },
       { path: "transactions/:id/edit", element: <EditTransactionDetails /> },
-      { path: "test-route", element: <div>Test Route Works</div> },
       { path: "analytics", element: <Analytics /> },
       { path: "offices", element: <Offices /> },
       { path: "office/checklist-templates", element: <OfficeChecklistTemplatesPage /> },
