@@ -1,6 +1,6 @@
 import React from "react";
 import { useNavigate } from "react-router-dom";
-import { Bell, ChevronDown, LogOut, Settings, User } from "lucide-react";
+import { ChevronDown, LogOut, Settings, User } from "lucide-react";
 import { signOut } from "../../../services/auth";
 import {
   Select,
@@ -31,7 +31,6 @@ interface DashboardHeaderProps {
   onOfficeChange: (officeId: string) => void;
   userName?: string;
   userEmail?: string;
-  notificationCount?: number;
 }
 
 export function DashboardHeader({
@@ -40,7 +39,6 @@ export function DashboardHeader({
   onOfficeChange,
   userName = "Admin User",
   userEmail,
-  notificationCount = 0,
 }: DashboardHeaderProps) {
   const navigate = useNavigate();
 
@@ -70,23 +68,8 @@ export function DashboardHeader({
           </div>
         </div>
 
-        {/* Right: Actions & User Menu */}
+        {/* Right: User Menu */}
         <div className="flex items-center gap-3">
-          {/* Notifications */}
-          <Button variant="ghost" size="icon" className="relative">
-            <Bell className="h-5 w-5" />
-            {notificationCount > 0 && (
-              <span className="absolute top-0 right-0 h-4 w-4 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">
-                {notificationCount > 9 ? "9+" : notificationCount}
-              </span>
-            )}
-          </Button>
-
-          {/* Settings */}
-          <Button variant="ghost" size="icon">
-            <Settings className="h-5 w-5" />
-          </Button>
-
           {/* User Menu / Who am I */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

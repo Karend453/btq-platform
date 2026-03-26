@@ -183,6 +183,16 @@ export function RootLayout() {
     return <Navigate to={loginTarget} replace />;
   }
 
+  // Avoid rendering the wrong nav (default vs broker) before `user_profiles.role` resolves — that
+  // was swapping the whole shell after the first paint and looked like the dashboard "reverting".
+  if (profileRoleKey === undefined) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-slate-50">
+        <div className="text-slate-600">Loading…</div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-screen bg-slate-50">
       <DashboardSidebar

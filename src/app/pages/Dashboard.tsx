@@ -12,12 +12,8 @@ import {
   type ComplianceOverviewData,
 } from "../../services/transactions";
 import {
-  LayoutDashboard,
   Users,
   FileText,
-  Settings,
-  BarChart3,
-  Building2,
   Database,
   DollarSign,
   AlertTriangle,
@@ -93,6 +89,8 @@ export function Dashboard() {
   }, []);
 
   const isBroker = profileRoleKey === "broker";
+  // One stable layout until compliance + profile load (same Promise.all); avoids broker chrome flashing as "agent" first.
+  const dashboardDataReady = !complianceLoading;
 
   const handleSSOClick = (platform: string) => {
     console.log(`Opening ${platform}...`);
@@ -135,13 +133,13 @@ export function Dashboard() {
   } else {
     const n = complianceOverview.tableRows.length;
     if (n > 0) {
-      const label = n === 1 ? "transaction" : "transactions";
       actionRequiredBanner = {
         type: "warning",
         title: "Action required",
-        message: isBroker
-          ? `Portfolio-wide: ${n} ${label} with compliance items that need attention. Review the Compliance Overview below.`
-          : `You have ${n} ${label} with compliance items that need attention. Review the Compliance Overview below.`,
+        message:
+          n === 1
+            ? "1 transaction needs attention. Review missing or incomplete documents below."
+            : `${n} transactions need attention. Review missing or incomplete documents below.`,
       };
     } else {
       actionRequiredBanner = {
@@ -175,23 +173,6 @@ export function Dashboard() {
         ? `Across ${kpis.distinctOfficesOnActiveDeals} office${kpis.distinctOfficesOnActiveDeals === 1 ? "" : "es"}`
         : undefined;
 
-  const brokerSnapshot =
-    isBroker && complianceOverview && kpis
-      ? (() => {
-          const leg = complianceOverview.legend;
-          const total =
-            leg.rejected + leg.missing + leg.pendingReview + leg.complete;
-          const attention = leg.rejected + leg.missing + leg.pendingReview;
-          return {
-            total,
-            attention,
-            attentionPct:
-              total > 0 ? Math.round((attention / total) * 100) : 0,
-            queueDocs: kpis.complianceDocsPendingReviewCount,
-          };
-        })()
-      : null;
-
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-slate-50">
       <DashboardHeader
@@ -200,60 +181,23 @@ export function Dashboard() {
         onOfficeChange={setSelectedOffice}
         userName={displayName}
         userEmail={user?.email ?? undefined}
-        notificationCount={3}
       />
 
       <main className="flex-1 overflow-y-auto p-6">
-        <div className="max-w-7xl mx-auto space-y-6">
+        <div className="max-w-7xl mx-auto space-y-5">
           {/* Page Header */}
           <div>
             <h1 className="text-3xl font-semibold text-slate-900">
-              {isBroker ? "Broker oversight" : "Dashboard Overview"}
+              {!dashboardDataReady
+                ? "Dashboard"
+                : isBroker
+                  ? "Broker oversight"
+                  : "Dashboard Overview"}
             </h1>
             <p className="text-slate-600 mt-1">
             Welcome back, {displayName}! Here's what's happening today.
 </p>
           </div>
-
-          {/* Broker-only: real rollup from same compliance payload as KPIs / overview */}
-          {isBroker && (
-            <Card className="border-l-4 border-indigo-600 shadow-sm">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-lg">Portfolio snapshot</CardTitle>
-                <p className="text-sm text-slate-600 font-normal">
-                </p>
-              </CardHeader>
-              <CardContent className="text-sm text-slate-700 space-y-2">
-                {complianceLoading ? (
-                  <p className="text-slate-600">Loading portfolio snapshot…</p>
-                ) : !complianceOverview || !brokerSnapshot ? (
-                  <p className="text-slate-600">Snapshot unavailable. Refresh to try again.</p>
-                ) : (
-                  <>
-                    <p>
-                      <span className="font-semibold text-slate-900">
-                        {brokerSnapshot.attention}
-                      </span>{" "}
-                      of{" "}
-                      <span className="font-semibold text-slate-900">
-                        {brokerSnapshot.total}
-                      </span>{" "}
-                      deals in scope have a non-complete compliance posture (
-                      {brokerSnapshot.attentionPct}%).
-                    </p>
-                    <p>
-                      Compliance document queue:{" "}
-                      <span className="font-semibold text-slate-900">
-                        {brokerSnapshot.queueDocs}
-                      </span>{" "}
-                      required checklist item(s) awaiting review (submitted, pending compliance
-                      review).
-                    </p>
-                  </>
-                )}
-              </CardContent>
-            </Card>
-          )}
 
           {/* Action required (scoped compliance — same payload as Compliance Overview) */}
           <AlertBanner
@@ -262,32 +206,9 @@ export function Dashboard() {
             message={actionRequiredBanner.message}
           />
 
-          {/* Key Metrics — same scope as Compliance Overview (`fetchComplianceOverviewData` kpis) */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <DataCard title="Active Transactions" value={activeTxValue} icon={FileText} />
-            <DataCard
-              title="Active Agents"
-              value={activeAgentsValue}
-              icon={Users}
-              subtitle={agentsOfficesSubtitle}
-            />
-            <DataCard
-              title="Compliance Queue"
-              value={complianceQueueValue}
-              icon={Clock}
-              subtitle="Required checklist documents submitted and awaiting compliance review"
-            />
-            <DataCard
-              title="Total Volume"
-              value={volumeValue}
-              icon={DollarSign}
-              subtitle="Sale price on pipeline deals"
-            />
-          </div>
-
           {/* Platform SSO Tiles */}
           <div>
-            <h2 className="text-xl font-semibold text-slate-900 mb-4">
+            <h2 className="text-xl font-semibold text-slate-900 mb-3">
               Quick Access
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -313,6 +234,29 @@ export function Dashboard() {
                 onClick={() => handleSSOClick("Accounting")}
               />
             </div>
+          </div>
+
+          {/* Key Metrics — same scope as Compliance Overview (`fetchComplianceOverviewData` kpis) */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+            <DataCard title="Active Transactions" value={activeTxValue} icon={FileText} />
+            <DataCard
+              title="Active Agents"
+              value={activeAgentsValue}
+              icon={Users}
+              subtitle={agentsOfficesSubtitle}
+            />
+            <DataCard
+              title="Compliance Queue"
+              value={complianceQueueValue}
+              icon={Clock}
+              subtitle="Required checklist documents submitted and awaiting compliance review"
+            />
+            <DataCard
+              title="Total Volume"
+              value={volumeValue}
+              icon={DollarSign}
+              subtitle="Sale price on pipeline deals"
+            />
           </div>
 
           {/* Compliance Overview */}
@@ -372,9 +316,9 @@ export function Dashboard() {
 
           {/* Agent Activity: only when user_profiles.role is broker (getUserProfileRoleKey); hidden for admin/agent */}
           <div
-            className={`grid gap-6 ${isBroker ? "grid-cols-1 lg:grid-cols-2" : "grid-cols-1"}`}
+            className={`grid gap-6 ${dashboardDataReady && isBroker ? "grid-cols-1 lg:grid-cols-2" : "grid-cols-1"}`}
           >
-            {isBroker && (
+            {dashboardDataReady && isBroker && (
               <Card>
                 <CardContent className="py-6">
                   <p className="text-sm text-slate-600">
