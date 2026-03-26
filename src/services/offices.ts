@@ -13,6 +13,8 @@ export type Office = {
   broker_name: string | null;
   broker_email: string | null;
   mls_name: string | null;
+  stripe_customer_id?: string | null;
+  stripe_subscription_id?: string | null;
 };
 
 /**

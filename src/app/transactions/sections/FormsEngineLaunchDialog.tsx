@@ -10,22 +10,15 @@ import {
 } from "../../components/ui/dialog";
 import { Button } from "../../components/ui/button";
 
-const FORMS_ENGINE_URL = {
-  zipforms: "https://www.zipformplus.com",
-  dotloop: "https://www.dotloop.com",
-} as const;
-
-export type FormsEngineVariant = keyof typeof FORMS_ENGINE_URL;
+const ZIPFORMS_URL = "https://www.zipformplus.com";
 
 export type FormsEngineLaunchDialogProps = {
-  variant: FormsEngineVariant;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   intakeEmail: string | null;
 };
 
 export default function FormsEngineLaunchDialog({
-  variant,
   open,
   onOpenChange,
   intakeEmail,
@@ -36,9 +29,9 @@ export default function FormsEngineLaunchDialog({
     if (!open) setCopySuccess(false);
   }, [open]);
 
-  const title = variant === "zipforms" ? "Open ZipForms" : "Open Dotloop";
-  const primaryLabel = variant === "zipforms" ? "Open ZipForms" : "Open Dotloop";
-  const url = FORMS_ENGINE_URL[variant];
+  const title = "Open ZipForms";
+  const primaryLabel = "Open ZipForms";
+  const url = ZIPFORMS_URL;
   const trimmed = intakeEmail?.trim() ?? "";
   const hasEmail = Boolean(trimmed);
 

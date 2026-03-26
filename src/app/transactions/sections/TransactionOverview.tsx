@@ -28,7 +28,6 @@ type TransactionOverviewSectionProps = {
   formatCurrency: (value?: number | string | null) => string;
   onSave: () => void;
   onOpenZipFormsLaunch: () => void;
-  onOpenDotloopLaunch: () => void;
   onEdit: () => void;
 };
 
@@ -57,7 +56,6 @@ export default function TransactionOverviewSection({
   formatCurrency,
   onSave,
   onOpenZipFormsLaunch,
-  onOpenDotloopLaunch,
   onEdit,
 }: TransactionOverviewSectionProps) {
   return (
@@ -81,9 +79,6 @@ export default function TransactionOverviewSection({
           </Button>
           <Button size="sm" onClick={onOpenZipFormsLaunch}>
             Launch ZipForms
-          </Button>
-          <Button variant="secondary" size="sm" onClick={onOpenDotloopLaunch}>
-            Launch Dotloop
           </Button>
           <Button variant="outline" size="sm" onClick={onEdit}>
             Edit Transaction Details

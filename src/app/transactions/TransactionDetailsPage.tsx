@@ -219,7 +219,6 @@ export default function TransactionDetailsPage() {
   const [notifyAgentOnComment, setNotifyAgentOnComment] = useState(true);
 
   const [zipFormsLaunchOpen, setZipFormsLaunchOpen] = useState(false);
-  const [dotloopLaunchOpen, setDotloopLaunchOpen] = useState(false);
 
   // Review modal state
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
@@ -1161,20 +1160,12 @@ export default function TransactionDetailsPage() {
             void handleSaveTransactionControls();
           }}
           onOpenZipFormsLaunch={() => setZipFormsLaunchOpen(true)}
-          onOpenDotloopLaunch={() => setDotloopLaunchOpen(true)}
           onEdit={handleEdit}
         />
 
         <FormsEngineLaunchDialog
-          variant="zipforms"
           open={zipFormsLaunchOpen}
           onOpenChange={setZipFormsLaunchOpen}
-          intakeEmail={intakeEmail}
-        />
-        <FormsEngineLaunchDialog
-          variant="dotloop"
-          open={dotloopLaunchOpen}
-          onOpenChange={setDotloopLaunchOpen}
           intakeEmail={intakeEmail}
         />
 
