@@ -208,6 +208,30 @@ export async function getCurrentUserProfileSnapshot(): Promise<UserProfileSnapsh
   return data as UserProfileSnapshot;
 }
 
+/**
+ * `user_profiles.office_id` for the signed-in user — use as canonical `p_office_id` for broker-only
+ * RPCs that compare against the profile (e.g. `clone_btq_starter_to_office`).
+ */
+export async function getCurrentUserProfileOfficeId(): Promise<string | null> {
+  const user = await getCurrentUser();
+  if (!user?.id) return null;
+
+  const { data, error } = await supabase
+    .from("user_profiles")
+    .select("office_id")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (error) {
+    console.warn("[getCurrentUserProfileOfficeId] user_profiles:", error.message);
+    return null;
+  }
+
+  const oid = data?.office_id;
+  if (oid == null || oid === "") return null;
+  return typeof oid === "string" ? oid : String(oid);
+}
+
 export async function getAccountInfoReadonly(): Promise<AccountInfoReadonly | null> {
   const user = await getCurrentUser();
   if (!user?.id) return null;

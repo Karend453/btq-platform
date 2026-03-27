@@ -1,5 +1,6 @@
 // src/services/checklistTemplates.ts
 
+import { getCurrentUser, getCurrentUserProfileOfficeId } from "./auth";
 import { supabase } from "../lib/supabaseClient";
 
 /** ChecklistItem shape used by the Checklist UI. */
@@ -63,7 +64,7 @@ export type ChecklistTemplate = {
   created_at?: string;
 };
 
-export type ChecklistTemplateCreatedFrom = "btq_starter" | "duplicate" | "manual";
+export type ChecklistTemplateCreatedFrom = "btq" | "btq_starter" | "duplicate" | "manual";
 
 export type OfficeChecklistTemplateRow = ChecklistTemplate & {
   office_id: string;
@@ -71,19 +72,99 @@ export type OfficeChecklistTemplateRow = ChecklistTemplate & {
   source_template_id: string | null;
 };
 
-/** Aligns `transactions.type` / wizard values to `checklist_templates.checklist_type`. */
+/** Aligns `transactions.type` / wizard values to `checklist_templates.checklist_type` (lowercase in DB). */
 export function normalizeChecklistType(transactionType: string): string {
   const t = transactionType.trim().toLowerCase();
-  if (t.includes("lease")) return "Lease";
-  if (t.includes("purchase") || t.includes("buy")) return "Purchase";
-  if (t.includes("list") || t.includes("listing")) return "Listing";
-  return "Other";
+  if (t.includes("lease")) return "lease";
+  if (t.includes("purchase") || t.includes("buy")) return "purchase";
+  if (t.includes("list") || t.includes("listing")) return "listing";
+  return "other";
+}
+
+/**
+ * Active office templates compatible with the wizard transaction type (normalized checklist_type).
+ */
+export async function fetchActiveOfficeTemplatesForTransactionType(
+  officeId: string,
+  transactionType: string
+): Promise<ChecklistTemplate[]> {
+  const oid = officeId.trim();
+  const tt = transactionType.trim();
+  if (!oid || !tt) return [];
+
+  const checklistType = normalizeChecklistType(transactionType);
+
+  const { data, error } = await supabase
+    .from("checklist_templates")
+    .select("id, name, checklist_type, is_default_for_type, archived_at, created_at")
+    .eq("office_id", oid)
+    .eq("checklist_type", checklistType)
+    .eq("is_active", true)
+    .is("archived_at", null)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    console.error("[fetchActiveOfficeTemplatesForTransactionType]", error);
+    return [];
+  }
+
+  return (data ?? []) as ChecklistTemplate[];
+}
+
+type ChecklistTemplateValidateRow = ChecklistTemplate & {
+  office_id: string;
+  is_active: boolean;
+};
+
+/**
+ * Loads a template if it exists and satisfies create-transaction rules for the given office and transaction type.
+ */
+export async function fetchChecklistTemplateForCreateValidation(
+  officeId: string,
+  transactionType: string,
+  templateId: string
+): Promise<ChecklistTemplate | null> {
+  const oid = officeId.trim();
+  const tid = templateId.trim();
+  if (!oid || !tid) return null;
+
+  const expectedType = normalizeChecklistType(transactionType);
+
+  const { data, error } = await supabase
+    .from("checklist_templates")
+    .select(
+      "id, name, checklist_type, is_default_for_type, archived_at, created_at, office_id, is_active"
+    )
+    .eq("id", tid)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[fetchChecklistTemplateForCreateValidation]", error);
+    return null;
+  }
+
+  const row = data as ChecklistTemplateValidateRow | null;
+  if (!row) return null;
+  if (row.office_id !== oid) return null;
+  if (!row.is_active) return null;
+  if (row.archived_at != null) return null;
+  if (normalizeChecklistType(row.checklist_type ?? "") !== expectedType) return null;
+
+  return {
+    id: row.id,
+    name: row.name,
+    checklist_type: row.checklist_type,
+    is_default_for_type: row.is_default_for_type,
+    archived_at: row.archived_at,
+    created_at: row.created_at,
+  };
 }
 
 /**
  * Resolves the office-owned checklist template for a new transaction.
  * Prefers explicit default for (office + checklist_type), else oldest active template of that type (created_at ASC).
  * Throws if none exist — never falls back to BTQ/global templates.
+ * @deprecated Prefer explicit template selection in the UI plus {@link fetchChecklistTemplateForCreateValidation}.
  */
 export async function resolveChecklistTemplateForNewTransaction(
   officeId: string,
@@ -100,6 +181,7 @@ export async function resolveChecklistTemplateForNewTransaction(
     .select("id, name, checklist_type, is_default_for_type, archived_at, created_at")
     .eq("office_id", oid)
     .eq("checklist_type", checklistType)
+    .eq("is_active", true)
     .is("archived_at", null)
     .eq("is_default_for_type", true)
     .limit(1)
@@ -119,6 +201,7 @@ export async function resolveChecklistTemplateForNewTransaction(
     .select("id, name, checklist_type, is_default_for_type, archived_at, created_at")
     .eq("office_id", oid)
     .eq("checklist_type", checklistType)
+    .eq("is_active", true)
     .is("archived_at", null)
     .order("created_at", { ascending: true })
     .limit(1)
@@ -191,7 +274,7 @@ export async function listOfficeChecklistTemplates(
 }
 
 /**
- * Server-side: ensures an active office template exists for the type (clone from BTQ starter if missing),
+ * Server-side: ensures an active office template exists for the type (clone from global BTQ master if missing),
  * ensures a default exists for that type, returns the template id. Required because global BTQ rows are not
  * readable under RLS from the browser.
  */
@@ -205,8 +288,28 @@ export async function ensureOfficeChecklistTemplateForType(
     return { templateId: null, error: new Error("Office and checklist type are required") };
   }
 
+  const [user, profileOfficeId] = await Promise.all([getCurrentUser(), getCurrentUserProfileOfficeId()]);
+  const resolvedOfficeId = (profileOfficeId?.trim() || oid).trim();
+
+  if (import.meta.env.DEV) {
+    console.log("[checklist RPC] ensure_office_checklist_template_from_btq (client)", {
+      authUserId: user?.id ?? null,
+      p_office_id_arg: oid,
+      p_office_id_profile: profileOfficeId,
+      p_office_id_resolved: resolvedOfficeId,
+      mismatch: Boolean(profileOfficeId?.trim() && profileOfficeId.trim() !== oid),
+    });
+  }
+
+  if (profileOfficeId?.trim() && profileOfficeId.trim() !== oid) {
+    console.warn(
+      "[ensureOfficeChecklistTemplateForType] office id argument differs from profile office_id; using profile",
+      { arg: oid, profile: profileOfficeId.trim() }
+    );
+  }
+
   const { data, error } = await supabase.rpc("ensure_office_checklist_template_from_btq", {
-    p_office_id: oid,
+    p_office_id: resolvedOfficeId,
     p_checklist_type: ct,
   });
 
@@ -241,24 +344,24 @@ export async function fetchOfficeChecklistTemplateRow(
   return (data ?? null) as OfficeChecklistTemplateRow | null;
 }
 
-/** Global BTQ starter rows for broker settings dropdown (RLS-safe via RPC). */
-export type BtqChecklistStarterRow = {
+/** Global BTQ master templates (office_id null) for broker settings dropdown (RLS-safe via RPC). */
+export type BtqMasterChecklistTemplateRow = {
   id: string;
   name: string;
   checklist_type: string;
 };
 
-export async function listBtqChecklistStarters(): Promise<BtqChecklistStarterRow[]> {
+export async function listBtqMasterChecklistTemplates(): Promise<BtqMasterChecklistTemplateRow[]> {
   const { data, error } = await supabase.rpc("list_btq_checklist_starters");
   if (error) {
-    console.error("[listBtqChecklistStarters]", error);
+    console.error("[listBtqMasterChecklistTemplates]", error);
     return [];
   }
-  return (data ?? []) as BtqChecklistStarterRow[];
+  return (data ?? []) as BtqMasterChecklistTemplateRow[];
 }
 
-/** Clone a single BTQ starter into an office-owned template (RLS-safe via RPC). */
-export async function cloneBtqStarterToOffice(
+/** Clone a global BTQ master template into an office-owned template (RLS-safe via RPC). */
+export async function cloneBtqMasterTemplateToOffice(
   officeId: string,
   btqTemplateId: string
 ): Promise<{ templateId: string | null; error: Error | null }> {
@@ -268,8 +371,28 @@ export async function cloneBtqStarterToOffice(
     return { templateId: null, error: new Error("Office and BTQ template id are required") };
   }
 
+  const [user, profileOfficeId] = await Promise.all([getCurrentUser(), getCurrentUserProfileOfficeId()]);
+  const resolvedOfficeId = (profileOfficeId?.trim() || oid).trim();
+
+  if (import.meta.env.DEV) {
+    console.log("[checklist RPC] clone_btq_starter_to_office (client)", {
+      authUserId: user?.id ?? null,
+      p_office_id_ui: oid,
+      p_office_id_profile: profileOfficeId,
+      p_office_id_resolved: resolvedOfficeId,
+      mismatch: Boolean(profileOfficeId?.trim() && profileOfficeId.trim() !== oid),
+    });
+  }
+
+  if (profileOfficeId?.trim() && profileOfficeId.trim() !== oid) {
+    console.warn(
+      "[cloneBtqMasterTemplateToOffice] UI office id differs from profile office_id; using profile for RPC",
+      { ui: oid, profile: profileOfficeId.trim() }
+    );
+  }
+
   const { data, error } = await supabase.rpc("clone_btq_starter_to_office", {
-    p_office_id: oid,
+    p_office_id: resolvedOfficeId,
     p_btq_template_id: bid,
   });
 

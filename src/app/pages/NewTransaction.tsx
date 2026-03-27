@@ -15,6 +15,10 @@ import { Input } from "../components/ui/input";
 import { toast } from "sonner";
 import { createTransaction } from "../../services/transactions";
 import { getCurrentOffice } from "../../services/offices";
+import {
+  fetchActiveOfficeTemplatesForTransactionType,
+  type ChecklistTemplate,
+} from "../../services/checklistTemplates";
 import { Label } from "../components/ui/label";
 
 interface TransactionData {
@@ -55,6 +59,9 @@ export function NewTransaction() {
   const [officeLoadState, setOfficeLoadState] = useState<"loading" | "ready" | "empty">(
     "loading"
   );
+  const [checklistTemplates, setChecklistTemplates] = useState<ChecklistTemplate[]>([]);
+  const [checklistTemplateId, setChecklistTemplateId] = useState("");
+  const [checklistTemplatesLoading, setChecklistTemplatesLoading] = useState(false);
 
   useEffect(() => {
     void getCurrentOffice().then((o) => {
@@ -72,6 +79,33 @@ export function NewTransaction() {
       }));
     });
   }, []);
+
+  useEffect(() => {
+    const oid = transactionData.officeId.trim();
+    const ty = transactionData.type;
+    if (!oid || !ty) {
+      setChecklistTemplates([]);
+      setChecklistTemplateId("");
+      setChecklistTemplatesLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setChecklistTemplatesLoading(true);
+    void fetchActiveOfficeTemplatesForTransactionType(oid, ty).then((list) => {
+      if (cancelled) return;
+      setChecklistTemplates(list);
+      setChecklistTemplateId((prev) => {
+        const p = prev.trim();
+        if (list.length === 0) return "";
+        if (p && list.some((t) => t.id === p)) return prev;
+        return "";
+      });
+      setChecklistTemplatesLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [transactionData.officeId, transactionData.type]);
 
   const steps = [
     { number: 1, title: "Transaction Type", icon: FileText },
@@ -106,6 +140,7 @@ export function NewTransaction() {
         type: transactionData.type,
         clientName: transactionData.clientName,
         officeId: transactionData.officeId,
+        checklistTemplateId,
         transactionSide: transactionSideFromWizardType(transactionData.type),
       });
 
@@ -140,7 +175,11 @@ export function NewTransaction() {
           transactionData.officeId.trim() !== ""
         );
       case 4:
-        return true;
+        return (
+          transactionData.identifier.trim() !== "" &&
+          transactionData.clientName.trim() !== "" &&
+          transactionData.officeId.trim() !== ""
+        );
       default:
         return false;
     }
@@ -240,8 +279,8 @@ export function NewTransaction() {
             {currentStep === 1 && (
               <div className="space-y-4">
                 <p className="text-sm text-slate-600 mb-4">
-                  Select the type of transaction you're creating. This will determine
-                  the document checklist and workflow.
+                  Select the type of transaction you&apos;re creating, then choose the checklist
+                  template for this office.
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {transactionTypes.map((type) => (
@@ -268,6 +307,37 @@ export function NewTransaction() {
                     </button>
                   ))}
                 </div>
+
+                {transactionData.type ? (
+                  <div className="pt-2 space-y-2 border-t border-slate-200">
+                    <Label htmlFor="checklistTemplate">Checklist Template</Label>
+                    {officeLoadState !== "ready" || !transactionData.officeId.trim() ? (
+                      <p className="text-sm text-slate-600">Loading office…</p>
+                    ) : checklistTemplatesLoading ? (
+                      <p className="text-sm text-slate-600">Loading checklist templates…</p>
+                    ) : checklistTemplates.length === 0 ? (
+                      <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+                        No active checklist template matches this transaction type for your office.
+                        Ask your broker to add one under{" "}
+                        <span className="font-medium">Office → Checklist templates</span> in Settings.
+                      </p>
+                    ) : (
+                      <select
+                        id="checklistTemplate"
+                        value={checklistTemplateId}
+                        onChange={(e) => setChecklistTemplateId(e.target.value)}
+                        className="mt-1.5 flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      >
+                        <option value="">Select checklist template (optional)</option>
+                        {checklistTemplates.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                ) : null}
               </div>
             )}
 
@@ -360,6 +430,13 @@ export function NewTransaction() {
                       <div className="font-medium text-slate-900">
                         Pre-Contract
                       </div>
+                    </div>
+                  </div>
+
+                  <div className="border-t border-slate-200 pt-4">
+                    <div className="text-sm text-slate-600 mb-1">Checklist Template</div>
+                    <div className="font-medium text-slate-900">
+                      {checklistTemplates.find((t) => t.id === checklistTemplateId)?.name ?? "—"}
                     </div>
                   </div>
 

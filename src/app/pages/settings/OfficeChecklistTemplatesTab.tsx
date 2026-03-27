@@ -20,20 +20,20 @@ import { getCurrentOffice, getOfficeById, type Office } from "../../../services/
 import { useOptionalSettingsProfile } from "./SettingsProfileContext";
 import {
   archiveOfficeChecklistTemplate,
-  cloneBtqStarterToOffice,
+  cloneBtqMasterTemplateToOffice,
   deleteChecklistTemplateItem,
   deleteChecklistTemplateSectionCascade,
   duplicateOfficeChecklistTemplate,
   fetchChecklistTemplateSectionsAndItems,
   insertChecklistTemplateItem,
   insertChecklistTemplateSection,
-  listBtqChecklistStarters,
+  listBtqMasterChecklistTemplates,
   listOfficeChecklistTemplates,
   renameChecklistTemplateSection,
   renameOfficeChecklistTemplate,
   setDefaultOfficeChecklistTemplate,
   updateChecklistTemplateItem,
-  type BtqChecklistStarterRow,
+  type BtqMasterChecklistTemplateRow,
   type OfficeChecklistTemplateRow,
 } from "../../../services/checklistTemplates";
 import { Badge } from "../../components/ui/badge";
@@ -108,9 +108,9 @@ export function OfficeChecklistTemplatesTab() {
 
   const [office, setOffice] = useState<Office | null | undefined>(undefined);
   const [templates, setTemplates] = useState<OfficeChecklistTemplateRow[]>([]);
-  const [starters, setStarters] = useState<BtqChecklistStarterRow[]>([]);
+  const [btqMasters, setBtqMasters] = useState<BtqMasterChecklistTemplateRow[]>([]);
   const [listLoading, setListLoading] = useState(true);
-  const [starterSelectKey, setStarterSelectKey] = useState(0);
+  const [btqMasterSelectKey, setBtqMasterSelectKey] = useState(0);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const [sectionsByTemplateId, setSectionsByTemplateId] = useState<
     Record<string, NonNullable<Awaited<ReturnType<typeof fetchChecklistTemplateSectionsAndItems>> | null>>
@@ -150,10 +150,10 @@ export function OfficeChecklistTemplatesTab() {
       setListLoading(true);
       const [rows, btq] = await Promise.all([
         listOfficeChecklistTemplates(office.id),
-        listBtqChecklistStarters(),
+        listBtqMasterChecklistTemplates(),
       ]);
       if (cancelled) return;
-      setStarters(btq);
+      setBtqMasters(btq);
       setTemplates(rows.filter((t) => !t.archived_at && isOfficeOwnedTemplate(t)));
       setListLoading(false);
     })();
@@ -162,12 +162,18 @@ export function OfficeChecklistTemplatesTab() {
     };
   }, [office?.id]);
 
-  const handleStarterSelect = async (btqTemplateId: string) => {
+  // Add from BTQ → clone_btq_starter_to_office (not ensure_office_checklist_template_from_btq). Office comes from getCurrentOffice() on this route (no Settings profile provider).
+  const handleBtqMasterSelect = async (btqTemplateId: string) => {
     if (!office?.id) return;
-    setStarterSelectKey((k) => k + 1);
-    const { templateId, error } = await cloneBtqStarterToOffice(office.id, btqTemplateId);
+    if (import.meta.env.DEV) {
+      console.log("[OfficeChecklistTemplatesTab] Add from BTQ — office.id passed to clone RPC", {
+        officeIdFromGetCurrentOfficeOrSettings: office.id,
+      });
+    }
+    setBtqMasterSelectKey((k) => k + 1);
+    const { templateId, error } = await cloneBtqMasterTemplateToOffice(office.id, btqTemplateId);
     if (error || !templateId) {
-      toast.error(error?.message ?? "Could not create template from starter");
+      toast.error(error?.message ?? "Could not create template from BTQ");
       return;
     }
     toast.success("Template added — edit below");
@@ -245,21 +251,21 @@ export function OfficeChecklistTemplatesTab() {
           <CardDescription>
             One checklist per transaction type (Purchase, Listing, Lease, Other). Defaults to the template marked
             default for that type when duplicates exist. Add from BTQ only for a type you do not yet have. Templates
-            belong to <span className="font-medium text-slate-800">{office.name}</span> only (global BTQ starters are
+            belong to <span className="font-medium text-slate-800">{office.name}</span> only (global BTQ masters are
             not listed here).
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex flex-wrap gap-4 items-end border-b border-slate-100 pb-4">
             <div className="grid gap-1.5 min-w-[16rem]">
-              <Label htmlFor="btq-starter-select">Add from BTQ starter</Label>
-              {starters.length > 0 ? (
-                <Select key={starterSelectKey} onValueChange={(v) => void handleStarterSelect(v)}>
-                  <SelectTrigger id="btq-starter-select" className="w-[min(100%,22rem)]">
-                    <SelectValue placeholder="Choose a BTQ starter to clone…" />
+              <Label htmlFor="btq-master-select">Add from BTQ</Label>
+              {btqMasters.length > 0 ? (
+                <Select key={btqMasterSelectKey} onValueChange={(v) => void handleBtqMasterSelect(v)}>
+                  <SelectTrigger id="btq-master-select" className="w-[min(100%,22rem)]">
+                    <SelectValue placeholder="Choose a BTQ template to add…" />
                   </SelectTrigger>
                   <SelectContent>
-                    {starters.map((s) => (
+                    {btqMasters.map((s) => (
                       <SelectItem key={s.id} value={s.id}>
                         {s.name}
                         <span className="text-slate-500"> — {s.checklist_type}</span>
@@ -269,7 +275,7 @@ export function OfficeChecklistTemplatesTab() {
                 </Select>
               ) : (
                 <p className="text-sm text-slate-600">
-                  No BTQ starter templates are available in the database. Contact support if this persists.
+                  No BTQ templates are available in the database. Contact support if this persists.
                 </p>
               )}
             </div>
@@ -282,7 +288,7 @@ export function OfficeChecklistTemplatesTab() {
             </div>
           ) : templates.length === 0 ? (
             <p className="text-sm text-slate-600 py-4">
-              No office checklist templates yet. Use “Add from BTQ starter” above to create your first one.
+              No office checklist templates yet. Use “Add from BTQ” above to create your first one.
             </p>
           ) : (
             <ul className="space-y-3">

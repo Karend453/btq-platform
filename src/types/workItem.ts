@@ -16,7 +16,7 @@ export type WorkItem = {
   // "123 Oak St" (real estate), "Case #22" (billing), "Job #1041" (service company)
   identifier: string;
 
-  // Normalized for list display: Sale | Purchase | Lease | Other
+  // Normalized for list display: Listing | Purchase | Lease | Other
   type: string;
 
   // Optional owner/assignee label. Could be agent, account manager, tech, etc.

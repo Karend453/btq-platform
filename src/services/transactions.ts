@@ -5,7 +5,7 @@ import { supabase } from "../lib/supabaseClient";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { getCurrentUser, getTransactionRuntimeRole, getUserProfileRoleKey } from "./auth";
 import { getOfficeRosterForCurrentBroker } from "./officeRoster";
-import { resolveChecklistTemplateForNewTransaction } from "./checklistTemplates";
+import { fetchChecklistTemplateForCreateValidation } from "./checklistTemplates";
 import { fetchComplianceDocCountsByTransactionIds } from "./checklistItems";
 import { checklistItemToEngineDocument } from "../lib/documents/adapter";
 import type { ChecklistItemShape } from "../lib/documents/adapter";
@@ -141,12 +141,12 @@ export function formatAgentLabelForList(raw: string): string {
     .join(" ");
 }
 
-/** List column: Sale / Purchase / Lease / Other (non-matching → Other). */
+/** List column: Listing / Purchase / Lease / Other (non-matching → Other). */
 function normalizeTransactionTypeForList(type: string | null): string {
   const t = (type ?? "").toLowerCase();
   if (t.includes("lease")) return "Lease";
   if (t.includes("purchase") || t.includes("buy")) return "Purchase";
-  if (t.includes("sale")) return "Sale";
+  if (t.includes("listing") || t.includes("list")) return "Listing";
   return "Other";
 }
 
@@ -206,11 +206,13 @@ export async function getTransaction(id: string): Promise<TransactionRow | null>
   return data as TransactionRow;
 }
 
-type CreateTransactionInput = {
+export type CreateTransactionInput = {
   identifier: string;
   type: string;
   clientName: string;
   officeId: string;
+  /** When set, validated and stored; omit or empty to choose a checklist later on the transaction page. */
+  checklistTemplateId?: string | null;
   /** Stored on `transaction_side`; drives which of listagent/buyeragent gets session email. */
   transactionSide?: string | null;
 };
@@ -230,10 +232,25 @@ export async function createTransaction(input: CreateTransactionInput): Promise<
     return null;
   }
 
-  const checklistTemplate = await resolveChecklistTemplateForNewTransaction(
-    input.officeId,
-    input.type
-  );
+  const templateId = (input.checklistTemplateId ?? "").trim();
+  let checklist_template_id: string | null = null;
+  let checklisttype: string | null = null;
+
+  if (templateId) {
+    const checklistTemplate = await fetchChecklistTemplateForCreateValidation(
+      input.officeId,
+      input.type,
+      templateId
+    );
+    if (!checklistTemplate) {
+      throw new Error(
+        "Invalid checklist template. It may be inactive, archived, or not match this office and transaction type."
+      );
+    }
+    checklist_template_id = checklistTemplate.id;
+    checklisttype = checklistTemplate.name;
+  }
+
   const transactionSide = input.transactionSide ?? null;
   const sessionEmail = user.email?.trim() ?? "";
   const agentFields = sessionAgentNameFieldsForTransactionSide(transactionSide, sessionEmail);
@@ -254,8 +271,8 @@ export async function createTransaction(input: CreateTransactionInput): Promise<
     transaction_side: transactionSide,
     listagent: agentFields.listagent,
     buyeragent: agentFields.buyeragent,
-    checklist_template_id: checklistTemplate.id,
-    checklisttype: checklistTemplate.name,
+    checklist_template_id,
+    checklisttype,
     intake_email,
   };
 
