@@ -1,0 +1,524 @@
+﻿node.exe : Initialising login role...
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Program Files\nodejs/node_mo ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Initialising login role...:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+ΓöîΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÉ
+Γöé                                                                      def                                                                      Γöé
+Γö£ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöñ
+Γöé CREATE OR REPLACE FUNCTION public.apply_document_to_portfolio(p_document_id uuid, p_transaction_id uuid, p_update_type text, p_payload jsonb) Γöé
+Γöé  RETURNS jsonb                                                                                                                                Γöé
+Γöé  LANGUAGE plpgsql                                                                                                                             Γöé
+Γöé AS $function$
+                                                                                                                                 Γöé
+Γöé declare
+                                                                                                                                       Γöé
+Γöé   v_portfolio public.client_portfolio%rowtype;
+                                                                                                Γöé
+Γöé   v_changed boolean := false;
+                                                                                                                 Γöé
+Γöé   v_old text;
+                                                                                                                                 Γöé
+Γöé   v_new text;
+                                                                                                                                 Γöé
+Γöé begin
+                                                                                                                                         Γöé
+Γöé   select *
+                                                                                                                                    Γöé
+Γöé   into v_portfolio
+                                                                                                                            Γöé
+Γöé   from public.client_portfolio
+                                                                                                                Γöé
+Γöé   where transaction_id = p_transaction_id
+                                                                                                     Γöé
+Γöé   limit 1;
+                                                                                                                                    Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé   if v_portfolio.id is null then
+                                                                                                              Γöé
+Γöé     raise exception 'No client_portfolio row found for transaction %', p_transaction_id;
+                                                      Γöé
+Γöé   end if;
+                                                                                                                                     Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé   if p_update_type = 'client' then
+                                                                                                            Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé     if nullif(trim(coalesce(p_payload->>'client_name', '')), '') is not null
+                                                                  Γöé
+Γöé        and coalesce(v_portfolio.client_name, '') is distinct from (p_payload->>'client_name') then
+                                            Γöé
+Γöé       v_old := v_portfolio.client_name;
+                                                                                                       Γöé
+Γöé       v_new := p_payload->>'client_name';
+                                                                                                     Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       update public.client_portfolio
+                                                                                                          Γöé
+Γöé       set client_name = v_new
+                                                                                                                 Γöé
+Γöé       where id = v_portfolio.id;
+                                                                                                              Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       insert into public.document_field_updates (
+                                                                                             Γöé
+Γöé         document_id, transaction_id, field_name, old_value, new_value
+                                                                         Γöé
+Γöé       ) values (
+                                                                                                                              Γöé
+Γöé         p_document_id, p_transaction_id, 'client_name', v_old, v_new
+                                                                          Γöé
+Γöé       );
+                                                                                                                                      Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       v_changed := true;
+                                                                                                                      Γöé
+Γöé       v_portfolio.client_name := v_new;
+                                                                                                       Γöé
+Γöé     end if;
+                                                                                                                                   Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé     if nullif(trim(coalesce(p_payload->>'email', '')), '') is not null
+                                                                        Γöé
+Γöé        and coalesce(v_portfolio.email, '') is distinct from (p_payload->>'email') then
+                                                        Γöé
+Γöé       v_old := v_portfolio.email;
+                                                                                                             Γöé
+Γöé       v_new := p_payload->>'email';
+                                                                                                           Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       update public.client_portfolio
+                                                                                                          Γöé
+Γöé       set email = v_new
+                                                                                                                       Γöé
+Γöé       where id = v_portfolio.id;
+                                                                                                              Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       insert into public.document_field_updates (
+                                                                                             Γöé
+Γöé         document_id, transaction_id, field_name, old_value, new_value
+                                                                         Γöé
+Γöé       ) values (
+                                                                                                                              Γöé
+Γöé         p_document_id, p_transaction_id, 'email', v_old, v_new
+                                                                                Γöé
+Γöé       );
+                                                                                                                                      Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       v_changed := true;
+                                                                                                                      Γöé
+Γöé       v_portfolio.email := v_new;
+                                                                                                             Γöé
+Γöé     end if;
+                                                                                                                                   Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé     if nullif(trim(coalesce(p_payload->>'phone', '')), '') is not null
+                                                                        Γöé
+Γöé        and coalesce(v_portfolio.phone, '') is distinct from (p_payload->>'phone') then
+                                                        Γöé
+Γöé       v_old := v_portfolio.phone;
+                                                                                                             Γöé
+Γöé       v_new := p_payload->>'phone';
+                                                                                                           Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       update public.client_portfolio
+                                                                                                          Γöé
+Γöé       set phone = v_new
+                                                                                                                       Γöé
+Γöé       where id = v_portfolio.id;
+                                                                                                              Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       insert into public.document_field_updates (
+                                                                                             Γöé
+Γöé         document_id, transaction_id, field_name, old_value, new_value
+                                                                         Γöé
+Γöé       ) values (
+                                                                                                                              Γöé
+Γöé         p_document_id, p_transaction_id, 'phone', v_old, v_new
+                                                                                Γöé
+Γöé       );
+                                                                                                                                      Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       v_changed := true;
+                                                                                                                      Γöé
+Γöé       v_portfolio.phone := v_new;
+                                                                                                             Γöé
+Γöé     end if;
+                                                                                                                                   Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé   end if;
+                                                                                                                                     Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé   if p_update_type = 'deal' then
+                                                                                                              Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé     if nullif(trim(coalesce(p_payload->>'property_address_primary', '')), '') is not null
+                                                     Γöé
+Γöé        and coalesce(v_portfolio.property_address_primary, '') is distinct from (p_payload->>'property_address_primary') then
+                  Γöé
+Γöé       v_old := v_portfolio.property_address_primary;
+                                                                                          Γöé
+Γöé       v_new := p_payload->>'property_address_primary';
+                                                                                        Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       update public.client_portfolio
+                                                                                                          Γöé
+Γöé       set property_address_primary = v_new
+                                                                                                    Γöé
+Γöé       where id = v_portfolio.id;
+                                                                                                              Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       insert into public.document_field_updates (
+                                                                                             Γöé
+Γöé         document_id, transaction_id, field_name, old_value, new_value
+                                                                         Γöé
+Γöé       ) values (
+                                                                                                                              Γöé
+Γöé         p_document_id, p_transaction_id, 'property_address_primary', v_old, v_new
+                                                             Γöé
+Γöé       );
+                                                                                                                                      Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       v_changed := true;
+                                                                                                                      Γöé
+Γöé       v_portfolio.property_address_primary := v_new;
+                                                                                          Γöé
+Γöé     end if;
+                                                                                                                                   Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé     if nullif(trim(coalesce(p_payload->>'property_address_secondary', '')), '') is not null
+                                                   Γöé
+Γöé        and coalesce(v_portfolio.property_address_secondary, '') is distinct from (p_payload->>'property_address_secondary') then
+              Γöé
+Γöé       v_old := v_portfolio.property_address_secondary;
+                                                                                        Γöé
+Γöé       v_new := p_payload->>'property_address_secondary';
+                                                                                      Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       update public.client_portfolio
+                                                                                                          Γöé
+Γöé       set property_address_secondary = v_new
+                                                                                                  Γöé
+Γöé       where id = v_portfolio.id;
+                                                                                                              Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       insert into public.document_field_updates (
+                                                                                             Γöé
+Γöé         document_id, transaction_id, field_name, old_value, new_value
+                                                                         Γöé
+Γöé       ) values (
+                                                                                                                              Γöé
+Γöé         p_document_id, p_transaction_id, 'property_address_secondary', v_old, v_new
+                                                           Γöé
+Γöé       );
+                                                                                                                                      Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       v_changed := true;
+                                                                                                                      Γöé
+Γöé       v_portfolio.property_address_secondary := v_new;
+                                                                                        Γöé
+Γöé     end if;
+                                                                                                                                   Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé     if nullif(trim(coalesce(p_payload->>'agent_name', '')), '') is not null
+                                                                   Γöé
+Γöé        and coalesce(v_portfolio.agent_name, '') is distinct from (p_payload->>'agent_name') then
+                                              Γöé
+Γöé       v_old := v_portfolio.agent_name;
+                                                                                                        Γöé
+Γöé       v_new := p_payload->>'agent_name';
+                                                                                                      Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       update public.client_portfolio
+                                                                                                          Γöé
+Γöé       set agent_name = v_new
+                                                                                                                  Γöé
+Γöé       where id = v_portfolio.id;
+                                                                                                              Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       insert into public.document_field_updates (
+                                                                                             Γöé
+Γöé         document_id, transaction_id, field_name, old_value, new_value
+                                                                         Γöé
+Γöé       ) values (
+                                                                                                                              Γöé
+Γöé         p_document_id, p_transaction_id, 'agent_name', v_old, v_new
+                                                                           Γöé
+Γöé       );
+                                                                                                                                      Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       v_changed := true;
+                                                                                                                      Γöé
+Γöé       v_portfolio.agent_name := v_new;
+                                                                                                        Γöé
+Γöé     end if;
+                                                                                                                                   Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé     if nullif(p_payload->>'list_price', '') is not null
+                                                                                       Γöé
+Γöé        and coalesce(v_portfolio.list_price::text, '') is distinct from (p_payload->>'list_price') then
+                                        Γöé
+Γöé       v_old := v_portfolio.list_price::text;
+                                                                                                  Γöé
+Γöé       v_new := p_payload->>'list_price';
+                                                                                                      Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       update public.client_portfolio
+                                                                                                          Γöé
+Γöé       set list_price = (p_payload->>'list_price')::numeric
+                                                                                    Γöé
+Γöé       where id = v_portfolio.id;
+                                                                                                              Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       insert into public.document_field_updates (
+                                                                                             Γöé
+Γöé         document_id, transaction_id, field_name, old_value, new_value
+                                                                         Γöé
+Γöé       ) values (
+                                                                                                                              Γöé
+Γöé         p_document_id, p_transaction_id, 'list_price', v_old, v_new
+                                                                           Γöé
+Γöé       );
+                                                                                                                                      Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       v_changed := true;
+                                                                                                                      Γöé
+Γöé       v_portfolio.list_price := (p_payload->>'list_price')::numeric;
+                                                                          Γöé
+Γöé     end if;
+                                                                                                                                   Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé     if nullif(p_payload->>'contract_date', '') is not null
+                                                                                    Γöé
+Γöé        and coalesce(v_portfolio.contract_date::text, '') is distinct from (p_payload->>'contract_date') then
+                                  Γöé
+Γöé       v_old := v_portfolio.contract_date::text;
+                                                                                               Γöé
+Γöé       v_new := p_payload->>'contract_date';
+                                                                                                   Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       update public.client_portfolio
+                                                                                                          Γöé
+Γöé       set contract_date = (p_payload->>'contract_date')::date
+                                                                                 Γöé
+Γöé       where id = v_portfolio.id;
+                                                                                                              Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       insert into public.document_field_updates (
+                                                                                             Γöé
+Γöé         document_id, transaction_id, field_name, old_value, new_value
+                                                                         Γöé
+Γöé       ) values (
+                                                                                                                              Γöé
+Γöé         p_document_id, p_transaction_id, 'contract_date', v_old, v_new
+                                                                        Γöé
+Γöé       );
+                                                                                                                                      Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       v_changed := true;
+                                                                                                                      Γöé
+Γöé       v_portfolio.contract_date := (p_payload->>'contract_date')::date;
+                                                                       Γöé
+Γöé     end if;
+                                                                                                                                   Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé   end if;
+                                                                                                                                     Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé   if p_update_type = 'final' then
+                                                                                                             Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé     if nullif(trim(coalesce(p_payload->>'property_address_primary', '')), '') is not null
+                                                     Γöé
+Γöé        and coalesce(v_portfolio.property_address_primary, '') is distinct from (p_payload->>'property_address_primary') then
+                  Γöé
+Γöé       v_old := v_portfolio.property_address_primary;
+                                                                                          Γöé
+Γöé       v_new := p_payload->>'property_address_primary';
+                                                                                        Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       update public.client_portfolio
+                                                                                                          Γöé
+Γöé       set property_address_primary = v_new
+                                                                                                    Γöé
+Γöé       where id = v_portfolio.id;
+                                                                                                              Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       insert into public.document_field_updates (
+                                                                                             Γöé
+Γöé         document_id, transaction_id, field_name, old_value, new_value
+                                                                         Γöé
+Γöé       ) values (
+                                                                                                                              Γöé
+Γöé         p_document_id, p_transaction_id, 'property_address_primary', v_old, v_new
+                                                             Γöé
+Γöé       );
+                                                                                                                                      Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       v_changed := true;
+                                                                                                                      Γöé
+Γöé       v_portfolio.property_address_primary := v_new;
+                                                                                          Γöé
+Γöé     end if;
+                                                                                                                                   Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé     if nullif(p_payload->>'close_price', '') is not null
+                                                                                      Γöé
+Γöé        and coalesce(v_portfolio.close_price::text, '') is distinct from (p_payload->>'close_price') then
+                                      Γöé
+Γöé       v_old := v_portfolio.close_price::text;
+                                                                                                 Γöé
+Γöé       v_new := p_payload->>'close_price';
+                                                                                                     Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       update public.client_portfolio
+                                                                                                          Γöé
+Γöé       set close_price = (p_payload->>'close_price')::numeric
+                                                                                  Γöé
+Γöé       where id = v_portfolio.id;
+                                                                                                              Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       insert into public.document_field_updates (
+                                                                                             Γöé
+Γöé         document_id, transaction_id, field_name, old_value, new_value
+                                                                         Γöé
+Γöé       ) values (
+                                                                                                                              Γöé
+Γöé         p_document_id, p_transaction_id, 'close_price', v_old, v_new
+                                                                          Γöé
+Γöé       );
+                                                                                                                                      Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       v_changed := true;
+                                                                                                                      Γöé
+Γöé       v_portfolio.close_price := (p_payload->>'close_price')::numeric;
+                                                                        Γöé
+Γöé     end if;
+                                                                                                                                   Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé     if nullif(p_payload->>'closing_date', '') is not null
+                                                                                     Γöé
+Γöé        and coalesce(v_portfolio.closing_date::text, '') is distinct from (p_payload->>'closing_date') then
+                                    Γöé
+Γöé       v_old := v_portfolio.closing_date::text;
+                                                                                                Γöé
+Γöé       v_new := p_payload->>'closing_date';
+                                                                                                    Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       update public.client_portfolio
+                                                                                                          Γöé
+Γöé       set closing_date = (p_payload->>'closing_date')::date
+                                                                                   Γöé
+Γöé       where id = v_portfolio.id;
+                                                                                                              Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       insert into public.document_field_updates (
+                                                                                             Γöé
+Γöé         document_id, transaction_id, field_name, old_value, new_value
+                                                                         Γöé
+Γöé       ) values (
+                                                                                                                              Γöé
+Γöé         p_document_id, p_transaction_id, 'closing_date', v_old, v_new
+                                                                         Γöé
+Γöé       );
+                                                                                                                                      Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé       v_changed := true;
+                                                                                                                      Γöé
+Γöé       v_portfolio.closing_date := (p_payload->>'closing_date')::date;
+                                                                         Γöé
+Γöé     end if;
+A new version of Supabase CLI is available: v2.84.2 (currently installed v2.83.0)
+We recommend updating regularly for new features and bug fixes: 
+https://supabase.com/docs/guides/cli/getting-started#updating-the-supabase-cli
+                                                                                                                                   Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé   end if;
+                                                                                                                                     Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé   if v_changed then
+                                                                                                                           Γöé
+Γöé     update public.client_portfolio
+                                                                                                            Γöé
+Γöé     set
+                                                                                                                                       Γöé
+Γöé       last_updated_by_document_id = p_document_id,
+                                                                                            Γöé
+Γöé       last_updated_at = now(),
+                                                                                                                Γöé
+Γöé       updated_at = now()
+                                                                                                                      Γöé
+Γöé     where id = v_portfolio.id;
+                                                                                                                Γöé
+Γöé   end if;
+                                                                                                                                     Γöé
+Γöé 
+                                                                                                                                              Γöé
+Γöé   return jsonb_build_object(
+                                                                                                                  Γöé
+Γöé     'success', true,
+                                                                                                                          Γöé
+Γöé     'changed', v_changed,
+                                                                                                                     Γöé
+Γöé     'portfolio_id', v_portfolio.id
+                                                                                                            Γöé
+Γöé   );
+                                                                                                                                          Γöé
+Γöé end;
+                                                                                                                                          Γöé
+Γöé $function$                                                                                                                                    Γöé
+ΓööΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÿ

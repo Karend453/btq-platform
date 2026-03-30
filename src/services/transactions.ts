@@ -11,6 +11,7 @@ import { checklistItemToEngineDocument } from "../lib/documents/adapter";
 import type { ChecklistItemShape } from "../lib/documents/adapter";
 import { getTransactionClosingReadiness } from "../lib/documents/documentEngine";
 import type { DocumentEngineDocument } from "../lib/documents/types";
+import { syncClientPortfolioFromTransaction } from "./clientPortfolio";
 
 function compactDefined<T extends Record<string, unknown>>(row: T): Partial<T> {
   return Object.fromEntries(
@@ -291,7 +292,10 @@ export async function createTransaction(input: CreateTransactionInput): Promise<
     console.error("Failed to create transaction", error);
     return null;
   }
-
+  if (data?.id) {
+    await syncClientPortfolioFromTransaction(data.id);
+  }
+  
   return data ? (data as TransactionRow) : null;
 }
 export type UpdateTransactionInput = {
@@ -380,7 +384,9 @@ export async function updateTransaction(
     return { data: null, error };
   }
 
-  return { data: data as TransactionRow, error: null };
+await syncClientPortfolioFromTransaction(id);
+
+return { data: data as TransactionRow, error: null };
 }
 
 // ─── Compliance Overview (dashboard): batched checklist + document engine ───

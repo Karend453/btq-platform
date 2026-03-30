@@ -1,15 +1,314 @@
-import React from "react";
-import { BarChart3 } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { supabase, supabaseInitError } from "../../lib/supabaseClient";
+import {
+  ClientPortfolioRow,
+  listClientPortfolio,
+  summarizeClientPortfolio,
+} from "../../services/clientPortfolio";
+
+function formatCurrency(value: number | null | undefined) {
+  const amount = Number(value || 0);
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(amount);
+}
+
+function formatDate(value: string | null | undefined) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString();
+}
+
+function currentYear() {
+  return new Date().getFullYear();
+}
 
 export function Analytics() {
+  const [rows, setRows] = useState<ClientPortfolioRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const [selectedYear, setSelectedYear] = useState<number>(currentYear());
+  const [selectedAgentId, setSelectedAgentId] = useState<string>("");
+  const [selectedType, setSelectedType] = useState<string>("");
+
+  // Hardcode for now until goal table is wired
+  const [gciGoal] = useState<number>(3000000);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function load() {
+      try {
+        setLoading(true);
+        setError(null);
+
+        const data = await listClientPortfolio({
+          year: selectedYear,
+          agentId: selectedAgentId || undefined,
+          transactionType: selectedType || undefined,
+        });
+
+        if (!isMounted) return;
+        setRows(data);
+      } catch (err) {
+        if (!isMounted) return;
+        setError(err instanceof Error ? err.message : "Failed to load analytics.");
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    }
+
+    load();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedYear, selectedAgentId, selectedType]);
+
+  const summary = useMemo(() => summarizeClientPortfolio(rows), [rows]);
+
+  const progressPercent =
+    gciGoal > 0 ? Math.min((summary.totalGci / gciGoal) * 100, 100) : 0;
+
+  const agentOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    rows.forEach((row) => {
+      if (row.agent_id && row.agent_name) {
+        map.set(row.agent_id, row.agent_name);
+      }
+    });
+    return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
+  }, [rows]);
+
+  const typeOptions = useMemo(() => {
+    return Array.from(
+      new Set(
+        rows
+          .map((row) => row.transaction_type)
+          .filter((value): value is string => !!value)
+      )
+    ).sort();
+  }, [rows]);
+
   return (
-    <div className="p-6">
-      <div className="max-w-7xl mx-auto">
-        <div className="flex items-center gap-3 mb-6">
-          <BarChart3 className="h-8 w-8 text-slate-600" />
-          <h1 className="text-3xl font-semibold text-slate-900">Analytics</h1>
+    <div className="p-6 space-y-6">
+      <div>
+        <h1 className="text-3xl font-semibold text-slate-900">Client Portfolio</h1>
+        <p className="mt-1 text-sm text-slate-500">
+          Production ledger and client portfolio for real business activity.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-4">
+        <div className="rounded-2xl border bg-white p-5 shadow-sm xl:col-span-2">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-medium text-slate-500">GCI Goal</div>
+              <div className="mt-1 text-2xl font-semibold text-slate-900">
+                {formatCurrency(gciGoal)}
+              </div>
+            </div>
+            <div className="text-right">
+              <div className="text-sm font-medium text-slate-500">Progress</div>
+              <div className="mt-1 text-2xl font-semibold text-slate-900">
+                {progressPercent.toFixed(0)}%
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4 h-4 w-full overflow-hidden rounded-full bg-slate-100">
+            <div
+              className="h-full rounded-full bg-slate-900 transition-all"
+              style={{ width: `${progressPercent}%` }}
+            />
+          </div>
+
+          <div className="mt-3 text-sm text-slate-600">
+            {formatCurrency(summary.totalGci)} of {formatCurrency(gciGoal)}
+          </div>
         </div>
-        <p className="text-slate-600">Analytics page coming soon...</p>
+
+        <div className="rounded-2xl border bg-white p-5 shadow-sm">
+          <div className="text-sm font-medium text-slate-500">Closings</div>
+          <div className="mt-2 text-3xl font-semibold text-slate-900">
+            {summary.closingsCount}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border bg-white p-5 shadow-sm">
+          <div className="text-sm font-medium text-slate-500">Avg GCI / Deal</div>
+          <div className="mt-2 text-3xl font-semibold text-slate-900">
+            {formatCurrency(summary.avgGciPerDeal)}
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border bg-white p-5 shadow-sm">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <label className="space-y-2">
+            <span className="text-sm font-medium text-slate-600">Year</span>
+            <select
+              className="w-full rounded-xl border border-slate-300 px-3 py-2"
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(Number(e.target.value))}
+            >
+              {[currentYear(), currentYear() - 1, currentYear() - 2].map((year) => (
+                <option key={year} value={year}>
+                  {year}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="space-y-2">
+            <span className="text-sm font-medium text-slate-600">Agent</span>
+            <select
+              className="w-full rounded-xl border border-slate-300 px-3 py-2"
+              value={selectedAgentId}
+              onChange={(e) => setSelectedAgentId(e.target.value)}
+            >
+              <option value="">All agents</option>
+              {agentOptions.map((agent) => (
+                <option key={agent.id} value={agent.id}>
+                  {agent.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="space-y-2">
+            <span className="text-sm font-medium text-slate-600">Transaction Type</span>
+            <select
+              className="w-full rounded-xl border border-slate-300 px-3 py-2"
+              value={selectedType}
+              onChange={(e) => setSelectedType(e.target.value)}
+            >
+              <option value="">All types</option>
+              {typeOptions.map((type) => (
+                <option key={type} value={type}>
+                  {type}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
+        <div className="border-b px-5 py-4">
+          <h2 className="text-lg font-semibold text-slate-900">Portfolio Records</h2>
+        </div>
+
+        {/* TEMP DEBUG: remove this block after verifying process-portfolio-document */}
+        <div className="border-b px-5 py-3 bg-amber-50">
+        <button
+  type="button"
+  className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-sm font-medium text-amber-900"
+  onClick={async () => {
+    if (!supabase) {
+      console.error("[TEMP DEBUG] Supabase unavailable:", supabaseInitError);
+      return;
+    }
+
+    const TEMP_DEBUG_DOCUMENT_ID =
+      "fb97d0e8-d39a-40bc-8aeb-54e68eaa607a";
+
+    const {
+      data: { session },
+      error: sessionError,
+    } = await supabase.auth.getSession();
+
+    console.log(
+      "[TEMP DEBUG] session check",
+      JSON.stringify(
+        {
+          hasSession: !!session,
+          accessTokenExists: !!session?.access_token,
+          accessTokenPreview: session?.access_token?.slice(0, 20) ?? null,
+          userId: session?.user?.id ?? null,
+          expiresAt: session?.expires_at ?? null,
+          tokenType: session?.token_type ?? null,
+          sessionError: sessionError ?? null,
+        },
+        null,
+        2
+      )
+    );
+
+    const { data, error } = await supabase.functions.invoke(
+      "process-portfolio-document",
+      {
+        body: { documentId: TEMP_DEBUG_DOCUMENT_ID },
+      },
+    );
+
+    console.log(
+      "[TEMP DEBUG] process-portfolio-document",
+      JSON.stringify(
+        {
+          data,
+          error,
+          errorMessage: error?.message ?? null,
+          errorName: error?.name ?? null,
+          errorContext: error?.context ?? null,
+          errorStatus: error?.context?.status ?? null,
+          errorResponse: error?.context?.response ?? null,
+        },
+        null,
+        2
+      )
+    );
+  }}
+>
+  TEMP: invoke process-portfolio-document
+</button>
+        </div>
+        {/* END TEMP DEBUG */}
+
+        {loading ? (
+          <div className="p-6 text-sm text-slate-500">Loading portfolio...</div>
+        ) : error ? (
+          <div className="p-6 text-sm text-red-600">{error}</div>
+        ) : rows.length === 0 ? (
+          <div className="p-6 text-sm text-slate-500">No records found for this filter set.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-left text-sm">
+              <thead className="bg-slate-50 text-slate-600">
+                <tr>
+                  <th className="px-5 py-3 font-medium">Client</th>
+                  <th className="px-5 py-3 font-medium">Address</th>
+                  <th className="px-5 py-3 font-medium">Type</th>
+                  <th className="px-5 py-3 font-medium">Agent</th>
+                  <th className="px-5 py-3 font-medium">Close Date</th>
+                  <th className="px-5 py-3 font-medium">GCI</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={row.id} className="border-t">
+                    <td className="px-5 py-4 text-slate-900">{row.client_name || "—"}</td>
+                    <td className="px-5 py-4 text-slate-700">
+                      {row.property_address_primary || "—"}
+                    </td>
+                    <td className="px-5 py-4 text-slate-700">
+                      {row.transaction_type || "—"}
+                    </td>
+                    <td className="px-5 py-4 text-slate-700">{row.agent_name || "—"}</td>
+                    <td className="px-5 py-4 text-slate-700">{formatDate(row.event_date)}</td>
+                    <td className="px-5 py-4 text-slate-900">
+                      {formatCurrency(row.revenue_amount)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );
