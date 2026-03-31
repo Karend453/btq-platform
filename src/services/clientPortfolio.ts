@@ -54,7 +54,6 @@ export async function syncClientPortfolioFromTransaction(
   // 🔒 DO NOT overwrite final
 
 if (existing?.portfolio_stage === "final") {
-  console.log("STOPPED because portfolio is final", existing);
   return;
 }
 
@@ -66,7 +65,6 @@ if (existing?.portfolio_stage === "final") {
 
   const portfolioStage = hasFinancials ? "estimated" : "seeded";
 
-  console.log("ABOUT TO WRITE TO PORTFOLIO");
   const payload = {
     transaction_id: tx.id,
 
@@ -144,6 +142,61 @@ export type ClientPortfolioFilters = {
   transactionType?: string;
 };
 
+/** Snapshot fields for transaction details overview (stage + locked financials when finalized). */
+export type ClientPortfolioForTransactionSnapshot = Pick<
+  ClientPortfolioRow,
+  "id" | "portfolio_stage" | "close_price" | "event_date" | "revenue_amount"
+>;
+
+/** Portfolio row for a single transaction (for UI: stage badge, finalize flow, final snapshot). */
+export async function getClientPortfolioForTransaction(
+  transactionId: string,
+): Promise<ClientPortfolioForTransactionSnapshot | null> {
+  if (!supabase) {
+    throw new Error(supabaseInitError ?? "Supabase is not configured.");
+  }
+
+  const { data, error } = await supabase
+    .from("client_portfolio")
+    .select("id, portfolio_stage, close_price, event_date, revenue_amount")
+    .eq("transaction_id", transactionId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message || "Failed to load client portfolio.");
+  }
+
+  return data as ClientPortfolioForTransactionSnapshot | null;
+}
+
+export async function finalizeTransactionClosing(input: {
+  transactionId: string;
+  closePrice: number;
+  closingDate: string;
+  revenueAmount: number;
+}): Promise<{ success: boolean; portfolioId?: string }> {
+  if (!supabase) {
+    throw new Error(supabaseInitError ?? "Supabase is not configured.");
+  }
+
+  const { data, error } = await supabase.rpc("finalize_transaction_closing", {
+    p_transaction_id: input.transactionId,
+    p_close_price: input.closePrice,
+    p_closing_date: input.closingDate,
+    p_revenue_amount: input.revenueAmount,
+  });
+
+  if (error) {
+    throw new Error(error.message || "Failed to finalize closing.");
+  }
+
+  const row = data as { success?: boolean; portfolio_id?: string } | null;
+  return {
+    success: !!row?.success,
+    portfolioId: row?.portfolio_id,
+  };
+}
+
 export async function listClientPortfolio(
   filters: ClientPortfolioFilters = {}
 ): Promise<ClientPortfolioRow[]> {
@@ -168,7 +221,10 @@ export async function listClientPortfolio(
   if (filters.year) {
     const start = `${filters.year}-01-01`;
     const end = `${filters.year}-12-31`;
-    query = query.gte("event_date", start).lte("event_date", end);
+    // Include open pipeline rows (null event_date) while keeping year bounds for closed rows.
+    query = query.or(
+      `event_date.is.null,and(event_date.gte.${start},event_date.lte.${end})`,
+    );
   }
 
   const { data, error } = await query;

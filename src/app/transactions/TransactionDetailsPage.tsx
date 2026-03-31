@@ -54,7 +54,6 @@ import { useAuth } from "../contexts/AuthContext";
 import {
   canUserMarkAccepted,
   canUserReviewDocument,
-  getDocumentState,
   getTransactionClosingReadiness,
 } from "../../lib/documents/documentEngine";
 import {
@@ -69,6 +68,11 @@ import {
 } from "../../services/checklistTemplates";
 import { getOfficeById } from "../../services/offices";
 import { countChecklistItemsForTransaction } from "../../services/checklistItems";
+import {
+  finalizeTransactionClosing,
+  getClientPortfolioForTransaction,
+  type ClientPortfolioForTransactionSnapshot,
+} from "../../services/clientPortfolio";
 import TransactionOverview from "./sections/TransactionOverview";
 import FormsEngineLaunchDialog from "./sections/FormsEngineLaunchDialog";
 import TransactionInbox from "./sections/TransactionInbox";
@@ -137,17 +141,21 @@ function mergeInboxIntoChecklistItems(
       (item.documentId
         ? inboxDocuments.find((d) => d.id === item.documentId)
         : undefined);
+    const hasDocId = item.documentId != null && String(item.documentId).trim() !== "";
+    const attachedDocument = attached
+      ? {
+          id: attached.id,
+          filename: attached.filename,
+          storage_path: attached.storage_path,
+          version: 1,
+          updatedAt: attached.receivedAt,
+        }
+      : hasDocId
+        ? item.attachedDocument
+        : undefined;
     return {
       ...item,
-      attachedDocument: attached
-        ? {
-            id: attached.id,
-            filename: attached.filename,
-            storage_path: attached.storage_path,
-            version: 1,
-            updatedAt: attached.receivedAt,
-          }
-        : undefined,
+      attachedDocument,
     };
   });
 }
@@ -220,6 +228,16 @@ export default function TransactionDetailsPage() {
 
   const [zipFormsLaunchOpen, setZipFormsLaunchOpen] = useState(false);
 
+  /** `undefined` while loading; `null` if no client_portfolio row yet */
+  const [portfolioSnapshot, setPortfolioSnapshot] = useState<
+    ClientPortfolioForTransactionSnapshot | null | undefined
+  >(undefined);
+  const [finalizeClosingOpen, setFinalizeClosingOpen] = useState(false);
+  const [finalizeClosePrice, setFinalizeClosePrice] = useState("");
+  const [finalizeClosingDate, setFinalizeClosingDate] = useState("");
+  const [finalizeRevenue, setFinalizeRevenue] = useState("");
+  const [finalizeSubmitting, setFinalizeSubmitting] = useState(false);
+
   // Review modal state
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState<ChecklistItem | null>(null);
@@ -278,84 +296,6 @@ export default function TransactionDetailsPage() {
     };
   }, [selectedItem, id, transaction, sessionUserId, currentUserRole, authUser?.id]);
 
-  /** Runtime audit: filter console by `[BTQ review audit]` */
-  useEffect(() => {
-    console.log("[BTQ review audit] session", {
-      authUserId: authUser?.id ?? null,
-      sessionUserId,
-      currentUserId,
-      currentUserRole,
-    });
-    const row = transaction as (TransactionRow & { office?: string }) | null;
-    if (!transaction || !row) return;
-    const engineTxn = transactionRowToEngineTransaction(row);
-    console.log("[BTQ review audit] transaction", {
-      transactionId: row.id,
-      assigned_admin_user_id: row.assigned_admin_user_id ?? null,
-      engineTxn_assignedAdminUserId: engineTxn.assignedAdminUserId,
-    });
-    if (selectedItem && id) {
-      const engineDoc = checklistItemToEngineDocument(selectedItem, id, row.office ?? "", {
-        assignedAdminUserId: getAssignedAdminUserId(row as TransactionRow),
-      });
-      const engineUser = buildEngineUser({
-        id: sessionUserId,
-        roles: [uiTransactionRoleToEngineRole(currentUserRole)],
-        officeIds: [row.office ?? ""],
-      });
-      const canReview = canUserReviewDocument(engineUser, engineDoc, engineTxn);
-      const canMarkAccepted = canUserMarkAccepted(engineUser, engineDoc, engineTxn);
-      console.log("[BTQ review audit] reviewModal", {
-        engineUser,
-        engineDoc,
-        engineTxn,
-        canReview,
-        canMarkAccepted,
-      });
-    }
-    if (checklistItems.length > 0 && id) {
-      const item = checklistItems[0];
-      const engineDoc0 = checklistItemToEngineDocument(item, id, row.office ?? "", {
-        assignedAdminUserId: getAssignedAdminUserId(row as TransactionRow),
-      });
-      const engineUser0 = buildEngineUser({
-        id: sessionUserId,
-        roles: [uiTransactionRoleToEngineRole(currentUserRole)],
-        officeIds: [row.office ?? ""],
-      });
-      const engineTxnChecklist = {
-        id,
-        officeId: row.office ?? "",
-        agentUserId: row.agent_user_id ?? null,
-        assignedAdminUserId: getAssignedAdminUserId(row as TransactionRow),
-        closingDate: row.closing_date ?? null,
-      };
-      const docState = getDocumentState(engineDoc0, engineUser0, engineTxnChecklist);
-      const showReviewActionsLegacy = docState.canReview && docState.currentActionOwner === "ADMIN";
-      const showReviewActionsFixed =
-        docState.canReview &&
-        !!item.attachedDocument &&
-        (docState.currentActionOwner === "ADMIN" ||
-          (!!engineTxnChecklist.assignedAdminUserId &&
-            !!sessionUserId &&
-            engineTxnChecklist.assignedAdminUserId === sessionUserId));
-      console.log("[BTQ review audit] checklistRow0", {
-        docState,
-        showReviewActions_legacy: showReviewActionsLegacy,
-        showReviewActions_fixed: showReviewActionsFixed,
-      });
-    }
-  }, [
-    authUser?.id,
-    sessionUserId,
-    currentUserId,
-    currentUserRole,
-    transaction,
-    selectedItem,
-    id,
-    checklistItems,
-  ]);
-
   async function addActivityEntry(
     entry: Omit<ActivityLogEntry, "id" | "timestamp"> & {
       documentId?: string | null;
@@ -381,16 +321,7 @@ export default function TransactionDetailsPage() {
       checklistItemId: entry.checklistItemId ?? null,
       actorUserId: sessionUserId || null,
     };
-    console.log("[BTQ activity debug] addActivityEntry start", {
-      activity_type: entry.type,
-      fromUpload: entry.type === "document_uploaded",
-    });
-    console.log("[BTQ activity debug] addActivityEntry payload → insertActivityEntry", insertPayload);
     const inserted = await insertActivityEntry(insertPayload);
-    console.log(
-      "[BTQ activity debug] addActivityEntry insertActivityEntry returned",
-      inserted ? { id: inserted.id, activity_type: inserted.type } : null
-    );
     if (inserted) {
       setActivityLog((prev) => [inserted as ActivityLogEntry, ...prev]);
     } else {
@@ -491,6 +422,14 @@ export default function TransactionDetailsPage() {
   }
 
   async function handleOpenReviewModal(item: ChecklistItem) {
+    if (item.isComplianceDocument === false) {
+      toast.info("Reference documents are not reviewed for compliance.");
+      if (item.attachedDocument?.storage_path) {
+        const url = await getSignedUrl(item.attachedDocument.storage_path);
+        if (url) window.open(url, "_blank");
+      }
+      return;
+    }
     setSelectedItem(item);
     setReviewRequirement(item.requirement);
     setReviewStatus(item.reviewStatus);
@@ -735,6 +674,55 @@ export default function TransactionDetailsPage() {
     window.location.href = `/transactions/${id}/edit`;
   }
 
+  function openFinalizeClosingModal() {
+    if (!transaction) return;
+    const sp = transaction.saleprice;
+    const closeStr =
+      sp !== null && sp !== undefined && sp !== ""
+        ? String(typeof sp === "number" ? sp : String(sp).replace(/[^0-9.-]/g, ""))
+        : "";
+    const closing = transaction.closing_date
+      ? String(transaction.closing_date).slice(0, 10)
+      : "";
+    const gci = transaction.gci;
+    const revStr =
+      gci !== null && gci !== undefined && !Number.isNaN(Number(gci))
+        ? String(gci)
+        : "";
+    setFinalizeClosePrice(closeStr);
+    setFinalizeClosingDate(closing);
+    setFinalizeRevenue(revStr);
+    setFinalizeClosingOpen(true);
+  }
+
+  async function handleSubmitFinalizeClosing() {
+    if (!id) return;
+    const price = Number(String(finalizeClosePrice).replace(/[^0-9.-]/g, ""));
+    const revenue = Number(String(finalizeRevenue).replace(/[^0-9.-]/g, ""));
+    const date = finalizeClosingDate.trim();
+    if (!date || Number.isNaN(price) || Number.isNaN(revenue)) {
+      toast.error("Enter valid close price, closing date, and revenue.");
+      return;
+    }
+    setFinalizeSubmitting(true);
+    try {
+      await finalizeTransactionClosing({
+        transactionId: id,
+        closePrice: price,
+        closingDate: date,
+        revenueAmount: revenue,
+      });
+      toast.success("Closing finalized — portfolio values are locked.");
+      setFinalizeClosingOpen(false);
+      const row = await getClientPortfolioForTransaction(id);
+      setPortfolioSnapshot(row);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not finalize closing");
+    } finally {
+      setFinalizeSubmitting(false);
+    }
+  }
+
   async function handleCopyIntakeEmail(text?: string | null) {
     if (!text) return;
     try {
@@ -768,6 +756,24 @@ export default function TransactionDetailsPage() {
       cancelled = true;
     };
   }, [id, reloadTransaction]);
+
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    async function loadPortfolioSnapshot() {
+      setPortfolioSnapshot(undefined);
+      try {
+        const row = await getClientPortfolioForTransaction(id);
+        if (!cancelled) setPortfolioSnapshot(row);
+      } catch {
+        if (!cancelled) setPortfolioSnapshot(null);
+      }
+    }
+    void loadPortfolioSnapshot();
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
 
   useEffect(() => {
     if (!id) return;
@@ -901,6 +907,7 @@ export default function TransactionDetailsPage() {
           ...item,
           comments: commentsByItem.get(String(item.id)) ?? [],
         })) as ChecklistItem[];
+        
         setChecklistItems(
           mergeInboxIntoChecklistItems(withComments, inboxDocumentsRef.current)
         );
@@ -1161,7 +1168,70 @@ export default function TransactionDetailsPage() {
           }}
           onOpenZipFormsLaunch={() => setZipFormsLaunchOpen(true)}
           onEdit={handleEdit}
+          portfolioSnapshot={portfolioSnapshot}
+          onFinalizeClosingClick={openFinalizeClosingModal}
+          finalizeClosingDisabled={isReadOnly || finalizeSubmitting}
         />
+
+        <Dialog open={finalizeClosingOpen} onOpenChange={setFinalizeClosingOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Finalize closing</DialogTitle>
+              <DialogDescription>
+                These values are saved to the portfolio and locked. Ongoing transaction sync will not
+                overwrite finalized numbers.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 py-1">
+              <div className="space-y-1.5">
+                <Label htmlFor="finalize-close-price">Close price</Label>
+                <Input
+                  id="finalize-close-price"
+                  inputMode="decimal"
+                  value={finalizeClosePrice}
+                  onChange={(e) => setFinalizeClosePrice(e.target.value)}
+                  placeholder="0"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="finalize-closing-date">Closing date</Label>
+                <Input
+                  id="finalize-closing-date"
+                  type="date"
+                  value={finalizeClosingDate}
+                  onChange={(e) => setFinalizeClosingDate(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="finalize-revenue">Revenue amount</Label>
+                <Input
+                  id="finalize-revenue"
+                  inputMode="decimal"
+                  value={finalizeRevenue}
+                  onChange={(e) => setFinalizeRevenue(e.target.value)}
+                  placeholder="0"
+                />
+              </div>
+            </div>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setFinalizeClosingOpen(false)}
+                disabled={finalizeSubmitting}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={() => void handleSubmitFinalizeClosing()}
+                disabled={finalizeSubmitting}
+              >
+                {finalizeSubmitting ? "Saving…" : "Confirm"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <FormsEngineLaunchDialog
           open={zipFormsLaunchOpen}

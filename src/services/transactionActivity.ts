@@ -66,11 +66,6 @@ export async function insertActivityEntry(
   input: InsertActivityInput
 ): Promise<ActivityLogEntryShape | null> {
   const sessionRes = await supabase.auth.getSession();
-  console.log("[BTQ activity debug] getSession()", {
-    error: sessionRes.error?.message ?? null,
-    hasSession: !!sessionRes.data?.session,
-    userId: sessionRes.data?.session?.user?.id ?? null,
-  });
   const session = sessionRes.data?.session;
   const user = session?.user;
 
@@ -83,7 +78,6 @@ export async function insertActivityEntry(
 
   if (!session) {
     console.warn("[insertActivityEntry] no session — skipping insert (transaction_activity requires authenticated)");
-    console.log("[BTQ activity debug] insert not attempted (no session)");
     return null;
   }
 
@@ -98,7 +92,6 @@ export async function insertActivityEntry(
   };
   console.log("[insertActivityEntry] payload:", JSON.stringify(payload, null, 2));
 
-  console.log("[BTQ activity debug] insertActivityEntry attempting insert");
   const { data, error } = await supabase
     .from("transaction_activity")
     .insert(payload)
@@ -106,12 +99,6 @@ export async function insertActivityEntry(
     .single();
 
   if (error) {
-    console.error("[BTQ activity debug] insert error (exact)", {
-      message: error.message,
-      code: error.code,
-      details: error.details,
-      hint: error.hint,
-    });
     console.error("[insertActivityEntry] Supabase error:", {
       message: error.message,
       code: error.code,
@@ -122,7 +109,6 @@ export async function insertActivityEntry(
     return null;
   }
 
-  console.log("[BTQ activity debug] insert succeeded, row:", data);
   console.log("[insertActivityEntry] success, data:", data);
   return rowToActivityEntry(data as ActivityRow);
 }
@@ -139,22 +125,10 @@ export async function fetchActivityByTransactionId(
     .eq("transaction_id", transactionId)
     .order("created_at", { ascending: false });
 
-  const rowCount = (data ?? []).length;
   if (error) {
-    console.error("[BTQ activity debug] fetchActivityByTransactionId error", {
-      transactionId,
-      message: error.message,
-      code: error.code,
-      details: error.details,
-    });
     console.error("Failed to fetch transaction activity:", error);
     return [];
   }
-
-  console.log("[BTQ activity debug] fetchActivityByTransactionId", {
-    transactionId,
-    rowCount,
-  });
 
   return (data ?? []).map((row) => rowToActivityEntry(row as ActivityRow));
 }

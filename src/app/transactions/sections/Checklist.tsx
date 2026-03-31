@@ -131,6 +131,34 @@ function getReviewStatusBadge(status: DocumentStatus, waived?: boolean) {
   }
 }
 
+function isReferenceOnlyAttached(item: ChecklistItem): boolean {
+  return item.isComplianceDocument === false && !!item.attachedDocument;
+}
+
+function getChecklistRowIcon(item: ChecklistItem, docStatus: DocumentStatus) {
+  if (item.reviewStatus === "waived") {
+    return <CheckCircle2 className="h-5 w-5 text-slate-400" />;
+  }
+  if (isReferenceOnlyAttached(item)) {
+    return <Paperclip className="h-5 w-5 text-slate-500" />;
+  }
+  return getChecklistIcon(docStatus, false);
+}
+
+function getChecklistRowReviewBadge(item: ChecklistItem, docStatus: DocumentStatus) {
+  if (item.reviewStatus === "waived") {
+    return getReviewStatusBadge(docStatus, true);
+  }
+  if (isReferenceOnlyAttached(item)) {
+    return (
+      <Badge variant="outline" className="bg-slate-50 text-slate-700 border-slate-200 text-xs">
+        Attached
+      </Badge>
+    );
+  }
+  return getReviewStatusBadge(docStatus, false);
+}
+
 function hasUnreadComments(
   item: ChecklistItem,
   currentUserRole: "Admin" | "Agent" | "Broker"
@@ -267,72 +295,6 @@ export default function Checklist({
     };
   }, [checklistTemplateId]);
 
-  const AUDIT_TX = "133d5fd0-6298-4e57-822e-345ad812a0f1";
-  useEffect(() => {
-    if (!transactionContext || transactionContext.id !== AUDIT_TX || checklistItems.length === 0) return;
-    const target =
-      checklistItems.find(
-        (i) =>
-          (i.documentId || i.attachedDocument) &&
-          (i.reviewStatus === "pending" || i.reviewStatus === "rejected")
-      ) ?? checklistItems[0];
-    const eu = buildEngineUser({
-      id: currentUserId,
-      roles: [uiTransactionRoleToEngineRole(currentUserRole)],
-      officeIds: transactionContext ? [transactionContext.officeId ?? ""] : [],
-    });
-    const et = transactionContext
-      ? {
-          id: transactionContext.id,
-          officeId: transactionContext.officeId,
-          agentUserId: transactionContext.agentUserId ?? null,
-          assignedAdminUserId: transactionContext.assignedAdminUserId ?? null,
-          closingDate: transactionContext.closingDate ?? null,
-        }
-      : null;
-    const engineDoc = checklistItemToEngineDocument(
-      target,
-      transactionContext.id,
-      transactionContext.officeId ?? "",
-      { assignedAdminUserId: transactionContext.assignedAdminUserId ?? null }
-    );
-    const docState = getDocumentState(engineDoc, eu, et);
-    const showReviewActionsAudit =
-      docState.canReview &&
-      !!target.attachedDocument &&
-      (docState.currentActionOwner === "ADMIN" ||
-        (!!transactionContext.assignedAdminUserId &&
-          !!currentUserId &&
-          transactionContext.assignedAdminUserId === currentUserId));
-    console.log("[BTQ checklist review audit]", {
-      checklistItemId: target.id,
-      name: target.name,
-      rawDbBacked: {
-        status: target.status,
-        reviewStatus: target.reviewStatus,
-        reviewnote: target.reviewNote,
-        documentId: target.documentId,
-      },
-      attachedDocument: target.attachedDocument,
-      docState,
-      canReview: docState.canReview,
-      currentActionOwner: docState.currentActionOwner,
-      showReviewActions: showReviewActionsAudit,
-      assignedAdminUserId: transactionContext.assignedAdminUserId,
-      currentUserId,
-      currentUserRole,
-    });
-  }, [
-    transactionContext?.id,
-    transactionContext?.officeId,
-    transactionContext?.assignedAdminUserId,
-    transactionContext?.agentUserId,
-    transactionContext?.closingDate,
-    checklistItems,
-    currentUserId,
-    currentUserRole,
-  ]);
-
   const activeChecklistItems = useMemo(
     () => checklistItems.filter((i) => !i.archivedAt),
     [checklistItems]
@@ -402,12 +364,11 @@ export default function Checklist({
     let newReviewStatus = item.reviewStatus;
     let statusAutoReset = false;
 
-    const isReferenceOnly = item.isComplianceDocument === false;
     if (!isReplacement) {
-      newReviewStatus = isReferenceOnly ? "complete" : "pending";
+      newReviewStatus = item.reviewStatus === "waived" ? "waived" : "pending";
     } else if (previousStatus === "complete" || previousStatus === "rejected") {
-      newReviewStatus = isReferenceOnly ? "complete" : "pending";
-      statusAutoReset = !isReferenceOnly;
+      newReviewStatus = "pending";
+      statusAutoReset = true;
     }
 
     onChecklistItemsChange(
@@ -415,6 +376,7 @@ export default function Checklist({
         i.id === item.id
           ? {
               ...i,
+              documentId: inboxDoc.id,
               attachedDocument: {
                 id: inboxDoc.id,
                 filename: inboxDoc.filename,
@@ -470,7 +432,7 @@ export default function Checklist({
           checklistItemId: item.id,
         });
       }
-      if (statusAutoReset) {
+      if (statusAutoReset && item.isComplianceDocument !== false) {
         addActivityEntry({
           actor: "System",
           category: "docs",
@@ -570,7 +532,7 @@ export default function Checklist({
       className="flex items-start gap-3 p-4 bg-slate-50 rounded-lg border border-slate-200 hover:border-slate-300 transition-colors"
     >
     <div className="shrink-0 pt-0.5">
-      {getChecklistIcon(docState.status, item.reviewStatus === "waived")}
+      {getChecklistRowIcon(item, docState.status)}
     </div>
     <div className="min-w-0 flex-1 flex flex-col gap-1">
       <div className="flex min-w-0 items-center gap-2">
@@ -667,7 +629,11 @@ export default function Checklist({
               )}
             </Button>
           )}
-          {!isArchivedRow && !isReadOnly && onOpenReviewModal && item.attachedDocument && (
+          {!isArchivedRow &&
+            !isReadOnly &&
+            onOpenReviewModal &&
+            item.attachedDocument &&
+            item.isComplianceDocument !== false && (
             <Button
               type="button"
               variant="ghost"
@@ -718,7 +684,9 @@ export default function Checklist({
       </div>
       {item.isComplianceDocument === false && (
         <p className="text-xs text-slate-500 mt-1 max-w-xl">
-          Reference documents are not reviewed for compliance
+          {item.attachedDocument
+            ? "Attached for reference only — compliance review does not apply."
+            : "Reference documents are not reviewed for compliance."}
         </p>
       )}
       {item.version > 1 && !item.attachedDocument && (

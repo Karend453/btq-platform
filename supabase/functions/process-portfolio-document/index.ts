@@ -16,7 +16,7 @@ type TransactionDocumentRow = {
   portfolio_review_status: string;
 };
 
-const EXTRACTOR_VERSION = "v1-filename-closing";
+const EXTRACTOR_VERSION = "v2-filename-closing-final";
 
 /** Closing / HUD / settlement — filename keyword gate for the v1 extractor. */
 const CLOSING_FAMILY = /hud|closing|settlement|cd|alta/i;
@@ -130,7 +130,36 @@ try {
     const extractedPayload = extraction.payload;
     const updateType = "final" as const;
 
-    console.log("[process-portfolio-document] extracted (filename v1)", {
+    if (!isFinalRpcPayloadComplete(extractedPayload)) {
+      const reason = finalPayloadIncompleteReason(extractedPayload);
+      console.log(
+        "[process-portfolio-document] finalization skipped (incomplete required fields)",
+        {
+          documentId: doc.id,
+          transactionId: doc.transaction_id,
+          reason,
+          extractedKeys: Object.keys(extractedPayload),
+        },
+      );
+
+      await insertProcessingLog(supabase, {
+        document_id: doc.id,
+        transaction_id: doc.transaction_id,
+        status: "success",
+        extractor_version: EXTRACTOR_VERSION,
+        extracted_data: extractedPayload as Record<string, unknown>,
+      });
+
+      return jsonResponse({
+        success: true,
+        skipped: true,
+        reason,
+        documentId: doc.id,
+        transactionId: doc.transaction_id,
+      });
+    }
+
+    console.log("[process-portfolio-document] extracted (filename v2)", {
       updateType,
       fieldKeys: Object.keys(extractedPayload),
     });
@@ -269,21 +298,28 @@ try {
   }
 });
 
+/** Keys sent to apply_document_to_portfolio for p_update_type = 'final'. */
+type FinalFilenamePayload = {
+  property_address_primary: string;
+  close_price: string;
+  event_date: string;
+  revenue_amount: string;
+  /** Same ISO date as event_date; kept for rollout compatibility with older clients. */
+  closing_date: string;
+};
+
 /**
- * v1: derive `final` portfolio fields from the upload file name only.
- * Expected pattern before extension: ..._<price>_<yyyy-mm-dd>
- * where <price> is at least 5 digits and the date is ISO.
+ * v2: derive `final` portfolio fields from the upload file name only.
+ * Expected pattern before extension:
+ *   ..._<close_price>_<yyyy-mm-dd>_<revenue_amount>
+ * where close_price is at least 5 digits, revenue_amount at least 4 digits, and the date is ISO.
  */
 function extractClosingFinalFromFileName(
   fileName: string | null,
 ):
   | {
       ok: true;
-      payload: {
-        property_address_primary: string;
-        close_price: string;
-        closing_date: string;
-      };
+      payload: FinalFilenamePayload;
     }
   | { ok: false; reason: string } {
   const name = fileName?.trim() ?? "";
@@ -305,24 +341,27 @@ function extractClosingFinalFromFileName(
   }
 
   const base = name.replace(/\.[^./\\]+$/u, "");
-  const m = base.match(/^(.+)_(\d{5,})_(\d{4}-\d{2}-\d{2})$/u);
+  const m = base.match(
+    /^(.+)_(\d{5,})_(\d{4}-\d{2}-\d{2})_(\d{4,})$/u,
+  );
   if (!m) {
     return {
       ok: false,
       reason:
-        "Closing/settlement document: filename must end with _<price>_<yyyy-mm-dd> before the extension (example: 123_Main_St_520000_2026-04-15.pdf).",
+        "Closing/settlement document: filename must end with _<close_price>_<yyyy-mm-dd>_<revenue_amount> before the extension (example: closing_123_Main_St_520000_2026-04-15_12500.pdf).",
     };
   }
 
   const property_address_primary = m[1].replace(/_/g, " ").trim();
   const close_price = m[2];
-  const closing_date = m[3];
+  const isoDate = m[3];
+  const revenue_amount = m[4];
 
   if (!property_address_primary) {
     return {
       ok: false,
       reason:
-        "Closing/settlement document: address segment missing before price and date.",
+        "Closing/settlement document: address segment missing before price, date, and revenue.",
     };
   }
 
@@ -331,9 +370,26 @@ function extractClosingFinalFromFileName(
     payload: {
       property_address_primary,
       close_price,
-      closing_date,
+      event_date: isoDate,
+      closing_date: isoDate,
+      revenue_amount,
     },
   };
+}
+
+function isFinalRpcPayloadComplete(p: FinalFilenamePayload): boolean {
+  const price = p.close_price?.trim() ?? "";
+  const eventDate = p.event_date?.trim() ?? "";
+  const rev = p.revenue_amount?.trim() ?? "";
+  return price.length > 0 && eventDate.length > 0 && rev.length > 0;
+}
+
+function finalPayloadIncompleteReason(p: FinalFilenamePayload): string {
+  const missing: string[] = [];
+  if (!(p.close_price?.trim() ?? "")) missing.push("close_price");
+  if (!(p.event_date?.trim() ?? "")) missing.push("event_date");
+  if (!(p.revenue_amount?.trim() ?? "")) missing.push("revenue_amount");
+  return `Finalization skipped: missing required extracted field(s): ${missing.join(", ")}.`;
 }
 
 async function insertProcessingLog(

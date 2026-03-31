@@ -71,10 +71,6 @@ export async function uploadDocument(
   transactionId: string,
   file: File
 ): Promise<InboxDocumentShape | null> {
-  // [DEBUG] Temporary logging to trace 400 error
-  console.log("[uploadDocument] transactionId:", transactionId);
-  console.log("[uploadDocument] file.name:", file.name);
-
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
   const storagePath = `${transactionId}/${crypto.randomUUID()}-${safeName}`;
 
@@ -82,13 +78,11 @@ export async function uploadDocument(
     .from(BUCKET)
     .upload(storagePath, file, { upsert: false });
 
-  // [DEBUG] Storage upload result/error
   if (uploadError) {
     console.error("[uploadDocument] Storage upload failed:", uploadError);
     console.error("[uploadDocument] Storage error details:", JSON.stringify(uploadError, null, 2));
     return null;
   }
-  console.log("[uploadDocument] Storage upload success:", uploadData);
 
   const { data: inserted, error: insertError } = await supabase
     .from("transaction_documents")
@@ -102,13 +96,11 @@ export async function uploadDocument(
     .select("*")
     .single();
 
-  // [DEBUG] DB insert result/error
   if (insertError) {
     console.error("[uploadDocument] Insert transaction_documents failed:", insertError);
     console.error("[uploadDocument] Insert error details:", JSON.stringify(insertError, null, 2));
     return null;
   }
-  console.log("[uploadDocument] DB insert success:", inserted);
 
   return rowToInboxDocument(inserted as TransactionDocumentRow);
 }
@@ -196,14 +188,27 @@ export async function attachDocumentToChecklistItem(
   const patch: Record<string, unknown> = { document_id: documentId };
 
   if (!isCompliance) {
-    // Reference documents: file only, never submit to compliance review.
-    patch.reviewstatus = "complete";
-    patch.status = "complete";
+    // Reference / non-compliance: link file only — never mark compliance workflow "complete" on attach.
     patch.reviewnote = null;
+    if (hadPreviousDocument) {
+      const r = String(current?.reviewstatus ?? "pending").toLowerCase();
+      if (r === "rejected" || r === "complete") {
+        patch.reviewstatus = "pending";
+        patch.status = "pending";
+      }
+    }
   } else if (hadPreviousDocument) {
     // Replacement after admin decision: move back to pending review (matches Checklist / Inbox UI).
     const r = String(current?.reviewstatus ?? "pending").toLowerCase();
     if (r === "rejected" || r === "complete") {
+      patch.reviewstatus = "pending";
+      patch.status = "pending";
+      patch.reviewnote = null;
+    }
+  } else {
+    // Compliance first attach: queue for review (do not infer "complete" from attachment alone).
+    const r = String(current?.reviewstatus ?? "pending").toLowerCase();
+    if (r !== "waived") {
       patch.reviewstatus = "pending";
       patch.status = "pending";
       patch.reviewnote = null;

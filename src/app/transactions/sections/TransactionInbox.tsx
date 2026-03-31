@@ -231,9 +231,6 @@ export default function TransactionInbox({
     const previousStatus = attachTargetItem.reviewStatus;
     const previousDocId = attachTargetItem.attachedDocument?.id;
 
-    // [DEBUG] Attach flow
-    console.log("[handleAttachDocument] document id:", inboxDoc.id, "selected checklist item id:", attachTargetItem.id);
-
     // Persist to DB first
     const attached = await attachDocumentToChecklistItem(inboxDoc.id, attachTargetItem.id);
     if (!attached) {
@@ -247,12 +244,11 @@ export default function TransactionInbox({
     let newReviewStatus = attachTargetItem.reviewStatus;
     let statusAutoReset = false;
 
-    const isReferenceOnly = attachTargetItem.isComplianceDocument === false;
     if (!isReplacement) {
-      newReviewStatus = isReferenceOnly ? "complete" : "pending";
+      newReviewStatus = attachTargetItem.reviewStatus === "waived" ? "waived" : "pending";
     } else if (previousStatus === "complete" || previousStatus === "rejected") {
-      newReviewStatus = isReferenceOnly ? "complete" : "pending";
-      statusAutoReset = !isReferenceOnly;
+      newReviewStatus = "pending";
+      statusAutoReset = true;
     }
 
     onChecklistItemsChange(
@@ -260,6 +256,7 @@ export default function TransactionInbox({
         i.id === attachTargetItem.id
           ? {
               ...i,
+              documentId: inboxDoc.id,
               attachedDocument: {
                 id: inboxDoc.id,
                 filename: inboxDoc.filename,
@@ -319,7 +316,7 @@ export default function TransactionInbox({
           checklistItemId: attachTargetItem.id,
         });
       }
-      if (statusAutoReset) {
+      if (statusAutoReset && attachTargetItem.isComplianceDocument !== false) {
         addActivityEntry({
           actor: "System",
           category: "docs",
@@ -348,9 +345,6 @@ export default function TransactionInbox({
   const handleUploadFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
-    // [DEBUG] Temporary logging to trace 400 error
-    console.log("[handleUploadFile] transactionId:", transactionId);
-    console.log("[handleUploadFile] file:", file?.name ?? "(no file)");
     if (!file || !transactionId) return;
 
     setIsUploading(true);

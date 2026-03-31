@@ -3,7 +3,12 @@
  * Use this to integrate the engine with ChecklistItem, TransactionRow, etc.
  */
 
-import type { DocumentEngineDocument, DocumentEngineTransaction, DocumentEngineUser } from "./types";
+import type {
+  DocumentEngineDocument,
+  DocumentEngineTransaction,
+  DocumentEngineUser,
+  DocumentStatus,
+} from "./types";
 import { toCanonicalStatus } from "./documentEngine";
 
 /** ChecklistItem shape from TransactionInbox / Checklist */
@@ -75,11 +80,19 @@ export function checklistItemToEngineDocument(
 ): DocumentEngineDocument {
   const waived = item.reviewStatus === "waived";
   const hasAttachment = checklistHasAttachment(item);
-  // No attachment (and not waived) => NOT_SUBMITTED; else map workflow status
-  const status =
-    !hasAttachment && !waived
-      ? ("NOT_SUBMITTED" as const)
-      : toCanonicalStatus(item.reviewStatus);
+  const isCompliance = item.isComplianceDocument !== false;
+
+  let status: DocumentStatus;
+  if (waived) {
+    status = toCanonicalStatus(item.reviewStatus);
+  } else if (!hasAttachment) {
+    status = "NOT_SUBMITTED";
+  } else if (!isCompliance) {
+    // Reference / supplemental: file linked only — no compliance queue (not SUBMITTED / not ACCEPTED from attach).
+    status = "NOT_SUBMITTED";
+  } else {
+    status = toCanonicalStatus(item.reviewStatus);
+  }
 
   return {
     id: item.id,
@@ -184,10 +197,18 @@ export function checklistItemForControlsToEngineDocument(
 ): DocumentEngineDocument {
   const waived = item.reviewStatus === "waived";
   const hasAttachment = checklistHasAttachment(item);
-  const status =
-    !hasAttachment && !waived
-      ? ("NOT_SUBMITTED" as const)
-      : toCanonicalStatus(item.reviewStatus);
+  const isCompliance = item.isComplianceDocument !== false;
+
+  let status: DocumentStatus;
+  if (waived) {
+    status = toCanonicalStatus(item.reviewStatus);
+  } else if (!hasAttachment) {
+    status = "NOT_SUBMITTED";
+  } else if (!isCompliance) {
+    status = "NOT_SUBMITTED";
+  } else {
+    status = toCanonicalStatus(item.reviewStatus);
+  }
 
   return {
     id: item.id,
