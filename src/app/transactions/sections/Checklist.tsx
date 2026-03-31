@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import {
   FileText,
   Paperclip,
@@ -12,6 +12,8 @@ import {
   Pencil,
   Archive,
   RotateCcw,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
@@ -49,6 +51,37 @@ import {
 } from "../../../lib/documents/adapter";
 import { uiTransactionRoleToEngineRole } from "../../../services/auth";
 import type { DocumentStatus } from "../../../lib/documents/types";
+
+/** `btq:ui:checklist-collapse:{transactionId}:{sectionId}` — sectionId is template section id or `__other__` / `__archived__`. */
+const CHECKLIST_COLLAPSE_STORAGE_PREFIX = "btq:ui:checklist-collapse";
+
+function checklistCollapseStorageKey(transactionId: string, sectionId: string): string {
+  return `${CHECKLIST_COLLAPSE_STORAGE_PREFIX}:${transactionId}:${sectionId}`;
+}
+
+function readChecklistSectionCollapsedFromStorage(transactionId: string, sectionId: string): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const raw = localStorage.getItem(checklistCollapseStorageKey(transactionId, sectionId));
+    if (raw === null) return false;
+    return raw === "1" || raw === "true";
+  } catch {
+    return false;
+  }
+}
+
+function writeChecklistSectionCollapsedToStorage(
+  transactionId: string,
+  sectionId: string,
+  collapsed: boolean
+): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(checklistCollapseStorageKey(transactionId, sectionId), collapsed ? "1" : "0");
+  } catch {
+    // ignore quota / private mode
+  }
+}
 
 function formatRelativeTime(date: Date) {
   const now = new Date();
@@ -262,6 +295,8 @@ export default function Checklist({
   const [addName, setAddName] = useState("");
   const [addRequired, setAddRequired] = useState(true);
   const [addSaving, setAddSaving] = useState(false);
+  /** UI-only: which section ids are collapsed (default expanded). */
+  const [collapsedSectionIds, setCollapsedSectionIds] = useState<Record<string, boolean>>({});
 
   const engineUser = buildEngineUser({
     id: currentUserId,
@@ -294,6 +329,21 @@ export default function Checklist({
       cancelled = true;
     };
   }, [checklistTemplateId]);
+
+  useLayoutEffect(() => {
+    const txId = transactionContext?.id;
+    if (!txId) {
+      setCollapsedSectionIds({});
+      return;
+    }
+    const next: Record<string, boolean> = {};
+    for (const s of templateSections) {
+      next[s.id] = readChecklistSectionCollapsedFromStorage(txId, s.id);
+    }
+    next["__other__"] = readChecklistSectionCollapsedFromStorage(txId, "__other__");
+    next["__archived__"] = readChecklistSectionCollapsedFromStorage(txId, "__archived__");
+    setCollapsedSectionIds(next);
+  }, [templateSections, transactionContext?.id]);
 
   const activeChecklistItems = useMemo(
     () => checklistItems.filter((i) => !i.archivedAt),
@@ -516,6 +566,18 @@ export default function Checklist({
     }
     return { itemsByTemplateSectionId: bySection, orphanChecklistItems: orphans };
   }, [activeChecklistItems, templateSections]);
+
+  const isSectionCollapsed = (id: string) => collapsedSectionIds[id] === true;
+  function toggleSectionCollapse(id: string) {
+    setCollapsedSectionIds((prev) => {
+      const nextCollapsed = prev[id] !== true;
+      const txId = transactionContext?.id;
+      if (txId) {
+        writeChecklistSectionCollapsedToStorage(txId, id, nextCollapsed);
+      }
+      return { ...prev, [id]: nextCollapsed };
+    });
+  }
 
   function renderChecklistItemRow(item: ChecklistItem, rowVariant: "active" | "archived" = "active") {
     const isArchivedRow = rowVariant === "archived";
@@ -867,6 +929,7 @@ export default function Checklist({
         <div className="space-y-3">
           {templateSections.map((section, sectionIndex) => {
             const sectionItems = itemsByTemplateSectionId.get(section.id) ?? [];
+            const collapsed = isSectionCollapsed(section.id);
             return (
               <React.Fragment key={section.id}>
                 <div
@@ -874,9 +937,19 @@ export default function Checklist({
                     sectionIndex === 0 ? "pt-0" : "pt-2"
                   }`}
                 >
-                  <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                    {section.name}
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => toggleSectionCollapse(section.id)}
+                    className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500 hover:text-slate-700"
+                    aria-expanded={!collapsed}
+                  >
+                    {collapsed ? (
+                      <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
+                    ) : (
+                      <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
+                    )}
+                    <span className="truncate">{section.name}</span>
+                  </button>
                   {!isReadOnly && onAddCustomChecklistItem && (
                     <Button
                       type="button"
@@ -894,36 +967,58 @@ export default function Checklist({
                     </Button>
                   )}
                 </div>
-                {sectionItems.map((item) => renderChecklistItemRow(item))}
+                {!collapsed && sectionItems.map((item) => renderChecklistItemRow(item))}
               </React.Fragment>
             );
           })}
           {orphanChecklistItems.length > 0 && (
             <React.Fragment key="__orphans__">
               <div className="flex items-center justify-between gap-2 pt-2 pb-1">
-                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                  Other
-                </div>
+                <button
+                  type="button"
+                  onClick={() => toggleSectionCollapse("__other__")}
+                  className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500 hover:text-slate-700"
+                  aria-expanded={!isSectionCollapsed("__other__")}
+                >
+                  {isSectionCollapsed("__other__") ? (
+                    <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
+                  ) : (
+                    <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
+                  )}
+                  <span>Other</span>
+                </button>
               </div>
-              {orphanChecklistItems.map((item) => renderChecklistItemRow(item))}
+              {!isSectionCollapsed("__other__") &&
+                orphanChecklistItems.map((item) => renderChecklistItemRow(item))}
             </React.Fragment>
           )}
           {archivedGroups.length > 0 && (
             <div className="mt-6 space-y-4 border-t border-slate-200 pt-4">
-              <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Archived
-              </div>
-              {archivedGroups.map((group) => (
-                <div key={group.groupId} className="space-y-2">
-                  <div className="rounded-md border border-slate-200 bg-slate-100/80 px-3 py-2">
-                    <p className="text-sm font-medium text-slate-800">{group.label}</p>
-                    {group.note ? (
-                      <p className="mt-1 text-xs text-slate-600">{group.note}</p>
-                    ) : null}
+              <button
+                type="button"
+                onClick={() => toggleSectionCollapse("__archived__")}
+                className="flex w-full items-center gap-1.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500 hover:text-slate-700"
+                aria-expanded={!isSectionCollapsed("__archived__")}
+              >
+                {isSectionCollapsed("__archived__") ? (
+                  <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
+                ) : (
+                  <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
+                )}
+                <span>Archived</span>
+              </button>
+              {!isSectionCollapsed("__archived__") &&
+                archivedGroups.map((group) => (
+                  <div key={group.groupId} className="space-y-2">
+                    <div className="rounded-md border border-slate-200 bg-slate-100/80 px-3 py-2">
+                      <p className="text-sm font-medium text-slate-800">{group.label}</p>
+                      {group.note ? (
+                        <p className="mt-1 text-xs text-slate-600">{group.note}</p>
+                      ) : null}
+                    </div>
+                    {group.items.map((item) => renderChecklistItemRow(item, "archived"))}
                   </div>
-                  {group.items.map((item) => renderChecklistItemRow(item, "archived"))}
-                </div>
-              ))}
+                ))}
             </div>
           )}
         </div>

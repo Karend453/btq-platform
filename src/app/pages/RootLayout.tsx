@@ -197,23 +197,24 @@ export function RootLayout() {
     <div className="flex h-screen bg-slate-50">
       <DashboardSidebar
         logo={
-          <div>
-            <div className="text-xl font-semibold text-white">
-              {isBtqAdmin ? "Brokerteq" : "RealtyPro"}
-            </div>
-            <div className="mt-1 text-xs text-slate-400">
-              {isBtqAdmin
-                ? "BTQ Back Office"
-                : isBroker
-                  ? "Broker oversight"
-                  : "Broker Portal"}
+          <div className="flex min-w-0 items-center gap-3">
+            {/* Future: optional office/product logo via <img className="h-9 w-9 shrink-0 rounded object-contain" alt="" /> */}
+            <div className="min-w-0">
+              <div className="text-xl font-semibold text-white">BTQ</div>
+              <div className="mt-1 text-xs text-slate-400">
+                {isBtqAdmin
+                  ? "BTQ Back Office"
+                  : isBroker
+                    ? "Broker oversight"
+                    : "Broker Portal"}
+              </div>
             </div>
           </div>
         }
         sections={navSections}
         footer={
           <div className="text-xs text-slate-400">
-            <div>© 2026 RealtyPro</div>
+            <div>© 2026 BTQ</div>
             <div className="mt-1">v1.0.0</div>
           </div>
         }

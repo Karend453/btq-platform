@@ -134,6 +134,11 @@ export type ClientPortfolioRow = {
   source: string | null;
   tags: string[] | null;
   portfolio_stage: "seeded" | "estimated" | "final";
+  /**
+   * Workflow status is Closed (`transactions.status`), batched in `listClientPortfolio`.
+   * Omitted when not loaded via that path.
+   */
+  workflowClosed?: boolean;
 };
 
 export type ClientPortfolioFilters = {
@@ -197,6 +202,39 @@ export async function finalizeTransactionClosing(input: {
   };
 }
 
+const WORKFLOW_STATUS_BATCH = 120;
+
+async function fetchWorkflowClosedByTransactionId(
+  transactionIds: string[],
+): Promise<Map<string, boolean>> {
+  const map = new Map<string, boolean>();
+  if (!supabase || transactionIds.length === 0) return map;
+
+  const unique = [...new Set(transactionIds.map((id) => id.trim()).filter(Boolean))];
+
+  for (let i = 0; i < unique.length; i += WORKFLOW_STATUS_BATCH) {
+    const chunk = unique.slice(i, i + WORKFLOW_STATUS_BATCH);
+    const { data, error } = await supabase
+      .from("transactions")
+      .select("id, status")
+      .in("id", chunk);
+
+    if (error) {
+      console.error("[fetchWorkflowClosedByTransactionId]", error);
+      continue;
+    }
+
+    for (const row of data ?? []) {
+      const r = row as { id?: string | null; status?: string | null };
+      const id = r.id?.trim();
+      if (!id) continue;
+      map.set(id, (r.status ?? "").trim().toLowerCase() === "closed");
+    }
+  }
+
+  return map;
+}
+
 export async function listClientPortfolio(
   filters: ClientPortfolioFilters = {}
 ): Promise<ClientPortfolioRow[]> {
@@ -233,25 +271,52 @@ export async function listClientPortfolio(
     throw new Error(error.message || "Failed to load client portfolio.");
   }
 
-  return (data ?? []) as ClientPortfolioRow[];
-}
-
-export function summarizeClientPortfolio(rows: ClientPortfolioRow[]) {
-  const closedRows = rows.filter((row) => !!row.event_date);
-
-  const totalGci = closedRows.reduce(
-    (sum, row) => sum + (Number(row.revenue_amount) || 0),
-    0
+  const raw = (data ?? []) as ClientPortfolioRow[];
+  const wfByTx = await fetchWorkflowClosedByTransactionId(
+    raw.map((r) => r.transaction_id).filter((id): id is string => !!id?.trim()),
   );
 
-  const closingsCount = closedRows.length;
+  return raw.map((row) => {
+    const tid = row.transaction_id?.trim();
+    return {
+      ...row,
+      workflowClosed: tid ? wfByTx.get(tid) === true : false,
+    };
+  });
+}
 
-  const avgGciPerDeal =
-    closingsCount > 0 ? totalGci / closingsCount : 0;
+/** Analytics KPIs: finalized vs non-finalized are never mixed in the same field. */
+export function summarizeClientPortfolio(rows: ClientPortfolioRow[]) {
+  const finalized = rows.filter((row) => row.portfolio_stage === "final");
+  const nonFinal = rows.filter((row) => row.portfolio_stage !== "final");
+
+  const totalGciActual = finalized.reduce(
+    (sum, row) => sum + (Number(row.revenue_amount) || 0),
+    0,
+  );
+
+  const totalVolumeActual = finalized.reduce(
+    (sum, row) => sum + (Number(row.close_price) || 0),
+    0,
+  );
+
+  const potentialGci = nonFinal.reduce(
+    (sum, row) => sum + (Number(row.revenue_amount) || 0),
+    0,
+  );
+
+  const potentialVolume = nonFinal.reduce(
+    (sum, row) => sum + (Number(row.close_price) || 0),
+    0,
+  );
+
+  const closingsCount = finalized.length;
 
   return {
-    totalGci,
+    totalGciActual,
+    totalVolumeActual,
+    potentialGci,
+    potentialVolume,
     closingsCount,
-    avgGciPerDeal,
   };
 }

@@ -2,13 +2,6 @@ import React from "react";
 import { useNavigate } from "react-router-dom";
 import { ChevronDown, LogOut, Settings, User } from "lucide-react";
 import { signOut } from "../../../services/auth";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "../ui/select";
 import { Button } from "../ui/button";
 import {
   DropdownMenu,
@@ -20,23 +13,21 @@ import {
 } from "../ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "../ui/avatar";
 
-interface Office {
-  id: string;
-  name: string;
-}
-
 interface DashboardHeaderProps {
-  offices: Office[];
-  selectedOffice: string;
-  onOfficeChange: (officeId: string) => void;
+  /** Signed-in user's office from `user_profiles.office_id` / `offices`; null if none linked. */
+  office: { id: string; label: string } | null;
+  officeLoading?: boolean;
+  profileTo: string;
+  settingsTo: string;
   userName?: string;
   userEmail?: string;
 }
 
 export function DashboardHeader({
-  offices,
-  selectedOffice,
-  onOfficeChange,
+  office,
+  officeLoading = false,
+  profileTo,
+  settingsTo,
   userName = "Admin User",
   userEmail,
 }: DashboardHeaderProps) {
@@ -51,20 +42,20 @@ export function DashboardHeader({
       <div className="flex items-center justify-between">
         {/* Left: Office Selector */}
         <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-slate-600">Office:</span>
-            <Select value={selectedOffice} onValueChange={onOfficeChange}>
-              <SelectTrigger className="w-[240px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {offices.map((office) => (
-                  <SelectItem key={office.id} value={office.id}>
-                    {office.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="shrink-0 text-sm text-slate-600">Office:</span>
+            {officeLoading ? (
+              <span className="text-sm text-slate-500">Loading…</span>
+            ) : office ? (
+              <span
+                className="max-w-[min(100vw-12rem,28rem)] truncate text-sm font-medium text-slate-900"
+                title={office.label}
+              >
+                {office.label}
+              </span>
+            ) : (
+              <span className="text-sm text-slate-500">No office on your profile</span>
+            )}
           </div>
         </div>
 
@@ -95,11 +86,11 @@ export function DashboardHeader({
             <DropdownMenuContent align="end" className="w-56">
               <DropdownMenuLabel>My Account</DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem>
+              <DropdownMenuItem onClick={() => navigate(profileTo)}>
                 <User className="mr-2 h-4 w-4" />
                 Profile
               </DropdownMenuItem>
-              <DropdownMenuItem>
+              <DropdownMenuItem onClick={() => navigate(settingsTo)}>
                 <Settings className="mr-2 h-4 w-4" />
                 Settings
               </DropdownMenuItem>

@@ -59,6 +59,15 @@ export type WorkItem = {
   /** Dominant compliance status from checklist + document engine (aligned with Compliance Overview). */
   complianceDominant?: ComplianceDominantState;
 
+  /** Document-engine counts (required compliance items) — same basis as dashboard finalize rules. */
+  missingRequiredCount?: number;
+  pendingReviewRequiredCount?: number;
+  rejectedRequiredCount?: number;
+  /** Workflow `transactions.status` is Closed. */
+  workflowClosed?: boolean;
+  /** `client_portfolio.portfolio_stage === "final"`. */
+  closingFinalized?: boolean;
+
   lastActivity: string;
 
   // Tenant context

@@ -7,6 +7,7 @@ import {
   getAccountInfoReadonly,
   type AccountInfoReadonly,
 } from "../../services/auth";
+import { getCurrentOffice } from "../../services/offices";
 import {
   fetchComplianceOverviewData,
   type ComplianceOverviewData,
@@ -38,13 +39,6 @@ function formatUsdCompact(n: number): string {
   }).format(n);
 }
 
-const offices = [
-  { id: "all", name: "All Offices" },
-  { id: "downtown", name: "Downtown Office" },
-  { id: "northside", name: "Northside Office" },
-  { id: "westend", name: "West End Office" },
-];
-
 export function Dashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -58,6 +52,9 @@ export function Dashboard() {
   const [accountInfo, setAccountInfo] = useState<AccountInfoReadonly | null | undefined>(
     undefined
   );
+  const [currentOffice, setCurrentOffice] = useState<
+    { id: string; label: string } | null | undefined
+  >(undefined);
 
   const displayName =
     accountInfo?.display_name?.trim() ||
@@ -69,15 +66,24 @@ export function Dashboard() {
 
     async function load() {
       setComplianceLoading(true);
-      const [data, roleKey, accountRow] = await Promise.all([
+      const [data, roleKey, accountRow, officeRow] = await Promise.all([
         fetchComplianceOverviewData(),
         getUserProfileRoleKey(),
         getAccountInfoReadonly(),
+        getCurrentOffice(),
       ]);
       if (!cancelled) {
         setComplianceOverview(data ?? null);
         setProfileRoleKey(roleKey);
         setAccountInfo(accountRow);
+        setCurrentOffice(
+          officeRow
+            ? {
+                id: officeRow.id,
+                label: officeRow.display_name?.trim() || officeRow.name,
+              }
+            : null
+        );
         setComplianceLoading(false);
       }
     }
@@ -89,6 +95,8 @@ export function Dashboard() {
   }, []);
 
   const isBroker = profileRoleKey === "broker";
+  const profileTo = isBroker ? "/settings?tab=account" : "/settings";
+  const settingsTo = "/settings";
   // One stable layout until compliance + profile load (same Promise.all); avoids broker chrome flashing as "agent" first.
   const dashboardDataReady = !complianceLoading;
 
@@ -131,7 +139,10 @@ export function Dashboard() {
       message: "We couldn’t load compliance data. Refresh the page or try again shortly.",
     };
   } else {
-    const n = complianceOverview.tableRows.length;
+    const n =
+      complianceOverview.legend.rejected +
+      complianceOverview.legend.missing +
+      complianceOverview.legend.pendingReview;
     if (n > 0) {
       actionRequiredBanner = {
         type: "warning",
@@ -176,9 +187,10 @@ export function Dashboard() {
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-slate-50">
       <DashboardHeader
-        offices={offices}
-        selectedOffice={selectedOffice}
-        onOfficeChange={setSelectedOffice}
+        office={currentOffice === undefined ? null : currentOffice}
+        officeLoading={complianceLoading}
+        profileTo={profileTo}
+        settingsTo={settingsTo}
         userName={displayName}
         userEmail={user?.email ?? undefined}
       />
@@ -309,6 +321,9 @@ export function Dashboard() {
                   transactions={complianceOverview?.tableRows ?? []}
                   onRowClick={handleRowClick}
                   onRowDoubleClick={handleRowDoubleClick}
+                  onFinalizeClick={(tx) =>
+                    navigate(`/transactions/${encodeURIComponent(tx.id)}?finalize=1`)
+                  }
                 />
               )}
             </CardContent>

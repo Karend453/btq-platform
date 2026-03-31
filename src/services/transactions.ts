@@ -405,6 +405,13 @@ export type ComplianceOverviewTableRow = {
   closingDate: string;
   documents?: number;
   missingDocs?: number;
+  missingRequired: number;
+  pendingReview: number;
+  rejected: number;
+  /** Workflow status is Closed (case-insensitive). */
+  workflowClosed: boolean;
+  /** `client_portfolio.portfolio_stage === "final"` — locked closing snapshot. */
+  closingFinalized: boolean;
 };
 
 export type ComplianceOverviewLegend = {
@@ -495,6 +502,31 @@ function closingSortKey(iso: string | null): number {
   return Number.isNaN(d) ? Number.POSITIVE_INFINITY : d;
 }
 
+/** Batch-load finalized flags from `client_portfolio` for dashboard rows. */
+async function fetchClosingFinalizedFlagsForTransactionIds(
+  transactionIds: string[]
+): Promise<Map<string, boolean>> {
+  const map = new Map<string, boolean>();
+  if (transactionIds.length === 0 || !supabase) return map;
+  for (let i = 0; i < transactionIds.length; i += CHECKLIST_BATCH_SIZE) {
+    const chunk = transactionIds.slice(i, i + CHECKLIST_BATCH_SIZE);
+    const { data, error } = await supabase
+      .from("client_portfolio")
+      .select("transaction_id, portfolio_stage")
+      .in("transaction_id", chunk);
+    if (error) {
+      console.error("[fetchClosingFinalizedFlagsForTransactionIds]", error);
+      continue;
+    }
+    for (const row of data ?? []) {
+      const r = row as { transaction_id?: string | null; portfolio_stage?: string | null };
+      const tid = r.transaction_id?.trim();
+      if (tid) map.set(tid, r.portfolio_stage === "final");
+    }
+  }
+  return map;
+}
+
 /** Pipeline / “active deal” for KPI counts: not archived and not terminal workflow status. */
 function isActivePipelineTransaction(row: TransactionRow): boolean {
   if (row.isarchived) return false;
@@ -544,6 +576,32 @@ function dominantStateToTableFields(
         documents: readiness.acceptedRequiredCount,
       };
   }
+}
+
+/**
+ * Compliance engine shows all required items satisfied, but workflow may still be open.
+ * Use "Ready to finalize" so the dashboard table can treat rows as close-ready; reserve "Complete" for terminal workflow.
+ */
+function operationalCompleteRowFields(
+  tx: TransactionRow,
+  readiness: ReturnType<typeof getTransactionClosingReadiness>
+): Pick<ComplianceOverviewTableRow, "status" | "statusLabel" | "documents" | "missingDocs"> {
+  const wf = (tx.status ?? "").trim().toLowerCase();
+  const documents = readiness.acceptedRequiredCount;
+  if (wf === "closed" || wf === "archived") {
+    return {
+      status: "success",
+      statusLabel: "Complete",
+      missingDocs: undefined,
+      documents,
+    };
+  }
+  return {
+    status: "success",
+    statusLabel: "Ready to finalize",
+    missingDocs: undefined,
+    documents,
+  };
 }
 
 function engineDocumentsForTransaction(
@@ -644,7 +702,10 @@ export async function fetchComplianceOverviewData(): Promise<ComplianceOverviewD
   // role === "admin" | "broker": keep full RLS-scoped set; do not collapse broker identity into admin.
 
   const ids = rows.map((r) => r.id);
-  const checklistRows = await fetchChecklistRowsForTransactions(ids);
+  const [checklistRows, closingFinalizedByTxId] = await Promise.all([
+    fetchChecklistRowsForTransactions(ids),
+    fetchClosingFinalizedFlagsForTransactionIds(ids),
+  ]);
   const byTx = new Map<string, ChecklistItemDbRow[]>();
   for (const cr of checklistRows) {
     const tid = cr.transaction_id;
@@ -695,10 +756,12 @@ export async function fetchComplianceOverviewData(): Promise<ComplianceOverviewD
         legend.complete += 1;
     }
 
-    if (dominant === "complete") continue;
-
-    const fields = dominantStateToTableFields(dominant, readiness);
+    const fields =
+      dominant === "complete"
+        ? operationalCompleteRowFields(tx, readiness)
+        : dominantStateToTableFields(dominant, readiness);
     const agentName = getAssignedAgentDisplayNameFromRow(tx);
+    const wf = (tx.status ?? "").trim().toLowerCase();
 
     tableRows.push({
       id: tx.id,
@@ -708,14 +771,24 @@ export async function fetchComplianceOverviewData(): Promise<ComplianceOverviewD
       ...fields,
       amount: formatCurrencyUsd(tx.saleprice),
       closingDate: formatClosingDate(tx.closing_date),
+      missingRequired: readiness.missingRequiredCount,
+      pendingReview: readiness.submittedRequiredCount,
+      rejected: readiness.rejectedRequiredCount,
+      workflowClosed: wf === "closed",
+      closingFinalized: closingFinalizedByTxId.get(tx.id) === true,
     });
   }
 
   const closingById = new Map(rows.map((r) => [r.id, r.closing_date] as const));
-  tableRows.sort(
-    (a, b) =>
-      closingSortKey(closingById.get(a.id) ?? null) - closingSortKey(closingById.get(b.id) ?? null)
-  );
+  tableRows.sort((a, b) => {
+    const fa = a.closingFinalized ? 1 : 0;
+    const fb = b.closingFinalized ? 1 : 0;
+    if (fa !== fb) return fa - fb;
+    return (
+      closingSortKey(closingById.get(a.id) ?? null) -
+      closingSortKey(closingById.get(b.id) ?? null)
+    );
+  });
 
   kpis.distinctAgentsOnActiveDeals = agentIdsOnActive.size;
   kpis.distinctOfficesOnActiveDeals = officesOnActive.size;
@@ -748,9 +821,10 @@ export async function listTransactions(
   const rows = (data ?? []) as TransactionRow[];
   const items = rows.map((row) => toWorkItem(row));
   const ids = items.map((i) => i.id);
-  const [counts, checklistRows] = await Promise.all([
+  const [counts, checklistRows, closingFinalizedByTxId] = await Promise.all([
     fetchComplianceDocCountsByTransactionIds(ids),
     fetchChecklistRowsForTransactions(ids),
+    fetchClosingFinalizedFlagsForTransactionIds(ids),
   ]);
 
   const byTx = new Map<string, ChecklistItemDbRow[]>();
@@ -779,6 +853,8 @@ export async function listTransactions(
       agentDisplayName = formatAgentLabelForList(rawAgent);
     }
 
+    const wfStatus = (tx.status ?? "").trim().toLowerCase();
+
     return {
       ...item,
       agentDisplayName: agentDisplayName.trim() || undefined,
@@ -791,6 +867,11 @@ export async function listTransactions(
       missingCount: pending,
       rejectedCount: rejected,
       complianceDominant: dominant,
+      missingRequiredCount: readiness.missingRequiredCount,
+      pendingReviewRequiredCount: readiness.submittedRequiredCount,
+      rejectedRequiredCount: readiness.rejectedRequiredCount,
+      workflowClosed: wfStatus === "closed",
+      closingFinalized: closingFinalizedByTxId.get(tx.id) === true,
     };
   });
 }

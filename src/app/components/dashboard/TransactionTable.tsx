@@ -8,7 +8,7 @@ import {
   TableRow,
 } from "../ui/table";
 import { StatusBadge, StatusType } from "./StatusBadge";
-import { ArrowUpDown } from "lucide-react";
+import { ArrowUpDown, Lock } from "lucide-react";
 import { Button } from "../ui/button";
 
 export interface Transaction {
@@ -22,21 +22,56 @@ export interface Transaction {
   closingDate: string;
   documents?: number;
   missingDocs?: number;
+  missingRequired: number;
+  pendingReview: number;
+  rejected: number;
+  workflowClosed?: boolean;
+  closingFinalized?: boolean;
 }
+
+export type TransactionRow = Transaction;
+
+/** Muted lock for finalized rows; swap class to e.g. text-amber-600/70 for a gold accent later. */
+const FINALIZE_LOCK_ICON_CLASS = "text-slate-400";
+
+const canOfferFinalizeFromDashboard = (transaction: TransactionRow) => {
+  return (
+    transaction.workflowClosed === true &&
+    transaction.closingFinalized !== true &&
+    transaction.missingRequired === 0 &&
+    transaction.pendingReview === 0 &&
+    transaction.rejected === 0
+  );
+};
 
 interface TransactionTableProps {
   transactions: Transaction[];
   onRowClick?: (transaction: Transaction) => void;
   onRowDoubleClick?: (transaction: Transaction) => void;
+  /** Navigates to transaction details with the existing finalize modal deep link. */
+  onFinalizeClick?: (transaction: Transaction) => void;
 }
 
 type SortField = "address" | "agent" | "amount" | "closingDate";
 type SortDirection = "asc" | "desc";
 
+const UUID_LINE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Strip secondary UUID lines and keep a single agent display name. */
+function agentNameOnly(agent: string): string {
+  const lines = agent.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  if (lines.length === 0) return agent;
+  const withoutUuidOnly = lines.filter((l) => !UUID_LINE.test(l));
+  if (withoutUuidOnly.length > 0) return withoutUuidOnly[0].trim();
+  return "—";
+}
+
 export function TransactionTable({
   transactions,
   onRowClick,
   onRowDoubleClick,
+  onFinalizeClick,
 }: TransactionTableProps) {
   const [sortField, setSortField] = useState<SortField>("closingDate");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
@@ -51,8 +86,14 @@ export function TransactionTable({
   };
 
   const sortedTransactions = [...transactions].sort((a, b) => {
-    let aVal: string | number = a[sortField];
-    let bVal: string | number = b[sortField];
+    const fa = a.closingFinalized ? 1 : 0;
+    const fb = b.closingFinalized ? 1 : 0;
+    if (fa !== fb) return fa - fb;
+
+    let aVal: string | number =
+      sortField === "agent" ? agentNameOnly(a.agent) : a[sortField];
+    let bVal: string | number =
+      sortField === "agent" ? agentNameOnly(b.agent) : b[sortField];
 
     if (sortField === "amount") {
       aVal = parseFloat(a.amount.replace(/[$,]/g, ""));
@@ -116,6 +157,7 @@ export function TransactionTable({
               </Button>
             </TableHead>
             <TableHead>Documents</TableHead>
+            <TableHead className="text-right">Actions</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -129,7 +171,7 @@ export function TransactionTable({
               <TableCell className="font-medium">
                 {transaction.address}
               </TableCell>
-              <TableCell>{transaction.agent}</TableCell>
+              <TableCell>{agentNameOnly(transaction.agent)}</TableCell>
               <TableCell className="text-slate-600">
                 {transaction.type}
               </TableCell>
@@ -153,6 +195,32 @@ export function TransactionTable({
                     {transaction.documents || 0} complete
                   </span>
                 )}
+              </TableCell>
+              <TableCell className="text-right">
+                {transaction.closingFinalized ? (
+                  <span
+                    className="inline-flex justify-end"
+                    title="Closing finalized"
+                    aria-label="Closing finalized"
+                  >
+                    <Lock
+                      className={`h-4 w-4 shrink-0 ${FINALIZE_LOCK_ICON_CLASS}`}
+                      strokeWidth={1.75}
+                      aria-hidden
+                    />
+                  </span>
+                ) : canOfferFinalizeFromDashboard(transaction) && onFinalizeClick ? (
+                  <button
+                    type="button"
+                    className="text-sm text-slate-500 hover:text-slate-800 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2 rounded-sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onFinalizeClick(transaction);
+                    }}
+                  >
+                    Finalize
+                  </button>
+                ) : null}
               </TableCell>
             </TableRow>
           ))}

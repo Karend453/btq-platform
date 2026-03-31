@@ -10,10 +10,12 @@ import {
   Upload,
   Eye,
   Pencil,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
+import { Card, CardContent, CardHeader } from "../../components/ui/card";
 import {
   Sheet,
   SheetContent,
@@ -173,6 +175,8 @@ export default function TransactionInbox({
   const [renameDocId, setRenameDocId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [renameSaving, setRenameSaving] = useState(false);
+  /** UI-only: hide inbox preview body (default collapsed). */
+  const [inboxSectionCollapsed, setInboxSectionCollapsed] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isControlled = controlledAttachDrawerOpen !== undefined && onAttachDrawerOpenChange !== undefined;
@@ -440,18 +444,28 @@ export default function TransactionInbox({
       <Card className="gap-0 overflow-hidden border-slate-200/90 bg-white shadow-sm">
         <CardHeader className="space-y-3 border-b border-slate-100 px-4 py-4 sm:space-y-0">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-              <CardTitle className="flex items-center gap-1.5 text-base font-semibold text-slate-900">
+            <button
+              type="button"
+              onClick={() => setInboxSectionCollapsed((c) => !c)}
+              className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-left hover:text-slate-900"
+              aria-expanded={!inboxSectionCollapsed}
+            >
+              {inboxSectionCollapsed ? (
+                <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
+              ) : (
+                <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
+              )}
+              <span className="flex items-center gap-1.5 text-base font-semibold leading-none text-slate-900">
                 <Inbox className="h-4 w-4 shrink-0 text-slate-500" />
                 Document Inbox
-              </CardTitle>
+              </span>
               <Badge
                 variant="outline"
                 className="shrink-0 border-slate-200 bg-slate-50 text-xs font-normal text-slate-600"
               >
                 {unattachedCount} unattached
               </Badge>
-            </div>
+            </button>
             <div className="flex flex-shrink-0 flex-wrap gap-2">
               <input
                 ref={fileInputRef}
@@ -482,6 +496,7 @@ export default function TransactionInbox({
             </div>
           </div>
         </CardHeader>
+        {!inboxSectionCollapsed && (
         <CardContent className="px-4 pb-5 pt-4">
           {previewInboxDocs.length === 0 ? (
             <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50/50 py-8 text-center text-sm text-slate-500">
@@ -552,6 +567,7 @@ export default function TransactionInbox({
             </div>
           )}
         </CardContent>
+        )}
       </Card>
 
       {/* Attach Document Drawer */}

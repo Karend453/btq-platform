@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { MessageSquare, Save, Archive, AlertTriangle, ExternalLink } from "lucide-react";
 import { Button } from "../components/ui/button";
@@ -190,6 +191,8 @@ function getReviewInlinePreviewKind(
 
 export default function TransactionDetailsPage() {
   const { user: authUser, loading: authLoading } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const finalizeDeepLinkConsumed = useRef(false);
   const id = useMemo(() => {
     const parts = window.location.pathname.split("/").filter(Boolean);
     return parts[parts.length - 1] ?? "";
@@ -678,7 +681,7 @@ export default function TransactionDetailsPage() {
     if (!transaction) return;
     const sp = transaction.saleprice;
     const closeStr =
-      sp !== null && sp !== undefined && sp !== ""
+      sp !== null && sp !== undefined
         ? String(typeof sp === "number" ? sp : String(sp).replace(/[^0-9.-]/g, ""))
         : "";
     const closing = transaction.closing_date
@@ -774,6 +777,40 @@ export default function TransactionDetailsPage() {
       cancelled = true;
     };
   }, [id]);
+
+  useEffect(() => {
+    finalizeDeepLinkConsumed.current = false;
+  }, [id]);
+
+  const finalizeDeepLink = searchParams.get("finalize");
+
+  useEffect(() => {
+    if (finalizeDeepLink !== "1") return;
+    if (finalizeDeepLinkConsumed.current) return;
+    if (!transaction) return;
+    if (portfolioSnapshot === undefined) return;
+
+    const stripFinalizeParam = () => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete("finalize");
+          return next;
+        },
+        { replace: true }
+      );
+    };
+
+    if (portfolioSnapshot?.portfolio_stage === "final") {
+      finalizeDeepLinkConsumed.current = true;
+      stripFinalizeParam();
+      return;
+    }
+
+    finalizeDeepLinkConsumed.current = true;
+    openFinalizeClosingModal();
+    stripFinalizeParam();
+  }, [finalizeDeepLink, transaction, portfolioSnapshot, setSearchParams]);
 
   useEffect(() => {
     if (!id) return;
@@ -1174,49 +1211,61 @@ export default function TransactionDetailsPage() {
         />
 
         <Dialog open={finalizeClosingOpen} onOpenChange={setFinalizeClosingOpen}>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>Finalize closing</DialogTitle>
-              <DialogDescription>
+          <DialogContent className="sm:max-w-md gap-0 border-slate-200/80 bg-white p-0 shadow-sm sm:rounded-xl">
+            <DialogHeader className="space-y-1.5 border-b border-slate-100/90 px-6 pb-4 pt-6">
+              <DialogTitle className="text-lg font-semibold tracking-tight text-slate-900">
+                Finalize closing
+              </DialogTitle>
+              <DialogDescription className="text-sm leading-relaxed text-slate-600">
                 These values are saved to the portfolio and locked. Ongoing transaction sync will not
                 overwrite finalized numbers.
               </DialogDescription>
             </DialogHeader>
-            <div className="space-y-3 py-1">
-              <div className="space-y-1.5">
-                <Label htmlFor="finalize-close-price">Close price</Label>
+            <div className="space-y-4 px-6 py-5">
+              <div className="space-y-2">
+                <Label htmlFor="finalize-close-price" className="text-sm font-medium text-slate-600">
+                  Close price
+                </Label>
                 <Input
                   id="finalize-close-price"
                   inputMode="decimal"
                   value={finalizeClosePrice}
                   onChange={(e) => setFinalizeClosePrice(e.target.value)}
                   placeholder="0"
+                  className="h-10 border-slate-200/90 bg-slate-50/50 shadow-none transition-colors focus-visible:border-slate-300 focus-visible:ring-2 focus-visible:ring-slate-400/20 focus-visible:ring-offset-0"
                 />
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="finalize-closing-date">Closing date</Label>
+              <div className="space-y-2">
+                <Label htmlFor="finalize-closing-date" className="text-sm font-medium text-slate-600">
+                  Closing date
+                </Label>
                 <Input
                   id="finalize-closing-date"
                   type="date"
                   value={finalizeClosingDate}
                   onChange={(e) => setFinalizeClosingDate(e.target.value)}
+                  className="h-10 border-slate-200/90 bg-slate-50/50 shadow-none transition-colors focus-visible:border-slate-300 focus-visible:ring-2 focus-visible:ring-slate-400/20 focus-visible:ring-offset-0"
                 />
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="finalize-revenue">Revenue amount</Label>
+              <div className="space-y-2">
+                <Label htmlFor="finalize-revenue" className="text-sm font-medium text-slate-600">
+                  Revenue amount
+                </Label>
                 <Input
                   id="finalize-revenue"
                   inputMode="decimal"
                   value={finalizeRevenue}
                   onChange={(e) => setFinalizeRevenue(e.target.value)}
                   placeholder="0"
+                  className="h-10 border-slate-200/90 bg-slate-50/50 shadow-none transition-colors focus-visible:border-slate-300 focus-visible:ring-2 focus-visible:ring-slate-400/20 focus-visible:ring-offset-0"
                 />
               </div>
             </div>
-            <DialogFooter className="gap-2 sm:gap-0">
+            <DialogFooter className="gap-2 border-t border-slate-100/90 bg-slate-50/40 px-6 py-4 sm:gap-0">
               <Button
                 type="button"
                 variant="outline"
+                className="border-slate-200/90 bg-white shadow-none"
                 onClick={() => setFinalizeClosingOpen(false)}
                 disabled={finalizeSubmitting}
               >
@@ -1224,6 +1273,7 @@ export default function TransactionDetailsPage() {
               </Button>
               <Button
                 type="button"
+                className="shadow-sm"
                 onClick={() => void handleSubmitFinalizeClosing()}
                 disabled={finalizeSubmitting}
               >

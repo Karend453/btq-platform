@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useTerminology } from "../../hooks/useTerminology";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Search, Plus, AlertCircle, FileX, Archive } from "lucide-react";
+import { Search, Plus, AlertCircle, FileX, Archive, Lock } from "lucide-react";
 
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -47,6 +47,32 @@ function formatClosingDisplay(iso: string): string {
   return new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(new Date(d));
 }
 
+const UUID_LINE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Single-line agent: first non-UUID line only (drops secondary id/UUID rows). */
+function agentDisplaySingleLine(agent: string | undefined): string {
+  if (agent == null || agent === "") return "—";
+  const lines = agent.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  if (lines.length === 0) return "—";
+  const withoutUuidOnly = lines.filter((l) => !UUID_LINE.test(l));
+  if (withoutUuidOnly.length > 0) return withoutUuidOnly[0].trim();
+  return lines[0];
+}
+
+/** Matches dashboard Compliance Overview finalize rules. */
+const FINALIZE_LOCK_ICON_CLASS = "text-slate-500";
+
+function canOfferFinalizeClosing(row: WorkItem): boolean {
+  return (
+    row.workflowClosed === true &&
+    row.closingFinalized !== true &&
+    (row.missingRequiredCount ?? 0) === 0 &&
+    (row.pendingReviewRequiredCount ?? 0) === 0 &&
+    (row.rejectedRequiredCount ?? 0) === 0
+  );
+}
+
 /** Query `?filter=` aligned with Compliance Overview dominant state (document engine). */
 function parseComplianceFilterParam(raw: string | null): ComplianceDominantState | null {
   if (!raw) return null;
@@ -63,7 +89,6 @@ export default function TransactionsPage() {
 
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<WorkItem[]>([]);
-  const [viewerIsBroker, setViewerIsBroker] = useState(false);
 
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -85,7 +110,6 @@ export default function TransactionsPage() {
         const data = await listTransactions(role);
         if (!cancelled) {
           setRows(data);
-          setViewerIsBroker(role === "broker");
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -325,7 +349,7 @@ export default function TransactionsPage() {
                   <TableHead>Status</TableHead>
                   <TableHead>Stage</TableHead>
                   <TableHead>Closing date</TableHead>
-                  <TableHead>Risk</TableHead>
+                  <TableHead className="text-right min-w-[132px] pl-4">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -335,30 +359,50 @@ export default function TransactionsPage() {
                     className="cursor-pointer"
                     onClick={() => openTransaction(t.id)}
                   >
-                    <TableCell className="max-w-[220px] whitespace-normal">
+                    <TableCell className="max-w-[220px] whitespace-normal px-2 py-3 leading-normal">
                       {t.identifier}
                       {t.isArchived ? " (Archived)" : ""}
                     </TableCell>
-                    <TableCell className="text-muted-foreground">{t.type}</TableCell>
-                    <TableCell>
-                      <div className="flex flex-col gap-0.5">
-                        <span>{t.agentDisplayName ?? "—"}</span>
-                        {viewerIsBroker && (t.organizationName ?? "").trim() !== "" && (
-                          <span className="text-xs text-muted-foreground">
-                            {t.organizationName}
-                          </span>
-                        )}
-                      </div>
+                    <TableCell className="px-2 py-3 text-muted-foreground">{t.type}</TableCell>
+                    <TableCell className="px-2 py-3 leading-normal">
+                      {agentDisplaySingleLine(t.agentDisplayName)}
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="px-2 py-3">
                       <StatusBadge status={t.statusType as StatusType} label={t.status} />
                     </TableCell>
-                    <TableCell className="text-muted-foreground">{t.stage}</TableCell>
-                    <TableCell className="text-muted-foreground">
+                    <TableCell className="px-2 py-3 text-muted-foreground">{t.stage}</TableCell>
+                    <TableCell className="px-2 py-3 text-muted-foreground">
                       {formatClosingDisplay(t.closingDate)}
                     </TableCell>
-                    <TableCell className="max-w-[200px] whitespace-normal text-muted-foreground text-xs">
-                      {t.risk}
+                    <TableCell
+                      className="min-w-[132px] py-3 pl-4 pr-3 text-right align-middle"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {t.closingFinalized ? (
+                        <span
+                          className="inline-flex justify-end w-full pr-0.5"
+                          title="Closing finalized"
+                          aria-label="Closing finalized"
+                        >
+                          <Lock
+                            className={`h-[17px] w-[17px] shrink-0 opacity-95 ${FINALIZE_LOCK_ICON_CLASS}`}
+                            strokeWidth={2}
+                            aria-hidden
+                          />
+                        </span>
+                      ) : canOfferFinalizeClosing(t) ? (
+                        <button
+                          type="button"
+                          className="text-sm text-slate-500 hover:text-slate-800 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2 rounded-sm px-1.5 py-1 -mr-0.5"
+                          onClick={() =>
+                            navigate(
+                              `/transactions/${encodeURIComponent(t.id)}?finalize=1`
+                            )
+                          }
+                        >
+                          Finalize
+                        </button>
+                      ) : null}
                     </TableCell>
                   </TableRow>
                 ))}
