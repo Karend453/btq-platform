@@ -135,17 +135,15 @@ export function Dashboard() {
     };
   } else {
     const n =
-      complianceOverview.legend.rejected +
-      complianceOverview.legend.missing +
-      complianceOverview.legend.pendingReview;
+      complianceOverview.legend.rejected + complianceOverview.legend.pendingReview;
     if (n > 0) {
       actionRequiredBanner = {
         type: "warning",
         title: "Action required",
         message:
           n === 1
-            ? "1 transaction needs attention. Review missing or incomplete documents below."
-            : `${n} transactions need attention. Review missing or incomplete documents below.`,
+            ? "1 transaction needs attention. Review rejected or pending review items below."
+            : `${n} transactions need attention. Review rejected or pending review items below.`,
       };
     } else {
       actionRequiredBanner = {
@@ -284,22 +282,15 @@ export function Dashboard() {
                   <div className="flex items-center gap-2">
                     <div className="w-3 h-3 rounded-full bg-amber-500" />
                     <span className="text-slate-600">
-                      Missing required (
-                      {complianceLoading ? "…" : complianceOverview?.legend.missing ?? 0})
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-blue-500" />
-                    <span className="text-slate-600">
-                      Pending review (
+                      Pending Review (
                       {complianceLoading ? "…" : complianceOverview?.legend.pendingReview ?? 0})
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-emerald-500" />
+                    <div className="w-3 h-3 rounded-full bg-slate-400" />
                     <span className="text-slate-600">
-                      Complete (
-                      {complianceLoading ? "…" : complianceOverview?.legend.complete ?? 0})
+                      No status (
+                      {complianceLoading ? "…" : complianceOverview?.legend.noAction ?? 0})
                     </span>
                   </div>
                 </div>
@@ -373,28 +364,7 @@ export function Dashboard() {
                     </div>
 
                     <div className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                      <FileText className="h-5 w-5 text-amber-600 mt-0.5 shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium text-slate-900">
-                          {complianceOverview.legend.missing} Transactions Missing Documents
-                        </div>
-                        <div className="text-sm text-slate-600 mt-1">
-                          Required compliance documents still need to be attached or completed for
-                          these transactions.
-                        </div>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="mt-2"
-                          onClick={() => navigate("/transactions?filter=missing")}
-                        >
-                          Open transactions
-                        </Button>
-                      </div>
-                    </div>
-
-                    <div className="flex items-start gap-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                      <Clock className="h-5 w-5 text-blue-600 mt-0.5 shrink-0" />
+                      <Clock className="h-5 w-5 text-amber-600 mt-0.5 shrink-0" />
                       <div className="flex-1 min-w-0">
                         <div className="font-medium text-slate-900">
                           {complianceOverview.legend.pendingReview} Awaiting Review
@@ -452,10 +422,14 @@ export function Dashboard() {
               <div>
                 <div className="text-sm text-slate-600">Status</div>
                 <div className="mt-1">
-                  <StatusBadge
-                    status={selectedTransaction.status}
-                    label={selectedTransaction.statusLabel}
-                  />
+                  {selectedTransaction.statusLabel ? (
+                    <StatusBadge
+                      status={selectedTransaction.status}
+                      label={selectedTransaction.statusLabel}
+                    />
+                  ) : (
+                    <span className="text-slate-500">—</span>
+                  )}
                 </div>
               </div>
               <div>
@@ -463,34 +437,24 @@ export function Dashboard() {
                 <div className="font-medium mt-1">
                   {selectedTransaction.missingDocs
                     ? `${selectedTransaction.missingDocs} missing`
-                    : `${selectedTransaction.documents} complete`}
+                    : `${selectedTransaction.documents ?? 0} accepted (required)`}
                 </div>
               </div>
             </div>
 
-            {selectedTransaction.missingDocs != null && selectedTransaction.missingDocs > 0 && (
+            {selectedTransaction.statusLabel === "Rejected" && (
               <AlertBanner
-                type={
-                  selectedTransaction.statusLabel === "Rejected"
-                    ? "error"
-                    : selectedTransaction.statusLabel === "Pending review"
-                      ? "info"
-                      : "error"
-                }
-                title={
-                  selectedTransaction.statusLabel === "Rejected"
-                    ? "Rejected documents"
-                    : selectedTransaction.statusLabel === "Pending review"
-                      ? "Pending review"
-                      : "Missing documents"
-                }
-                message={
-                  selectedTransaction.statusLabel === "Rejected"
-                    ? `${selectedTransaction.missingDocs} required document(s) are rejected and need to be addressed.`
-                    : selectedTransaction.statusLabel === "Pending review"
-                      ? `${selectedTransaction.missingDocs} required document(s) are awaiting compliance review.`
-                      : `This transaction is missing ${selectedTransaction.missingDocs} required document(s). Please upload them as soon as possible.`
-                }
+                type="error"
+                title="Rejected documents"
+                message="At least one compliance document on this transaction is rejected. Open the transaction to fix or re-upload."
+              />
+            )}
+
+            {selectedTransaction.statusLabel === "Pending Review" && (
+              <AlertBanner
+                type="warning"
+                title="Pending review"
+                message="At least one compliance document on this transaction is awaiting review."
               />
             )}
 

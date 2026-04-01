@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState, type FormEvent } from "react";
+import { Trash2 } from "lucide-react";
 import { AlertCircle, UserPlus, Users } from "lucide-react";
 import {
   addOfficeAgent,
@@ -251,14 +252,15 @@ export function ManageSubagentsTab() {
                             <span className="text-xs text-slate-400">—</span>
                           ) : (
                             <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="text-destructive border-destructive/30 hover:bg-destructive/5"
-                              onClick={() => setRemoveTarget(row)}
-                            >
-                              Remove
-                            </Button>
+  type="button"
+  variant="ghost"
+  size="icon"
+  onClick={() => setRemoveTarget(row)}
+  className="text-slate-400 hover:text-red-600 hover:bg-red-50"
+  title="Remove agent"
+>
+  <Trash2 className="h-4 w-4" />
+</Button>
                           )}
                         </td>
                       </tr>

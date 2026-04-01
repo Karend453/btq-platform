@@ -21,6 +21,80 @@ export async function signOut() {
   await supabase.auth.signOut();
 }
 
+export type SignUpWithPasswordResult =
+  | { success: true; sessionEstablished: boolean }
+  | { success: false; message: string };
+
+/** Email/password registration (broker onboarding). */
+export async function signUpWithPassword(
+  email: string,
+  password: string,
+  options?: { displayName?: string }
+): Promise<SignUpWithPasswordResult> {
+  if (!supabase) {
+    return { success: false, message: "Supabase client unavailable" };
+  }
+
+  const { error, data } = await supabase.auth.signUp({
+    email,
+    password,
+    options: {
+      data: options?.displayName
+        ? { display_name: options.displayName }
+        : undefined,
+    },
+  });
+
+  if (error) {
+    return { success: false, message: error.message };
+  }
+
+  return { success: true, sessionEstablished: !!data.session };
+}
+
+/**
+ * After successful auth session, provisions `offices` row and sets `user_profiles.role = broker`.
+ * Replace with Stripe subscription flow (payment method, Stripe customer/subscription ids, etc.).
+ */
+export async function completeBrokerSignup(input: {
+  displayName: string;
+  officeName: string;
+  teamName: string;
+  firmAddress: string;
+  state: string;
+  mlsName: string;
+  mlsUrl: string;
+  landvoiceLeads: string;
+  /** Optional; empty omitted in RPC as null. */
+  referral: string | null;
+  brokerPhone?: string | null;
+  planKey: string | null;
+}): Promise<AuthResult> {
+  if (!supabase) {
+    return { success: false, message: "Supabase client unavailable" };
+  }
+
+  const { error } = await supabase.rpc("complete_broker_signup", {
+    p_display_name: input.displayName,
+    p_office_name: input.officeName,
+    p_team_name: input.teamName,
+    p_firm_address: input.firmAddress,
+    p_state: input.state,
+    p_mls_name: input.mlsName,
+    p_mls_url: input.mlsUrl,
+    p_landvoice_leads: input.landvoiceLeads,
+    p_referral: input.referral?.trim() || null,
+    p_broker_phone: input.brokerPhone?.trim() || null,
+    p_plan_key: input.planKey?.trim().toLowerCase() || null,
+  });
+
+  if (error) {
+    return { success: false, message: error.message };
+  }
+
+  return { success: true };
+}
+
 export async function getCurrentUser() {
   const { data } = await supabase.auth.getUser();
   return data.user;
@@ -230,6 +304,33 @@ export async function getCurrentUserProfileOfficeId(): Promise<string | null> {
   const oid = data?.office_id;
   if (oid == null || oid === "") return null;
   return typeof oid === "string" ? oid : String(oid);
+}
+
+/**
+ * Office-scoped reads/writes (transactions, client_portfolio, analytics): filter by
+ * `user_profiles.office_id` whenever it is set — not only when `role === "broker"`.
+ * Otherwise a null/unknown role with a valid `office_id` skipped filtering and returned all rows.
+ *
+ * - `btq_admin`: client-side scope is omitted (rely on RLS for internal operators).
+ * - `broker` with no `office_id`: `denyAll` — empty lists / denied access for office-bound resources.
+ */
+export async function resolveOfficeScopedDataAccess(): Promise<{
+  scopeOfficeId: string | null;
+  denyAll: boolean;
+}> {
+  const roleKey = await getUserProfileRoleKey();
+  const profileOfficeId = await getCurrentUserProfileOfficeId();
+
+  if (roleKey === "btq_admin") {
+    return { scopeOfficeId: null, denyAll: false };
+  }
+  if (profileOfficeId) {
+    return { scopeOfficeId: profileOfficeId, denyAll: false };
+  }
+  if (roleKey === "broker") {
+    return { scopeOfficeId: null, denyAll: true };
+  }
+  return { scopeOfficeId: null, denyAll: false };
 }
 
 export async function getAccountInfoReadonly(): Promise<AccountInfoReadonly | null> {

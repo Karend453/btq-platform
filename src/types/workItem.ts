@@ -1,11 +1,10 @@
 // src/types/workItem.ts
 
-/** Mutually exclusive compliance queue per transaction (document engine dominant state). */
-export type ComplianceDominantState =
-  | "rejected"
-  | "missing"
-  | "pending_review"
-  | "complete";
+/**
+ * Transaction list / dashboard rollup: workflow attention only (not compliance completeness).
+ * Which state appears is viewer-specific (see getTransactionRollupActionStatus).
+ */
+export type ComplianceDominantState = "rejected" | "pending_review" | "none";
 
 export type WorkItemStatus = "error" | "warning" | "success" | "pending" | "info";
 
@@ -44,7 +43,7 @@ export type WorkItem = {
   /** Kept in sync with `closingDate` for older call sites. */
   dueDate: string;
 
-  /** Compact issue summary, e.g. "2 missing, 1 rejected". */
+  /** Compact search/summary aligned with viewer-specific list rollup (compliance docs). */
   risk: string;
 
   // Generic “quality/compliance flags”
@@ -56,7 +55,7 @@ export type WorkItem = {
   /** Compliance checklist rows rejected. */
   complianceRejectedCount?: number;
 
-  /** Dominant compliance status from checklist + document engine (aligned with Compliance Overview). */
+  /** Transaction-level rollup badge (list / dashboard): viewer-specific; see getTransactionRollupActionStatus. */
   complianceDominant?: ComplianceDominantState;
 
   /** Document-engine counts (required compliance items) — same basis as dashboard finalize rules. */

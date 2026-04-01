@@ -176,10 +176,14 @@ export function TransactionTable({
                 {transaction.type}
               </TableCell>
               <TableCell>
-                <StatusBadge
-                  status={transaction.status}
-                  label={transaction.statusLabel}
-                />
+                {transaction.statusLabel ? (
+                  <StatusBadge
+                    status={transaction.status}
+                    label={transaction.statusLabel}
+                  />
+                ) : (
+                  <span className="text-slate-400">—</span>
+                )}
               </TableCell>
               <TableCell>{transaction.amount}</TableCell>
               <TableCell className="text-slate-600">

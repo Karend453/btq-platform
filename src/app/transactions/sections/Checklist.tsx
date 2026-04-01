@@ -624,7 +624,7 @@ export default function Checklist({
         </div>
         <div className="flex shrink-0 flex-nowrap items-center gap-1.5">
           {getRequirementBadge(item.requirement)}
-          {getReviewStatusBadge(docState.status, item.reviewStatus === "waived")}
+          {getChecklistRowReviewBadge(item, docState.status)}
           {item.suggestedDocument && !isArchivedRow && !isReadOnly && (
             <Button
               type="button"

@@ -3,13 +3,20 @@
 import { WorkItem, WorkItemStatus, type ComplianceDominantState } from "../types/workItem";
 import { supabase } from "../lib/supabaseClient";
 import type { PostgrestError } from "@supabase/supabase-js";
-import { getCurrentUser, getTransactionRuntimeRole, getUserProfileRoleKey } from "./auth";
-import { getOfficeRosterForCurrentBroker } from "./officeRoster";
+import {
+  getCurrentUser,
+  getTransactionRuntimeRole,
+  getUserProfileRoleKey,
+  resolveOfficeScopedDataAccess,
+} from "./auth";
 import { fetchChecklistTemplateForCreateValidation } from "./checklistTemplates";
 import { fetchComplianceDocCountsByTransactionIds } from "./checklistItems";
 import { checklistItemToEngineDocument } from "../lib/documents/adapter";
 import type { ChecklistItemShape } from "../lib/documents/adapter";
-import { getTransactionClosingReadiness } from "../lib/documents/documentEngine";
+import {
+  getTransactionClosingReadiness,
+  isComplianceWorkflowDocument,
+} from "../lib/documents/documentEngine";
 import type { DocumentEngineDocument } from "../lib/documents/types";
 import { syncClientPortfolioFromTransaction } from "./clientPortfolio";
 
@@ -56,6 +63,8 @@ export type TransactionRow = {
   archivedat: string | null;
   /** Unique address for signed-doc intake (e.g. ZipForms); format txn-{id}@docs.btqrlt.com */
   intake_email: string | null;
+  /** Legacy denormalized agent display; DB triggers/RPCs read `t.agent` for client_portfolio.agent_name. */
+  agent?: string | null;
 };
 
 /** Stable admin auth UID: prefer `assigned_admin_user_id`, else legacy `assignedadmin` when it holds the UID. */
@@ -100,9 +109,69 @@ export function sessionAgentNameFieldsForTransactionSide(
 }
 
 /**
- * Display label for the transaction agent. `agent_user_id` is canonical; list/buyer names are
- * only used as display hints, chosen by `transaction_side` so we don't default to buyer first.
- * (Cross-user profile/email is not available from the client under current user_profiles RLS.)
+ * Label from `user_profiles` for a transaction’s `agent_user_id` (list/dashboard batch path).
+ * Order: display_name → email → "Unassigned". Omits list/buyer/session email so viewers never
+ * infer the wrong person when `agent_user_id` is set.
+ */
+export function agentDisplayLabelFromProfileFields(
+  display_name: string | null | undefined,
+  email: string | null | undefined
+): string {
+  const dn = (display_name ?? "").trim();
+  if (dn) return dn;
+  const em = (email ?? "").trim();
+  if (em) return em;
+  return "Unassigned";
+}
+
+const PROFILE_BATCH_SIZE = 100;
+
+async function fetchUserProfileLabelsByIds(
+  ids: string[]
+): Promise<Map<string, { display_name: string | null; email: string | null }>> {
+  const unique = [...new Set(ids.map((id) => String(id).trim()).filter(Boolean))];
+  const out = new Map<string, { display_name: string | null; email: string | null }>();
+  for (let i = 0; i < unique.length; i += PROFILE_BATCH_SIZE) {
+    const chunk = unique.slice(i, i + PROFILE_BATCH_SIZE);
+    const { data, error } = await supabase
+      .from("user_profiles")
+      .select("id, display_name, email")
+      .in("id", chunk);
+    if (error) {
+      console.error("[fetchUserProfileLabelsByIds]", error);
+      continue;
+    }
+    for (const row of data ?? []) {
+      const id = row.id as string;
+      out.set(id, {
+        display_name: (row.display_name as string | null) ?? null,
+        email: (row.email as string | null) ?? null,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Agent column for list / compliance when `agent_user_id` is set: uses batched `user_profiles` only.
+ * Legacy rows without `agent_user_id` still use list/buyer hints (see {@link getAssignedAgentDisplayNameFromRow}).
+ */
+function resolveAgentLabelForListRow(
+  row: TransactionRow,
+  profileById: Map<string, { display_name: string | null; email: string | null }>
+): string {
+  const uid = row.agent_user_id?.trim();
+  if (!uid) {
+    return formatAgentLabelForList(getAssignedAgentDisplayNameFromRow(row));
+  }
+  const p = profileById.get(uid);
+  return formatAgentLabelForList(agentDisplayLabelFromProfileFields(p?.display_name, p?.email));
+}
+
+/**
+ * Display label for the transaction agent when `agent_user_id` is unset: list/buyer hints by
+ * `transaction_side`. When `agent_user_id` is set, list/buyer are not authoritative — prefer
+ * {@link resolveAgentLabelForListRow} with {@link fetchUserProfileLabelsByIds} on list/dashboard.
  */
 export function getAssignedAgentDisplayNameFromRow(row: TransactionRow): string {
   const list = (row.listagent ?? "").trim();
@@ -151,20 +220,58 @@ function normalizeTransactionTypeForList(type: string | null): string {
   return "Other";
 }
 
-function formatRiskMinimal(
-  readiness: ReturnType<typeof getTransactionClosingReadiness>
-): string {
-  const m = readiness.missingRequiredCount;
-  const r = readiness.rejectedRequiredCount;
-  const parts: string[] = [];
-  if (m > 0) parts.push(`${m} missing`);
-  if (r > 0) parts.push(`${r} rejected`);
-  return parts.length > 0 ? parts.join(", ") : "—";
+/** Collapse profile/runtime roles to list/dashboard rollup: only agents get the "rejected" badge; everyone else uses the review queue badge. */
+export type TransactionListRollupViewer = "agent" | "admin";
+
+export function resolveTransactionListRollupViewer(
+  role:
+    | "agent"
+    | "admin"
+    | "broker"
+    | "btq_admin"
+    | null
+    | undefined
+): TransactionListRollupViewer {
+  return role === "agent" ? "agent" : "admin";
 }
 
-function toWorkItem(row: TransactionRow): WorkItem {
+/** Search text aligned with the same viewer-specific rollup as the status badge. */
+function formatActionRisk(
+  docs: DocumentEngineDocument[],
+  rollupViewer: TransactionListRollupViewer
+): string {
+  const compliance = docs.filter(isComplianceWorkflowDocument);
+  if (rollupViewer === "agent") {
+    const rej = compliance.filter((d) => d.status === "REJECTED").length;
+    return rej > 0 ? `${rej} rejected` : "—";
+  }
+  const pend = compliance.filter((d) => d.status === "SUBMITTED").length;
+  return pend > 0 ? `${pend} pending review` : "—";
+}
+
+/**
+ * Transaction list / dashboard rollup only (not document-level).
+ * - Agent: badge only if any compliance doc is rejected (never "Pending Review" here).
+ * - Admin/broker: badge only if any compliance doc is pending review (never "Rejected" here).
+ */
+export function getTransactionRollupActionStatus(
+  docs: DocumentEngineDocument[],
+  rollupViewer: TransactionListRollupViewer
+): ComplianceDominantState {
+  const compliance = docs.filter(isComplianceWorkflowDocument);
+  const hasRejected = compliance.some((d) => d.status === "REJECTED");
+  const hasPendingReview = compliance.some((d) => d.status === "SUBMITTED");
+  if (rollupViewer === "agent") {
+    if (hasRejected) return "rejected";
+    return "none";
+  }
+  if (hasPendingReview) return "pending_review";
+  return "none";
+}
+
+function toWorkItem(row: TransactionRow, rollupViewer: TransactionListRollupViewer): WorkItem {
   const agentDisplayName = formatAgentLabelForList(getAssignedAgentDisplayNameFromRow(row));
-  const { readiness, dominant } = getComplianceReadinessAndDominant(row, []);
+  const { readiness, dominant, docs } = getComplianceReadinessAndDominant(row, [], rollupViewer);
   const wf = dominantStateToTableFields(dominant, readiness);
   const closing = row.closing_date ?? "";
 
@@ -176,12 +283,12 @@ function toWorkItem(row: TransactionRow): WorkItem {
     agentDisplayName: agentDisplayName.trim() || undefined,
     status: wf.statusLabel,
     statusLabel: wf.statusLabel,
-    statusType: wf.status,
+    statusType: wf.status as WorkItemStatus,
     stage: (row.status ?? "").trim() || "—",
     rawTransactionStatus: row.status ?? undefined,
     closingDate: closing,
     dueDate: closing,
-    risk: formatRiskMinimal(readiness),
+    risk: formatActionRisk(docs, rollupViewer),
     missingCount: 0,
     rejectedCount: 0,
     lastActivity: "",
@@ -204,7 +311,12 @@ export async function getTransaction(id: string): Promise<TransactionRow | null>
     return null;
   }
 
-  return data as TransactionRow;
+  const row = data as TransactionRow;
+  const { scopeOfficeId, denyAll } = await resolveOfficeScopedDataAccess();
+  if (denyAll) return null;
+  if (scopeOfficeId && (row.office ?? "").trim() !== scopeOfficeId) return null;
+
+  return row;
 }
 
 export type CreateTransactionInput = {
@@ -233,6 +345,16 @@ export async function createTransaction(input: CreateTransactionInput): Promise<
     return null;
   }
 
+  const { scopeOfficeId, denyAll } = await resolveOfficeScopedDataAccess();
+  if (denyAll) {
+    console.error("[createTransaction] broker has no office_id on profile");
+    return null;
+  }
+  if (scopeOfficeId && input.officeId.trim() !== scopeOfficeId) {
+    console.error("[createTransaction] office_id must match user_profiles.office_id");
+    return null;
+  }
+
   const templateId = (input.checklistTemplateId ?? "").trim();
   let checklist_template_id: string | null = null;
   let checklisttype: string | null = null;
@@ -255,6 +377,11 @@ export async function createTransaction(input: CreateTransactionInput): Promise<
   const transactionSide = input.transactionSide ?? null;
   const sessionEmail = user.email?.trim() ?? "";
   const agentFields = sessionAgentNameFieldsForTransactionSide(transactionSide, sessionEmail);
+  const agent =
+    (agentFields.listagent ?? "").trim() ||
+    (agentFields.buyeragent ?? "").trim() ||
+    sessionEmail ||
+    null;
 
   const id = crypto.randomUUID();
   const intake_email = intakeEmailForTransactionId(id);
@@ -264,11 +391,13 @@ export async function createTransaction(input: CreateTransactionInput): Promise<
     identifier: input.identifier,
     type: input.type,
     clientname: input.clientName,
-    office: input.officeId,
+    office: input.officeId,      // legacy, keep for now
+    office_id: input.officeId,   // required for new RLS / newer queries
     status: "Pre-Contract",
     isarchived: false,
     archivedat: null,
     agent_user_id: user.id,
+    agent,
     transaction_side: transactionSide,
     listagent: agentFields.listagent,
     buyeragent: agentFields.buyeragent,
@@ -277,8 +406,10 @@ export async function createTransaction(input: CreateTransactionInput): Promise<
     intake_email,
   };
 
-  // TODO: remove after RLS insert path verified
-  console.log("[createTransaction] public.transactions insert payload:", payload);
+  console.log(
+    "[createTransaction] public.transactions insert payload:",
+    JSON.stringify(payload, null, 2)
+  );
 
   const { data, error } = await supabase
     .from("transactions")
@@ -287,8 +418,12 @@ export async function createTransaction(input: CreateTransactionInput): Promise<
     .single();
 
   if (error) {
-    // TODO: remove after RLS insert path verified
-    console.error("[createTransaction] supabase insert error:", error);
+    console.error("[createTransaction] supabase insert error:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
     console.error("Failed to create transaction", error);
     return null;
   }
@@ -338,6 +473,39 @@ export async function updateTransaction(
   id: string,
   input: UpdateTransactionInput
 ): Promise<UpdateTransactionResult> {
+  const { scopeOfficeId, denyAll } = await resolveOfficeScopedDataAccess();
+  if (denyAll) {
+    return {
+      data: null,
+      error: {
+        message: "No office linked to your profile.",
+        details: "",
+        hint: "",
+        code: "42501",
+        name: "PostgrestError",
+      } as PostgrestError,
+    };
+  }
+  if (scopeOfficeId) {
+    const { data: cur, error: curErr } = await supabase
+      .from("transactions")
+      .select("office")
+      .eq("id", id)
+      .maybeSingle();
+    if (curErr || (cur?.office ?? "").trim() !== scopeOfficeId) {
+      return {
+        data: null,
+        error: {
+          message: "Transaction not found or access denied.",
+          details: "",
+          hint: "",
+          code: "PGRST116",
+          name: "PostgrestError",
+        } as PostgrestError,
+      };
+    }
+  }
+
   const patch = compactDefined({
     type: input.type,
     office: input.office,
@@ -384,9 +552,9 @@ export async function updateTransaction(
     return { data: null, error };
   }
 
-await syncClientPortfolioFromTransaction(id);
+  await syncClientPortfolioFromTransaction(id);
 
-return { data: data as TransactionRow, error: null };
+  return { data: data as TransactionRow, error: null };
 }
 
 // ─── Compliance Overview (dashboard): batched checklist + document engine ───
@@ -416,9 +584,9 @@ export type ComplianceOverviewTableRow = {
 
 export type ComplianceOverviewLegend = {
   rejected: number;
-  missing: number;
   pendingReview: number;
-  complete: number;
+  /** No status badge (nothing rejected or awaiting review). */
+  noAction: number;
 };
 
 /** Dashboard KPIs: same RLS scope as Compliance Overview (`transactions` + role filter). */
@@ -440,7 +608,7 @@ export type DashboardKpis = {
 
 export type ComplianceOverviewData = {
   legend: ComplianceOverviewLegend;
-  /** Mutually exclusive dominant state per row; table lists non-complete only. */
+  /** Per-row workflow status (rejected / pending review / none). */
   tableRows: ComplianceOverviewTableRow[];
   kpis: DashboardKpis;
 };
@@ -504,16 +672,22 @@ function closingSortKey(iso: string | null): number {
 
 /** Batch-load finalized flags from `client_portfolio` for dashboard rows. */
 async function fetchClosingFinalizedFlagsForTransactionIds(
-  transactionIds: string[]
+  transactionIds: string[],
+  /** When set (broker office scope), restricts portfolio rows to this office. */
+  scopeOfficeId?: string | null
 ): Promise<Map<string, boolean>> {
   const map = new Map<string, boolean>();
   if (transactionIds.length === 0 || !supabase) return map;
   for (let i = 0; i < transactionIds.length; i += CHECKLIST_BATCH_SIZE) {
     const chunk = transactionIds.slice(i, i + CHECKLIST_BATCH_SIZE);
-    const { data, error } = await supabase
+    let q = supabase
       .from("client_portfolio")
       .select("transaction_id, portfolio_stage")
       .in("transaction_id", chunk);
+    if (scopeOfficeId) {
+      q = q.eq("office_id", scopeOfficeId);
+    }
+    const { data, error } = await q;
     if (error) {
       console.error("[fetchClosingFinalizedFlagsForTransactionIds]", error);
       continue;
@@ -535,73 +709,34 @@ function isActivePipelineTransaction(row: TransactionRow): boolean {
   return true;
 }
 
-function resolveDominantState(readiness: ReturnType<typeof getTransactionClosingReadiness>): ComplianceDominantState {
-  if (readiness.rejectedRequiredCount > 0) return "rejected";
-  if (readiness.missingRequiredCount > 0) return "missing";
-  if (readiness.submittedRequiredCount > 0) return "pending_review";
-  return "complete";
-}
-
 function dominantStateToTableFields(
   dominant: ComplianceDominantState,
   readiness: ReturnType<typeof getTransactionClosingReadiness>
 ): Pick<ComplianceOverviewTableRow, "status" | "statusLabel" | "documents" | "missingDocs"> {
+  const accepted = readiness.acceptedRequiredCount;
   switch (dominant) {
     case "rejected":
       return {
         status: "error",
         statusLabel: "Rejected",
-        missingDocs: readiness.rejectedRequiredCount,
-        documents: undefined,
-      };
-    case "missing":
-      return {
-        status: "warning",
-        statusLabel: "Missing required",
-        missingDocs: readiness.missingRequiredCount,
-        documents: undefined,
+        missingDocs: undefined,
+        documents: accepted,
       };
     case "pending_review":
       return {
-        status: "info",
-        statusLabel: "Pending review",
-        missingDocs: readiness.submittedRequiredCount,
-        documents: undefined,
-      };
-    default:
-      return {
-        status: "success",
-        statusLabel: "Complete",
+        status: "warning",
+        statusLabel: "Pending Review",
         missingDocs: undefined,
-        documents: readiness.acceptedRequiredCount,
+        documents: accepted,
+      };
+    case "none":
+      return {
+        status: "pending",
+        statusLabel: "",
+        missingDocs: undefined,
+        documents: accepted,
       };
   }
-}
-
-/**
- * Compliance engine shows all required items satisfied, but workflow may still be open.
- * Use "Ready to finalize" so the dashboard table can treat rows as close-ready; reserve "Complete" for terminal workflow.
- */
-function operationalCompleteRowFields(
-  tx: TransactionRow,
-  readiness: ReturnType<typeof getTransactionClosingReadiness>
-): Pick<ComplianceOverviewTableRow, "status" | "statusLabel" | "documents" | "missingDocs"> {
-  const wf = (tx.status ?? "").trim().toLowerCase();
-  const documents = readiness.acceptedRequiredCount;
-  if (wf === "closed" || wf === "archived") {
-    return {
-      status: "success",
-      statusLabel: "Complete",
-      missingDocs: undefined,
-      documents,
-    };
-  }
-  return {
-    status: "success",
-    statusLabel: "Ready to finalize",
-    missingDocs: undefined,
-    documents,
-  };
 }
 
 function engineDocumentsForTransaction(
@@ -643,43 +778,39 @@ async function fetchChecklistRowsForTransactions(
 
 function getComplianceReadinessAndDominant(
   tx: TransactionRow,
-  checklistRowsForTx: ChecklistItemDbRow[]
+  checklistRowsForTx: ChecklistItemDbRow[],
+  rollupViewer: TransactionListRollupViewer
 ): {
   readiness: ReturnType<typeof getTransactionClosingReadiness>;
   dominant: ComplianceDominantState;
+  docs: DocumentEngineDocument[];
 } {
   const docs = engineDocumentsForTransaction(tx, checklistRowsForTx);
   const readiness = getTransactionClosingReadiness(docs);
-  const dominant = resolveDominantState(readiness);
-  return { readiness, dominant };
+  const dominant = getTransactionRollupActionStatus(docs, rollupViewer);
+  return { readiness, dominant, docs };
 }
 
-/** Same dominant-state rules as Compliance Overview (engine + closing readiness). */
+/** Viewer-specific list/dashboard rollup (same rules as listTransactions). */
 export function getComplianceDominantStateForTransaction(
   tx: TransactionRow,
-  checklistRowsForTx: ChecklistItemDbRow[]
+  checklistRowsForTx: ChecklistItemDbRow[],
+  rollupViewer: TransactionListRollupViewer = "admin"
 ): ComplianceDominantState {
-  return getComplianceReadinessAndDominant(tx, checklistRowsForTx).dominant;
+  return getComplianceReadinessAndDominant(tx, checklistRowsForTx, rollupViewer).dominant;
 }
 
 /**
  * Compliance Overview: two queries (transactions + batched checklist_items), then
  * checklistItemToEngineDocument + getTransactionClosingReadiness per transaction in memory.
- * Agent scope: only that agent's transactions. Admin and broker: same RLS-visible row set (no extra client filter).
+ * Agent scope: only that agent's transactions. Office: `transactions.office` = `user_profiles.office_id` when set.
+ * No profile office (non–btq_admin): unscoped here; `btq_admin` unscoped on client.
  */
 export async function fetchComplianceOverviewData(): Promise<ComplianceOverviewData | null> {
   const user = await getCurrentUser();
   const role = await getTransactionRuntimeRole();
 
-  const { data: txData, error: txErr } = await supabase.from("transactions").select("*");
-
-  if (txErr) {
-    console.error("fetchComplianceOverviewData: transactions", txErr);
-    return null;
-  }
-
-  let rows = (txData ?? []) as TransactionRow[];
-  rows = rows.filter((r) => !r.isarchived);
+  const { scopeOfficeId, denyAll } = await resolveOfficeScopedDataAccess();
 
   const emptyKpis: DashboardKpis = {
     activeTransactionCount: 0,
@@ -689,10 +820,32 @@ export async function fetchComplianceOverviewData(): Promise<ComplianceOverviewD
     activePipelineSalePriceSum: 0,
   };
 
+  if (denyAll) {
+    return {
+      legend: { rejected: 0, pendingReview: 0, noAction: 0 },
+      tableRows: [],
+      kpis: emptyKpis,
+    };
+  }
+
+  let txQuery = supabase.from("transactions").select("*");
+  if (scopeOfficeId) {
+    txQuery = txQuery.eq("office", scopeOfficeId);
+  }
+  const { data: txData, error: txErr } = await txQuery;
+
+  if (txErr) {
+    console.error("fetchComplianceOverviewData: transactions", txErr);
+    return null;
+  }
+
+  let rows = (txData ?? []) as TransactionRow[];
+  rows = rows.filter((r) => !r.isarchived);
+
   if (role === "agent") {
     if (!user?.id) {
       return {
-        legend: { rejected: 0, missing: 0, pendingReview: 0, complete: 0 },
+        legend: { rejected: 0, pendingReview: 0, noAction: 0 },
         tableRows: [],
         kpis: emptyKpis,
       };
@@ -701,10 +854,16 @@ export async function fetchComplianceOverviewData(): Promise<ComplianceOverviewD
   }
   // role === "admin" | "broker": keep full RLS-scoped set; do not collapse broker identity into admin.
 
+  const rollupViewer = resolveTransactionListRollupViewer(role);
+
+  const profileById = await fetchUserProfileLabelsByIds(
+    rows.map((r) => r.agent_user_id).filter((x): x is string => !!x?.trim())
+  );
+
   const ids = rows.map((r) => r.id);
   const [checklistRows, closingFinalizedByTxId] = await Promise.all([
     fetchChecklistRowsForTransactions(ids),
-    fetchClosingFinalizedFlagsForTransactionIds(ids),
+    fetchClosingFinalizedFlagsForTransactionIds(ids, scopeOfficeId),
   ]);
   const byTx = new Map<string, ChecklistItemDbRow[]>();
   for (const cr of checklistRows) {
@@ -716,9 +875,8 @@ export async function fetchComplianceOverviewData(): Promise<ComplianceOverviewD
 
   const legend: ComplianceOverviewLegend = {
     rejected: 0,
-    missing: 0,
     pendingReview: 0,
-    complete: 0,
+    noAction: 0,
   };
 
   const tableRows: ComplianceOverviewTableRow[] = [];
@@ -727,7 +885,11 @@ export async function fetchComplianceOverviewData(): Promise<ComplianceOverviewD
   const officesOnActive = new Set<string>();
 
   for (const tx of rows) {
-    const { readiness, dominant } = getComplianceReadinessAndDominant(tx, byTx.get(tx.id) ?? []);
+    const { readiness, dominant } = getComplianceReadinessAndDominant(
+      tx,
+      byTx.get(tx.id) ?? [],
+      rollupViewer
+    );
 
     kpis.complianceDocsPendingReviewCount += readiness.submittedRequiredCount;
 
@@ -746,21 +908,16 @@ export async function fetchComplianceOverviewData(): Promise<ComplianceOverviewD
       case "rejected":
         legend.rejected += 1;
         break;
-      case "missing":
-        legend.missing += 1;
-        break;
       case "pending_review":
         legend.pendingReview += 1;
         break;
-      default:
-        legend.complete += 1;
+      case "none":
+        legend.noAction += 1;
+        break;
     }
 
-    const fields =
-      dominant === "complete"
-        ? operationalCompleteRowFields(tx, readiness)
-        : dominantStateToTableFields(dominant, readiness);
-    const agentName = getAssignedAgentDisplayNameFromRow(tx);
+    const fields = dominantStateToTableFields(dominant, readiness);
+    const agentName = resolveAgentLabelForListRow(tx, profileById);
     const wf = (tx.status ?? "").trim().toLowerCase();
 
     tableRows.push({
@@ -799,32 +956,38 @@ export async function fetchComplianceOverviewData(): Promise<ComplianceOverviewD
 export async function listTransactions(
   viewerRoleKey?: "admin" | "agent" | "broker" | null
 ): Promise<WorkItem[]> {
-  const { data, error } = await supabase.from("transactions").select("*");
+  const role =
+    viewerRoleKey !== undefined ? viewerRoleKey : await getUserProfileRoleKey();
+
+  const { scopeOfficeId, denyAll } = await resolveOfficeScopedDataAccess();
+
+  if (denyAll) {
+    return [];
+  }
+
+  let txQuery = supabase.from("transactions").select("*");
+  if (scopeOfficeId) {
+    txQuery = txQuery.eq("office", scopeOfficeId);
+  }
+  const { data, error } = await txQuery;
 
   if (error) {
     console.error("Failed to load transactions", error);
     return [];
   }
 
-  const role =
-    viewerRoleKey !== undefined ? viewerRoleKey : await getUserProfileRoleKey();
-
-  const rosterDisplayByUserId = new Map<string, string>();
-  if (role === "broker") {
-    const roster = await getOfficeRosterForCurrentBroker();
-    for (const r of roster) {
-      const dn = (r.display_name ?? "").trim();
-      if (r.id && dn) rosterDisplayByUserId.set(r.id, dn);
-    }
-  }
+  const rollupViewer = resolveTransactionListRollupViewer(role);
 
   const rows = (data ?? []) as TransactionRow[];
-  const items = rows.map((row) => toWorkItem(row));
+  const profileById = await fetchUserProfileLabelsByIds(
+    rows.map((r) => r.agent_user_id).filter((x): x is string => !!x?.trim())
+  );
+  const items = rows.map((row) => toWorkItem(row, rollupViewer));
   const ids = items.map((i) => i.id);
   const [counts, checklistRows, closingFinalizedByTxId] = await Promise.all([
     fetchComplianceDocCountsByTransactionIds(ids),
     fetchChecklistRowsForTransactions(ids),
-    fetchClosingFinalizedFlagsForTransactionIds(ids),
+    fetchClosingFinalizedFlagsForTransactionIds(ids, scopeOfficeId),
   ]);
 
   const byTx = new Map<string, ChecklistItemDbRow[]>();
@@ -841,17 +1004,14 @@ export async function listTransactions(
     const rejected = c?.rejected ?? 0;
     const tx = rows[index];
     const checklistForTx = byTx.get(tx.id) ?? [];
-    const { readiness, dominant } = getComplianceReadinessAndDominant(tx, checklistForTx);
+    const { readiness, dominant, docs } = getComplianceReadinessAndDominant(
+      tx,
+      checklistForTx,
+      rollupViewer
+    );
     const wf = dominantStateToTableFields(dominant, readiness);
 
-    const rawAgent = getAssignedAgentDisplayNameFromRow(tx);
-    const uid = tx.agent_user_id?.trim();
-    let agentDisplayName = rawAgent;
-    if (uid && rosterDisplayByUserId.has(uid)) {
-      agentDisplayName = rosterDisplayByUserId.get(uid)!;
-    } else {
-      agentDisplayName = formatAgentLabelForList(rawAgent);
-    }
+    const agentDisplayName = resolveAgentLabelForListRow(tx, profileById);
 
     const wfStatus = (tx.status ?? "").trim().toLowerCase();
 
@@ -860,8 +1020,8 @@ export async function listTransactions(
       agentDisplayName: agentDisplayName.trim() || undefined,
       status: wf.statusLabel,
       statusLabel: wf.statusLabel,
-      statusType: wf.status,
-      risk: formatRiskMinimal(readiness),
+      statusType: wf.status as WorkItemStatus,
+      risk: formatActionRisk(docs, rollupViewer),
       compliancePendingReviewCount: pending,
       complianceRejectedCount: rejected,
       missingCount: pending,

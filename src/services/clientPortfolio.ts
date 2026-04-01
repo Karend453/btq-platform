@@ -1,4 +1,5 @@
 import { supabase, supabaseInitError } from "../lib/supabaseClient";
+import { resolveOfficeScopedDataAccess } from "./auth";
 
 export async function syncClientPortfolioFromTransaction(
   transactionId: string,
@@ -161,11 +162,19 @@ export async function getClientPortfolioForTransaction(
     throw new Error(supabaseInitError ?? "Supabase is not configured.");
   }
 
-  const { data, error } = await supabase
+  const { scopeOfficeId, denyAll } = await resolveOfficeScopedDataAccess();
+  if (denyAll) {
+    return null;
+  }
+
+  let q = supabase
     .from("client_portfolio")
     .select("id, portfolio_stage, close_price, event_date, revenue_amount")
-    .eq("transaction_id", transactionId)
-    .maybeSingle();
+    .eq("transaction_id", transactionId);
+  if (scopeOfficeId) {
+    q = q.eq("office_id", scopeOfficeId);
+  }
+  const { data, error } = await q.maybeSingle();
 
   if (error) {
     throw new Error(error.message || "Failed to load client portfolio.");
@@ -206,6 +215,8 @@ const WORKFLOW_STATUS_BATCH = 120;
 
 async function fetchWorkflowClosedByTransactionId(
   transactionIds: string[],
+  /** `transactions.office` must match when set (broker scope). */
+  scopeOfficeId?: string | null,
 ): Promise<Map<string, boolean>> {
   const map = new Map<string, boolean>();
   if (!supabase || transactionIds.length === 0) return map;
@@ -214,10 +225,14 @@ async function fetchWorkflowClosedByTransactionId(
 
   for (let i = 0; i < unique.length; i += WORKFLOW_STATUS_BATCH) {
     const chunk = unique.slice(i, i + WORKFLOW_STATUS_BATCH);
-    const { data, error } = await supabase
+    let q = supabase
       .from("transactions")
       .select("id, status")
       .in("id", chunk);
+    if (scopeOfficeId) {
+      q = q.eq("office", scopeOfficeId);
+    }
+    const { data, error } = await q;
 
     if (error) {
       console.error("[fetchWorkflowClosedByTransactionId]", error);
@@ -242,11 +257,20 @@ export async function listClientPortfolio(
     throw new Error(supabaseInitError ?? "Supabase is not configured.");
   }
 
+  const { scopeOfficeId, denyAll } = await resolveOfficeScopedDataAccess();
+  if (denyAll) {
+    return [];
+  }
+
   let query = supabase
     .from("client_portfolio")
     .select("*")
     .order("event_date", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false });
+
+  if (scopeOfficeId) {
+    query = query.eq("office_id", scopeOfficeId);
+  }
 
   if (filters.agentId) {
     query = query.eq("agent_id", filters.agentId);
@@ -272,8 +296,10 @@ export async function listClientPortfolio(
   }
 
   const raw = (data ?? []) as ClientPortfolioRow[];
+
   const wfByTx = await fetchWorkflowClosedByTransactionId(
     raw.map((r) => r.transaction_id).filter((id): id is string => !!id?.trim()),
+    scopeOfficeId,
   );
 
   return raw.map((row) => {

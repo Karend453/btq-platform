@@ -17,11 +17,21 @@ import { BackOfficeRouteGuard } from "./pages/back-office/BackOfficeRouteGuard";
 import { OrgManagementPage } from "./pages/back-office/OrgManagementPage";
 import { BackOfficeAddOfficePage } from "./pages/back-office/BackOfficeAddOfficePage";
 import { BackOfficeOfficeDetailPage } from "./pages/back-office/BackOfficeOfficeDetailPage";
+import { PricingPage } from "./pages/PricingPage";
+import { SignupPage } from "./pages/SignupPage";
 
 export const router = createBrowserRouter([
   {
     path: "/login",
     element: <Login />,
+  },
+  {
+    path: "/pricing",
+    element: <PricingPage />,
+  },
+  {
+    path: "/signup",
+    element: <SignupPage />,
   },
   {
     path: "/back-office/login",

@@ -77,7 +77,7 @@ function canOfferFinalizeClosing(row: WorkItem): boolean {
 function parseComplianceFilterParam(raw: string | null): ComplianceDominantState | null {
   if (!raw) return null;
   const v = raw.trim().toLowerCase();
-  if (v === "rejected" || v === "missing" || v === "pending_review") return v;
+  if (v === "rejected" || v === "pending_review") return v;
   if (v === "pending") return "pending_review";
   return null;
 }
@@ -178,13 +178,19 @@ export default function TransactionsPage() {
 
   const summary = useMemo(() => {
     const needsAttention = filteredRows.filter(
-      (r) => (r.missingCount ?? 0) > 0 || (r.rejectedCount ?? 0) > 0
+      (r) => r.complianceDominant === "rejected" || r.complianceDominant === "pending_review"
     ).length;
 
-    const totalMissing = filteredRows.reduce((sum, r) => sum + (r.missingCount ?? 0), 0);
-    const totalRejected = filteredRows.reduce((sum, r) => sum + (r.rejectedCount ?? 0), 0);
+    const totalPendingReview = filteredRows.reduce(
+      (sum, r) => sum + (r.compliancePendingReviewCount ?? 0),
+      0
+    );
+    const totalRejected = filteredRows.reduce(
+      (sum, r) => sum + (r.complianceRejectedCount ?? 0),
+      0
+    );
 
-    return { needsAttention, totalMissing, totalRejected };
+    return { needsAttention, totalPendingReview, totalRejected };
   }, [filteredRows]);
 
   const openTransaction = (id: string) => {
@@ -230,11 +236,7 @@ export default function TransactionsPage() {
                 title="Clear compliance filter"
               >
                 Compliance:{" "}
-                {complianceFilter === "rejected"
-                  ? "Rejected"
-                  : complianceFilter === "missing"
-                    ? "Missing docs"
-                    : "Awaiting review"}{" "}
+                {complianceFilter === "rejected" ? "Rejected" : "Pending Review"}{" "}
                 ×
               </Badge>
             )}
@@ -246,7 +248,7 @@ export default function TransactionsPage() {
 
             <Badge variant="secondary">
               <FileX style={{ width: 14, height: 14, marginRight: 6 }} />
-              {summary.totalMissing} pending review
+              {summary.totalPendingReview} pending review
             </Badge>
 
             <Badge variant="secondary">
@@ -368,7 +370,11 @@ export default function TransactionsPage() {
                       {agentDisplaySingleLine(t.agentDisplayName)}
                     </TableCell>
                     <TableCell className="px-2 py-3">
-                      <StatusBadge status={t.statusType as StatusType} label={t.status} />
+                      {t.statusLabel ? (
+                        <StatusBadge status={t.statusType as StatusType} label={t.status} />
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
                     </TableCell>
                     <TableCell className="px-2 py-3 text-muted-foreground">{t.stage}</TableCell>
                     <TableCell className="px-2 py-3 text-muted-foreground">
