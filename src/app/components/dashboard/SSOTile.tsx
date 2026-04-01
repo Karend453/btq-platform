@@ -9,7 +9,7 @@ interface SSOTileProps {
   description: string;
   icon: LucideIcon;
   iconColor: string;
-  onClick: () => void;
+  onClick?: () => void;
 }
 
 export function SSOTile({
@@ -19,8 +19,29 @@ export function SSOTile({
   iconColor,
   onClick,
 }: SSOTileProps) {
+  const interactive = typeof onClick === "function";
+
   return (
-    <Card className="hover:shadow-md transition-shadow cursor-pointer group" onClick={onClick}>
+    <Card
+      className={
+        interactive
+          ? "cursor-pointer transition-shadow hover:shadow-md hover:border-gray-300 group"
+          : "cursor-default"
+      }
+      onClick={interactive ? onClick : undefined}
+      onKeyDown={
+        interactive
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClick?.();
+              }
+            }
+          : undefined
+      }
+      role={interactive ? "button" : undefined}
+      tabIndex={interactive ? 0 : undefined}
+    >
       <CardContent className="p-6">
         <div className="flex items-start justify-between">
           <div className="flex items-start gap-4">
@@ -34,13 +55,19 @@ export function SSOTile({
               <p className="text-sm text-slate-600">{description}</p>
             </div>
           </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="opacity-0 group-hover:opacity-100 transition-opacity"
-          >
-            <ExternalLink className="h-4 w-4" />
-          </Button>
+          {interactive ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              tabIndex={-1}
+              className="opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+            >
+              <ExternalLink className="h-4 w-4" />
+            </Button>
+          ) : (
+            <div className="size-10 shrink-0" aria-hidden />
+          )}
         </div>
       </CardContent>
     </Card>

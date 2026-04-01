@@ -100,11 +100,6 @@ export function Dashboard() {
   // One stable layout until compliance + profile load (same Promise.all); avoids broker chrome flashing as "agent" first.
   const dashboardDataReady = !complianceLoading;
 
-  const handleSSOClick = (platform: string) => {
-    console.log(`Opening ${platform}...`);
-    // In a real app, this would handle SSO authentication
-  };
-
   const handleViewFullDetails = () => {
     if (selectedTransaction) {
       const transactionId = selectedTransaction.id;
@@ -220,30 +215,27 @@ export function Dashboard() {
 
           {/* Platform SSO Tiles */}
           <div>
-            <h2 className="text-xl font-semibold text-slate-900 mb-3">
-              Quick Access
-            </h2>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <SSOTile
                 title="CRM Platform"
                 description="Manage contacts, leads, and customer relationships"
                 icon={Database}
                 iconColor="bg-blue-600"
-                onClick={() => handleSSOClick("CRM")}
+                onClick={() =>
+                  window.open("https://lofty.com/", "_blank", "noopener,noreferrer")
+                }
               />
               <SSOTile
                 title="Transaction Management"
                 description="Track and manage real estate transactions"
                 icon={FileText}
                 iconColor="bg-emerald-600"
-                onClick={() => handleSSOClick("Transaction")}
               />
               <SSOTile
                 title="Accounting"
                 description="Financial reports, invoicing, and payments"
                 icon={DollarSign}
                 iconColor="bg-violet-600"
-                onClick={() => handleSSOClick("Accounting")}
               />
             </div>
           </div>

@@ -75,7 +75,6 @@ import {
   type ClientPortfolioForTransactionSnapshot,
 } from "../../services/clientPortfolio";
 import TransactionOverview from "./sections/TransactionOverview";
-import FormsEngineLaunchDialog from "./sections/FormsEngineLaunchDialog";
 import TransactionInbox from "./sections/TransactionInbox";
 import TransactionControls from "./sections/TransactionControls";
 import TransactionActivity from "./sections/TransactionActivity";
@@ -228,8 +227,6 @@ export default function TransactionDetailsPage() {
   const [newCommentText, setNewCommentText] = useState("");
   const [commentVisibility, setCommentVisibility] = useState<"Internal" | "Shared">("Shared");
   const [notifyAgentOnComment, setNotifyAgentOnComment] = useState(true);
-
-  const [zipFormsLaunchOpen, setZipFormsLaunchOpen] = useState(false);
 
   /** `undefined` while loading; `null` if no client_portfolio row yet */
   const [portfolioSnapshot, setPortfolioSnapshot] = useState<
@@ -1203,7 +1200,6 @@ export default function TransactionDetailsPage() {
           onSave={() => {
             void handleSaveTransactionControls();
           }}
-          onOpenZipFormsLaunch={() => setZipFormsLaunchOpen(true)}
           onEdit={handleEdit}
           portfolioSnapshot={portfolioSnapshot}
           onFinalizeClosingClick={openFinalizeClosingModal}
@@ -1282,12 +1278,6 @@ export default function TransactionDetailsPage() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
-
-        <FormsEngineLaunchDialog
-          open={zipFormsLaunchOpen}
-          onOpenChange={setZipFormsLaunchOpen}
-          intakeEmail={intakeEmail}
-        />
 
         <TransactionControls
           transactionStatus={transactionStatus}
