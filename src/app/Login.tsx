@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { getUserProfileRoleKey, signIn } from "../services/auth";
 import { useAuth } from "./contexts/AuthContext";
 
@@ -16,8 +16,6 @@ export default function Login() {
     let cancelled = false;
     (async () => {
       const key = await getUserProfileRoleKey();
-      // TEMP DEBUG — remove after diagnosing profile role / RLS
-      console.log("LOGIN role key", key);
       if (cancelled) return;
       navigate(key === "btq_admin" ? "/back-office/org" : "/", { replace: true });
     })();
@@ -34,8 +32,6 @@ export default function Login() {
     setLoading(false);
     if (result.success) {
       const key = await getUserProfileRoleKey();
-      // TEMP DEBUG — remove after diagnosing profile role / RLS
-      console.log("LOGIN role key", key);
       window.location.href = key === "btq_admin" ? "/back-office/org" : "/";
     } else {
       setError(result.message);
@@ -81,40 +77,6 @@ export default function Login() {
           {loading ? "Signing in..." : "Login"}
         </button>
       </form>
-
-      <div style={{ marginTop: 24, padding: "0 40px 40px" }}>
-        <p style={{ fontWeight: 600 }}>New broker signup</p>
-        <p style={{ marginTop: 8, maxWidth: 420, fontSize: 14, color: "#444" }}>
-          Plan buttons go to the intake questionnaire first; Stripe Checkout runs only after you create
-          your workspace.
-        </p>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
-          <Link
-            to="/signup?plan=core"
-            style={{ padding: "8px 12px", border: "1px solid #ccc", borderRadius: 6 }}
-          >
-            Core
-          </Link>
-          <Link
-            to="/signup?plan=growth"
-            style={{ padding: "8px 12px", border: "1px solid #ccc", borderRadius: 6 }}
-          >
-            Growth
-          </Link>
-          <Link
-            to="/signup?plan=pro"
-            style={{ padding: "8px 12px", border: "1px solid #ccc", borderRadius: 6 }}
-          >
-            Pro
-          </Link>
-          <Link
-            to="/pricing"
-            style={{ padding: "8px 12px", border: "1px solid #ccc", borderRadius: 6 }}
-          >
-            All plans
-          </Link>
-        </div>
-      </div>
     </div>
   );
 }

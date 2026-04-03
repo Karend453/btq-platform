@@ -54,8 +54,10 @@ function parseJsonBody(req: VercelRequest): Record<string, unknown> {
 }
 
 function getBaseUrl(req: VercelRequest): string {
-  if (process.env.VITE_APP_URL) {
-    return process.env.VITE_APP_URL.replace(/\/$/, "");
+  const explicit =
+    process.env.APP_URL?.trim() || process.env.VITE_APP_URL?.trim();
+  if (explicit) {
+    return explicit.replace(/\/$/, "");
   }
 
   const host = req.headers.host;
