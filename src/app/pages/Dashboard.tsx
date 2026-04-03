@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { getUserDisplayName } from "../contexts/AuthContext";
 import {
@@ -41,6 +41,8 @@ function formatUsdCompact(n: number): string {
 
 export function Dashboard() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [welcomeFromCheckout, setWelcomeFromCheckout] = useState(false);
   const { user } = useAuth();
   const [selectedOffice, setSelectedOffice] = useState("all");
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
@@ -60,6 +62,14 @@ export function Dashboard() {
     accountInfo?.display_name?.trim() ||
     getUserDisplayName(user) ||
     "there";
+
+  useEffect(() => {
+    if (searchParams.get("welcome") !== "1") return;
+    setWelcomeFromCheckout(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete("welcome");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   useEffect(() => {
     let cancelled = false;
@@ -93,6 +103,9 @@ export function Dashboard() {
       cancelled = true;
     };
   }, []);
+
+  const showWelcomeBanner =
+    welcomeFromCheckout || searchParams.get("welcome") === "1";
 
   const isBroker = profileRoleKey === "broker";
   const profileTo = isBroker ? "/settings?tab=account" : "/settings";
@@ -190,6 +203,21 @@ export function Dashboard() {
 
       <main className="flex-1 overflow-y-auto p-6">
         <div className="max-w-7xl mx-auto space-y-5">
+          {showWelcomeBanner ? (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 shadow-sm">
+              <h2 className="text-lg font-semibold text-emerald-950">Welcome to Brokerteq</h2>
+              <p className="mt-1 text-sm text-emerald-900">Your account is active</p>
+              <div className="mt-4 flex flex-wrap gap-3">
+                <Button asChild>
+                  <Link to="/settings">Complete setup</Link>
+                </Button>
+                <Button variant="outline" asChild>
+                  <Link to="/agents">Add your first agent</Link>
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
           {/* Page Header */}
           <div>
             <h1 className="text-3xl font-semibold text-slate-900">

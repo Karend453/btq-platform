@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -53,11 +53,13 @@ export function SignupPage() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [needsEmailConfirm, setNeedsEmailConfirm] = useState(false);
+  /** True while signup → provision → Stripe redirect is in flight; avoids Navigate to "/" before checkout. */
+  const brokerCheckoutPendingRef = useRef(false);
 
   const effectivePlan: PlanKey = planKey ?? "core";
   const planSummary = PLAN_DETAILS[effectivePlan];
 
-  if (!authLoading && user) {
+  if (!authLoading && user && !brokerCheckoutPendingRef.current) {
     return <Navigate to="/" replace />;
   }
 
@@ -73,6 +75,17 @@ export function SignupPage() {
     return (
       <div className="mx-auto max-w-lg px-6 py-16">
         <p className="text-destructive">{authEnvError}</p>
+      </div>
+    );
+  }
+
+  if (!authLoading && user && brokerCheckoutPendingRef.current) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-6">
+        <p className="text-lg font-semibold text-slate-900">Taking you to secure checkout…</p>
+        <p className="mt-2 max-w-md text-center text-sm text-slate-600">
+          Hang tight while we finish setting up your workspace and open Stripe.
+        </p>
       </div>
     );
   }
@@ -158,6 +171,7 @@ export function SignupPage() {
       return;
     }
 
+    brokerCheckoutPendingRef.current = true;
     setSubmitting(true);
 
     console.log("before signUpWithPassword");
@@ -168,12 +182,14 @@ export function SignupPage() {
 
     if (!signUpResult.success) {
       console.log("signup failed");
+      brokerCheckoutPendingRef.current = false;
       setSubmitting(false);
       setSubmitError(signUpResult.message);
       return;
     }
 
     if (!signUpResult.sessionEstablished) {
+      brokerCheckoutPendingRef.current = false;
       setSubmitting(false);
       setNeedsEmailConfirm(true);
       return;
@@ -195,6 +211,7 @@ export function SignupPage() {
 
     if (!provision.success) {
       await signOut();
+      brokerCheckoutPendingRef.current = false;
       setSubmitting(false);
       setSubmitError(provision.message);
       return;
@@ -209,6 +226,7 @@ export function SignupPage() {
       });
       window.location.href = checkout.url;
     } catch (err) {
+      brokerCheckoutPendingRef.current = false;
       setSubmitting(false);
       setSubmitError(err instanceof Error ? err.message : "Unable to start checkout.");
     }

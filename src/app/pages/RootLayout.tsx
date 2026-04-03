@@ -176,6 +176,19 @@ export function RootLayout() {
     );
   }
 
+  const isBillingCheckoutReturn =
+    location.pathname === "/settings/billing/success" ||
+    location.pathname === "/settings/billing/cancelled" ||
+    location.pathname === "/settings/billing/cancel";
+
+  if (!user && isBillingCheckoutReturn) {
+    return (
+      <div className="min-h-screen bg-slate-50">
+        <Outlet />
+      </div>
+    );
+  }
+
   if (!user) {
     const loginTarget = location.pathname.startsWith("/back-office")
       ? "/back-office/login"
