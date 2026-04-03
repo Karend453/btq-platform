@@ -1,13 +1,19 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { Button } from "../../components/ui/button";
 import { useAuth } from "../../contexts/AuthContext";
+
+const SIGNUP_CHECKOUT_FAILED_KEY = "btq_signup_checkout_failed";
 
 /** Post–Stripe Checkout: confirm payment and point users to sign-in or settings. */
 export function BillingCheckoutSuccessPage() {
   const [searchParams] = useSearchParams();
   const sessionId = searchParams.get("session_id") ?? "";
   const { user } = useAuth();
+
+  useEffect(() => {
+    sessionStorage.removeItem(SIGNUP_CHECKOUT_FAILED_KEY);
+  }, []);
 
   if (user) {
     return <Navigate to="/?welcome=1" replace />;

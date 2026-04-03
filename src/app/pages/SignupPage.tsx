@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -25,6 +25,9 @@ import {
 } from "../../lib/pricingPlans";
 import { createBrokerCheckout } from "../../services/billing";
 import { Textarea } from "../components/ui/textarea";
+
+/** Set when broker checkout fails after signup; blocks `<Navigate to="/">` until retry or successful payment. */
+const SIGNUP_CHECKOUT_FAILED_KEY = "btq_signup_checkout_failed";
 
 function validateEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
@@ -55,11 +58,29 @@ export function SignupPage() {
   const [needsEmailConfirm, setNeedsEmailConfirm] = useState(false);
   /** True while signup → provision → Stripe redirect is in flight; avoids Navigate to "/" before checkout. */
   const brokerCheckoutPendingRef = useRef(false);
+  const [checkoutFailedBlocksHome, setCheckoutFailedBlocksHome] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return sessionStorage.getItem(SIGNUP_CHECKOUT_FAILED_KEY) === "1";
+  });
+  const hadUserRef = useRef(!!user);
+
+  useEffect(() => {
+    if (hadUserRef.current && !user) {
+      sessionStorage.removeItem(SIGNUP_CHECKOUT_FAILED_KEY);
+      setCheckoutFailedBlocksHome(false);
+    }
+    hadUserRef.current = !!user;
+  }, [user]);
 
   const effectivePlan: PlanKey = planKey ?? "core";
   const planSummary = PLAN_DETAILS[effectivePlan];
 
-  if (!authLoading && user && !brokerCheckoutPendingRef.current) {
+  if (
+    !authLoading &&
+    user &&
+    !brokerCheckoutPendingRef.current &&
+    !checkoutFailedBlocksHome
+  ) {
     return <Navigate to="/" replace />;
   }
 
@@ -164,6 +185,8 @@ export function SignupPage() {
     console.log("*** ACTIVE handleSubmit fired ***");
     e.preventDefault();
     setSubmitError(null);
+    sessionStorage.removeItem(SIGNUP_CHECKOUT_FAILED_KEY);
+    setCheckoutFailedBlocksHome(false);
     const isValid = validateSignupForm();
     console.log("validateSignupForm result", isValid);
     if (!isValid) {
@@ -224,9 +247,15 @@ export function SignupPage() {
         brokerEmail: email.trim(),
         plan: planKeyToBrokerPlanKey(effectivePlan),
       });
-      window.location.href = checkout.url;
+      const url = checkout.url?.trim();
+      if (!url) {
+        throw new Error("Checkout did not return a payment link. Try again or contact support.");
+      }
+      window.location.href = url;
     } catch (err) {
       brokerCheckoutPendingRef.current = false;
+      sessionStorage.setItem(SIGNUP_CHECKOUT_FAILED_KEY, "1");
+      setCheckoutFailedBlocksHome(true);
       setSubmitting(false);
       setSubmitError(err instanceof Error ? err.message : "Unable to start checkout.");
     }
