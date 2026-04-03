@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { getUserProfileRoleKey, signIn } from "../services/auth";
 import { useAuth } from "./contexts/AuthContext";
 
@@ -46,8 +46,8 @@ export default function Login() {
   }
 
   return (
-    <div>
-      <form onSubmit={handleLogin} style={{ padding: 40 }}>
+    <div style={{ padding: 40 }}>
+      <form onSubmit={handleLogin}>
         <h2>BTQ Login</h2>
         {error && <p style={{ color: "red", marginBottom: 12 }}>{error}</p>}
 
@@ -77,6 +77,26 @@ export default function Login() {
           {loading ? "Signing in..." : "Login"}
         </button>
       </form>
+      <div
+        style={{
+          marginTop: 18,
+          display: "flex",
+          flexDirection: "column",
+          gap: 6,
+          fontSize: 12,
+          lineHeight: 1.4,
+        }}
+      >
+        <Link
+          to="/forgot-password"
+          style={{ color: "#64748b", textDecoration: "none" }}
+        >
+          Forgot password?
+        </Link>
+        <Link to="/pricing" style={{ color: "#64748b", textDecoration: "none" }}>
+          Need an account? View plans
+        </Link>
+      </div>
     </div>
   );
 }

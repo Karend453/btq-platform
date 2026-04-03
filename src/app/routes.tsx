@@ -19,6 +19,8 @@ import { BackOfficeAddOfficePage } from "./pages/back-office/BackOfficeAddOffice
 import { BackOfficeOfficeDetailPage } from "./pages/back-office/BackOfficeOfficeDetailPage";
 import { PricingPage } from "./pages/PricingPage";
 import { SignupPage } from "./pages/SignupPage";
+import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
+import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { BillingCheckoutCancelledPage } from "./pages/settings/BillingCheckoutCancelledPage";
 import { BillingCheckoutSuccessPage } from "./pages/settings/BillingCheckoutSuccessPage";
 
@@ -34,6 +36,14 @@ export const router = createBrowserRouter([
   {
     path: "/signup",
     element: <SignupPage />,
+  },
+  {
+    path: "/forgot-password",
+    element: <ForgotPasswordPage />,
+  },
+  {
+    path: "/reset-password",
+    element: <ResetPasswordPage />,
   },
   {
     path: "/back-office/login",

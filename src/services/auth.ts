@@ -21,6 +21,35 @@ export async function signOut() {
   await supabase.auth.signOut();
 }
 
+/** Sends Supabase password recovery email. Add `redirectTo` origin + `/reset-password` in Supabase Auth → URL Configuration. */
+export async function requestPasswordReset(email: string): Promise<AuthResult> {
+  if (!supabase) {
+    return { success: false, message: "Supabase client unavailable" };
+  }
+  const trimmed = email.trim();
+  if (!trimmed) {
+    return { success: false, message: "Enter your email address." };
+  }
+  const redirectTo = `${window.location.origin}/reset-password`;
+  const { error } = await supabase.auth.resetPasswordForEmail(trimmed, { redirectTo });
+  if (error) {
+    return { success: false, message: error.message };
+  }
+  return { success: true };
+}
+
+/** Call while a recovery session is active (after following the email link). */
+export async function updatePasswordFromRecovery(newPassword: string): Promise<AuthResult> {
+  if (!supabase) {
+    return { success: false, message: "Supabase client unavailable" };
+  }
+  const { error } = await supabase.auth.updateUser({ password: newPassword });
+  if (error) {
+    return { success: false, message: error.message };
+  }
+  return { success: true };
+}
+
 export type SignUpWithPasswordResult =
   | { success: true; sessionEstablished: boolean }
   | { success: false; message: string };
