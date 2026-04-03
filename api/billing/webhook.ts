@@ -1,8 +1,8 @@
 import { buffer } from "node:stream/consumers";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import type Stripe from "stripe";
-import { getStripeServer } from "../../src/lib/stripeServer";
-import { getSupabaseServiceRole } from "../../src/lib/supabaseServer";
+import { getStripeServer } from "../../src/lib/stripeServer.js";
+import { getSupabaseServiceRole } from "../../src/lib/supabaseServer.js";
 
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(

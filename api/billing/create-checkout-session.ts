@@ -1,11 +1,11 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import Stripe from "stripe";
-import { getStripeServer } from "../../src/lib/stripeServer";
+import { getStripeServer } from "../../src/lib/stripeServer.js";
 import {
   getBrokerPlanPriceId,
   getSeatPriceId,
   type BrokerPlanKey,
-} from "../../src/lib/stripePrices";
+} from "../../src/lib/stripePrices.js";
 
 const BROKER_PLAN_KEYS: readonly BrokerPlanKey[] = [
   "broker_core_monthly",

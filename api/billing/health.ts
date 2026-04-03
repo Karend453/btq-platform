@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { getStripeServer, isStripeLiveMode } from "../../src/lib/stripeServer";
-import { getPlanPriceId } from "../../src/lib/stripePrices";
+import { getStripeServer, isStripeLiveMode } from "../../src/lib/stripeServer.js";
+import { getPlanPriceId } from "../../src/lib/stripePrices.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
