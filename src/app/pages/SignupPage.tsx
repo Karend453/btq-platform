@@ -17,11 +17,14 @@ import {
   signOut,
   signUpWithPassword,
 } from "../../services/auth";
-import { PLAN_DETAILS, parsePlanKey, type PlanKey } from "../../lib/pricingPlans";
+import {
+  PLAN_DETAILS,
+  parsePlanKey,
+  planKeyToBrokerPlanKey,
+  type PlanKey,
+} from "../../lib/pricingPlans";
+import { createBrokerCheckout } from "../../services/billing";
 import { Textarea } from "../components/ui/textarea";
-import { cn } from "../components/ui/utils";
-
-type Step = 1 | 2;
 
 function validateEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
@@ -32,8 +35,6 @@ export function SignupPage() {
   const [params] = useSearchParams();
   const planParam = params.get("plan");
   const planKey = useMemo(() => parsePlanKey(planParam), [planParam]);
-
-  const [step, setStep] = useState<Step>(1);
 
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -47,11 +48,6 @@ export function SignupPage() {
   const [mlsUrl, setMlsUrl] = useState("");
   const [landvoiceLeads, setLandvoiceLeads] = useState("");
   const [referral, setReferral] = useState("");
-
-  const [cardNumber, setCardNumber] = useState("");
-  const [expiration, setExpiration] = useState("");
-  const [cvc, setCvc] = useState("");
-  const [nameOnCard, setNameOnCard] = useState("");
 
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -111,7 +107,7 @@ export function SignupPage() {
     );
   }
 
-  function validateStep1(): boolean {
+  function validateSignupForm(): boolean {
     const next: Record<string, string> = {};
     if (!fullName.trim() || fullName.trim().length < 2) {
       next.fullName = "Enter your full name.";
@@ -146,40 +142,32 @@ export function SignupPage() {
     if (!landvoiceLeads.trim()) {
       next.landvoiceLeads = "Describe your Landvoice lead needs or territory.";
     }
+    console.log("fieldErrors", next);
     setFieldErrors(next);
     return Object.keys(next).length === 0;
   }
 
-  function handleContinue(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
+    console.log("*** ACTIVE handleSubmit fired ***");
     e.preventDefault();
     setSubmitError(null);
-    if (!validateStep1()) return;
-    setStep(2);
-  }
-
-  async function handleStartSubscription(e: React.FormEvent) {
-    e.preventDefault();
-    setSubmitError(null);
-
-    // TEMP (internal testing): Payment fields are not validated — complete signup without Stripe.
-    // TODO (Stripe): Require PaymentElement / card confirmation and validate before calling signUpWithPassword.
-    // TODO (Stripe): After successful payment intent or subscription.create, then provision (or gate provisioning on webhook).
-    setFieldErrors((prev) => {
-      const next = { ...prev };
-      delete next.cardNumber;
-      delete next.expiration;
-      delete next.cvc;
-      delete next.nameOnCard;
-      return next;
-    });
+    const isValid = validateSignupForm();
+    console.log("validateSignupForm result", isValid);
+    if (!isValid) {
+      console.log("validation failed");
+      return;
+    }
 
     setSubmitting(true);
 
+    console.log("before signUpWithPassword");
     const signUpResult = await signUpWithPassword(email.trim(), password, {
       displayName: fullName.trim(),
     });
+    console.log("after signUpWithPassword", signUpResult);
 
     if (!signUpResult.success) {
+      console.log("signup failed");
       setSubmitting(false);
       setSubmitError(signUpResult.message);
       return;
@@ -212,19 +200,24 @@ export function SignupPage() {
       return;
     }
 
-    setSubmitting(false);
-    window.location.href = "/";
+    try {
+      const checkout = await createBrokerCheckout({
+        officeId: provision.officeId,
+        officeName: firmName.trim(),
+        brokerEmail: email.trim(),
+        plan: planKeyToBrokerPlanKey(effectivePlan),
+      });
+      window.location.href = checkout.url;
+    } catch (err) {
+      setSubmitting(false);
+      setSubmitError(err instanceof Error ? err.message : "Unable to start checkout.");
+    }
   }
 
   return (
     <div className="min-h-screen bg-slate-50">
       <header className="border-b border-border/60 bg-background/80 backdrop-blur-sm">
-        <div
-          className={cn(
-            "mx-auto flex items-center justify-between gap-4 px-6 py-3.5",
-            step === 2 ? "max-w-6xl" : "max-w-3xl",
-          )}
-        >
+        <div className="mx-auto flex max-w-3xl items-center justify-between gap-4 px-6 py-3.5">
           <Link
             to="/pricing"
             className="text-sm font-medium text-muted-foreground hover:text-foreground"
@@ -237,80 +230,74 @@ export function SignupPage() {
         </div>
       </header>
 
-      <main
-        className={cn(
-          "mx-auto px-5 py-8 sm:px-6 md:py-10",
-          step === 2 ? "max-w-6xl" : "max-w-3xl",
-        )}
-      >
-        {step === 1 ? (
-          <div className="grid gap-6 lg:grid-cols-[minmax(0,13.75rem)_minmax(0,1fr)] lg:items-start lg:gap-7">
-            <aside className="space-y-3.5 lg:max-w-[13.75rem] lg:shrink-0">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                Step 1 of 2
-              </p>
-              <h1 className="text-xl font-semibold tracking-tight text-foreground md:text-2xl">
-                Set up your brokerage
-              </h1>
-              <p className="text-sm leading-relaxed text-muted-foreground">
-                Tell us about your brokerage so we can prepare your CRM, lead generation, and onboarding
-                setup.
-              </p>
-              {planKey ? (
-                <div className="rounded-lg border border-border/70 bg-card px-3 py-3 shadow-sm">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    Selected plan
-                  </p>
-                  <p className="mt-1.5 text-sm font-semibold leading-tight text-foreground">
-                    {planSummary.label}
-                    <span className="font-normal text-muted-foreground">
-                      {" "}
-                      · ${planSummary.pricePerMonth}/mo
-                    </span>
-                  </p>
-                  <p className="mt-2 text-xs leading-snug text-muted-foreground">{planSummary.tagline}</p>
-                </div>
-              ) : (
-                <p className="text-xs leading-snug text-muted-foreground">
-                  <span>Brokerage plan · </span>
-                  <span className="font-semibold text-foreground">Core</span>
-                  {" · "}
-                  <Link
-                    to="/pricing"
-                    className="font-medium text-primary underline-offset-4 hover:underline"
-                  >
-                    Change plan
-                  </Link>
+      <main className="mx-auto max-w-3xl px-5 py-8 sm:px-6 md:py-10">
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,13.75rem)_minmax(0,1fr)] lg:items-start lg:gap-7">
+          <aside className="space-y-3.5 lg:max-w-[13.75rem] lg:shrink-0">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Broker signup
+            </p>
+            <h1 className="text-xl font-semibold tracking-tight text-foreground md:text-2xl">
+              Set up your brokerage
+            </h1>
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              Tell us about your brokerage so we can prepare your CRM, lead generation, and onboarding
+              setup. You’ll continue to secure payment on Stripe.
+            </p>
+            {planKey ? (
+              <div className="rounded-lg border border-border/70 bg-card px-3 py-3 shadow-sm">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Selected plan
                 </p>
-              )}
-            </aside>
+                <p className="mt-1.5 text-sm font-semibold leading-tight text-foreground">
+                  {planSummary.label}
+                  <span className="font-normal text-muted-foreground">
+                    {" "}
+                    · ${planSummary.pricePerMonth}/mo
+                  </span>
+                </p>
+                <p className="mt-2 text-xs leading-snug text-muted-foreground">{planSummary.tagline}</p>
+              </div>
+            ) : (
+              <p className="text-xs leading-snug text-muted-foreground">
+                <span>Brokerage plan · </span>
+                <span className="font-semibold text-foreground">Core</span>
+                {" · "}
+                <Link
+                  to="/pricing"
+                  className="font-medium text-primary underline-offset-4 hover:underline"
+                >
+                  Change plan
+                </Link>
+              </p>
+            )}
+          </aside>
 
-            <div className="min-w-0">
-              <form onSubmit={handleContinue}>
-                <Card className="overflow-hidden border-border/80 shadow-sm">
-                  <CardHeader className="space-y-0.5 border-b border-border/70 bg-background px-4 pb-4 pt-3.5 md:px-5">
-                    <CardTitle className="text-sm font-semibold">Brokerage profile</CardTitle>
-                    <CardDescription className="text-xs leading-relaxed md:text-[13px]">
-                      Account details we use for Lofty, Landvoice, and your BTQ workspace.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-[1.35rem] p-4 md:p-5">
-                    <div className="grid gap-[1.125rem] md:grid-cols-2 md:gap-x-[1.35rem] md:gap-y-[1.125rem]">
-                      <div className="space-y-[1.125rem]">
-                        <div className="space-y-2">
-                          <Label htmlFor="fullName">Full name</Label>
-                          <Input
-                            id="fullName"
-                            autoComplete="name"
-                            value={fullName}
-                            onChange={(e) => setFullName(e.target.value)}
-                            aria-invalid={!!fieldErrors.fullName}
-                            className="h-11"
-                          />
-                          {fieldErrors.fullName && (
-                            <p className="text-sm text-destructive">{fieldErrors.fullName}</p>
-                          )}
-                        </div>
+          <div className="min-w-0">
+            <form onSubmit={handleSubmit}>
+              <Card className="overflow-hidden border-border/80 shadow-sm">
+                <CardHeader className="space-y-0.5 border-b border-border/70 bg-background px-4 pb-4 pt-3.5 md:px-5">
+                  <CardTitle className="text-sm font-semibold">Brokerage profile</CardTitle>
+                  <CardDescription className="text-xs leading-relaxed md:text-[13px]">
+                    Account details we use for Lofty, Landvoice, and your BTQ workspace.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-[1.35rem] p-4 md:p-5">
+                  <div className="grid gap-[1.125rem] md:grid-cols-2 md:gap-x-[1.35rem] md:gap-y-[1.125rem]">
+                    <div className="space-y-[1.125rem]">
+                      <div className="space-y-2">
+                        <Label htmlFor="fullName">Full name</Label>
+                        <Input
+                          id="fullName"
+                          autoComplete="name"
+                          value={fullName}
+                          onChange={(e) => setFullName(e.target.value)}
+                          aria-invalid={!!fieldErrors.fullName}
+                          className="h-11"
+                        />
+                        {fieldErrors.fullName && (
+                          <p className="text-sm text-destructive">{fieldErrors.fullName}</p>
+                        )}
+                      </div>
                       <div className="space-y-2">
                         <Label htmlFor="email">Email</Label>
                         <Input
@@ -477,168 +464,25 @@ export function SignupPage() {
                     </div>
                   </div>
                 </CardContent>
-                <CardFooter className="flex w-full flex-col items-stretch gap-0 border-t border-border/70 bg-background px-4 pb-5 pt-5 sm:flex-row sm:items-center sm:justify-end md:px-5">
-                  <Button type="submit" size="lg" className="w-full sm:w-auto sm:min-w-[200px]">
-                    Continue
+                <CardFooter className="flex w-full flex-col items-stretch gap-3 border-t border-border/70 bg-background px-4 pb-5 pt-5 md:px-5">
+                  {submitError && (
+                    <p className="text-sm text-destructive" role="alert">
+                      {submitError}
+                    </p>
+                  )}
+                  <Button
+                    type="submit"
+                    size="lg"
+                    disabled={submitting}
+                    className="w-full sm:ml-auto sm:w-auto sm:min-w-[200px]"
+                  >
+                    {submitting ? "Redirecting to payment…" : "Continue to secure checkout"}
                   </Button>
                 </CardFooter>
               </Card>
-              </form>
-            </div>
+            </form>
           </div>
-        ) : (
-          <>
-            <div className="mb-8 md:mb-10">
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Step 2 of 2
-              </p>
-              <h1 className="mt-2 text-2xl font-semibold tracking-tight md:text-3xl">
-                Activate your account
-              </h1>
-              <p className="mt-3 max-w-2xl text-base leading-relaxed text-muted-foreground md:text-lg">
-                Review your plan and continue. Billing will be confirmed when Stripe is connected.
-              </p>
-            </div>
-          </>
-        )}
-
-        {step === 2 && (
-          <form onSubmit={handleStartSubscription}>
-            <div className="grid gap-8 lg:grid-cols-2 lg:gap-12">
-              <Card className="border-border/80 shadow-sm">
-                <CardHeader>
-                  <CardTitle className="text-lg">Payment</CardTitle>
-                  <CardDescription>
-                    Nothing is charged until Stripe billing is enabled. Card fields are optional for now.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="cardNumber">Card number</Label>
-                    <Input
-                      id="cardNumber"
-                      inputMode="numeric"
-                      autoComplete="cc-number"
-                      placeholder="0000 0000 0000 0000"
-                      value={cardNumber}
-                      onChange={(e) => setCardNumber(e.target.value)}
-                      aria-invalid={!!fieldErrors.cardNumber}
-                    />
-                    {fieldErrors.cardNumber && (
-                      <p className="text-sm text-destructive">{fieldErrors.cardNumber}</p>
-                    )}
-                  </div>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label htmlFor="expiration">Expiration</Label>
-                      <Input
-                        id="expiration"
-                        autoComplete="cc-exp"
-                        placeholder="MM / YY"
-                        value={expiration}
-                        onChange={(e) => setExpiration(e.target.value)}
-                        aria-invalid={!!fieldErrors.expiration}
-                      />
-                      {fieldErrors.expiration && (
-                        <p className="text-sm text-destructive">{fieldErrors.expiration}</p>
-                      )}
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="cvc">CVC</Label>
-                      <Input
-                        id="cvc"
-                        inputMode="numeric"
-                        autoComplete="cc-csc"
-                        placeholder="123"
-                        value={cvc}
-                        onChange={(e) => setCvc(e.target.value)}
-                        aria-invalid={!!fieldErrors.cvc}
-                      />
-                      {fieldErrors.cvc && (
-                        <p className="text-sm text-destructive">{fieldErrors.cvc}</p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="nameOnCard">Name on card</Label>
-                    <Input
-                      id="nameOnCard"
-                      autoComplete="cc-name"
-                      value={nameOnCard}
-                      onChange={(e) => setNameOnCard(e.target.value)}
-                      aria-invalid={!!fieldErrors.nameOnCard}
-                    />
-                    {fieldErrors.nameOnCard && (
-                      <p className="text-sm text-destructive">{fieldErrors.nameOnCard}</p>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-
-              <div className="space-y-2">
-                <Card className="border-border/80 shadow-sm">
-                  <CardHeader>
-                    <CardTitle className="text-lg">Plan summary</CardTitle>
-                    <CardDescription>{planSummary.tagline}</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="flex items-baseline justify-between gap-4">
-                      <span className="text-2xl font-semibold tracking-tight">
-                        {planSummary.label}
-                      </span>
-                      <span className="text-2xl font-semibold tracking-tight">
-                        ${planSummary.pricePerMonth}
-                        <span className="text-base font-medium text-muted-foreground">/mo</span>
-                      </span>
-                    </div>
-                    <div className="space-y-2 border-t border-border/60 pt-4 text-sm text-muted-foreground">
-                      <div className="flex justify-between gap-4">
-                        <span>Brokerage</span>
-                        <span className="text-right font-medium text-foreground">
-                          {firmName.trim() || "—"}
-                        </span>
-                      </div>
-                      <div className="flex justify-between gap-4">
-                        <span>Primary contact</span>
-                        <span className="text-right font-medium text-foreground">
-                          {fullName.trim() || "—"}
-                        </span>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-                <p className="text-xs text-muted-foreground">
-                  By starting your subscription you agree to Brokerteq’s terms. Billing is simulated
-                  until Stripe is connected.
-                </p>
-              </div>
-            </div>
-
-            {submitError && (
-              <p className="mt-5 text-sm text-destructive" role="alert">
-                {submitError}
-              </p>
-            )}
-
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <Button
-                type="button"
-                variant="outline"
-                disabled={submitting}
-                onClick={() => {
-                  setStep(1);
-                  setFieldErrors({});
-                  setSubmitError(null);
-                }}
-              >
-                Back
-              </Button>
-              <Button type="submit" size="lg" disabled={submitting} className="sm:min-w-[200px]">
-                {submitting ? "Starting…" : "Start subscription"}
-              </Button>
-            </div>
-          </form>
-        )}
+        </div>
       </main>
     </div>
   );

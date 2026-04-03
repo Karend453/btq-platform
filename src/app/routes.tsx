@@ -19,6 +19,8 @@ import { BackOfficeAddOfficePage } from "./pages/back-office/BackOfficeAddOffice
 import { BackOfficeOfficeDetailPage } from "./pages/back-office/BackOfficeOfficeDetailPage";
 import { PricingPage } from "./pages/PricingPage";
 import { SignupPage } from "./pages/SignupPage";
+import { BillingCheckoutCancelledPage } from "./pages/settings/BillingCheckoutCancelledPage";
+import { BillingCheckoutSuccessPage } from "./pages/settings/BillingCheckoutSuccessPage";
 
 export const router = createBrowserRouter([
   {
@@ -50,6 +52,9 @@ export const router = createBrowserRouter([
       { path: "analytics", element: <Analytics /> },
       { path: "offices", element: <Offices /> },
       { path: "office/checklist-templates", element: <OfficeChecklistTemplatesPage /> },
+      { path: "settings/billing/success", element: <BillingCheckoutSuccessPage /> },
+      { path: "settings/billing/cancelled", element: <BillingCheckoutCancelledPage /> },
+      { path: "settings/billing/cancel", element: <BillingCheckoutCancelledPage /> },
       { path: "settings", element: <SettingsPage /> },
       {
         path: "back-office",

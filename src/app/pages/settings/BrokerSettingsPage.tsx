@@ -1,5 +1,5 @@
 import React, { useMemo } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Building2, CreditCard, Settings, User, Users, Wallet } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { AccountInfoTab } from "./AccountInfoTab";
@@ -73,6 +73,39 @@ export function BrokerSettingsPage() {
             <MyOfficeTab />
           </TabsContent>
           <TabsContent value="subscriptions" className="mt-4">
+            <div className="mb-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
+              <p className="text-sm font-medium text-slate-800">New broker signup funnel</p>
+              <p className="mt-1 text-sm text-slate-600">
+                Plan CTAs route to intake (<code className="text-xs">/signup?plan=…</code>), then office
+                creation, then Stripe Checkout. Use these links to test that path — not direct checkout.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Link
+                  to="/signup?plan=core"
+                  className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-100"
+                >
+                  Signup · Core
+                </Link>
+                <Link
+                  to="/signup?plan=growth"
+                  className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-100"
+                >
+                  Signup · Growth
+                </Link>
+                <Link
+                  to="/signup?plan=pro"
+                  className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-100"
+                >
+                  Signup · Pro
+                </Link>
+                <Link
+                  to="/pricing"
+                  className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-100"
+                >
+                  Pricing page
+                </Link>
+              </div>
+            </div>
             <MySubscriptionsTab />
           </TabsContent>
           <TabsContent value="wallet" className="mt-4">

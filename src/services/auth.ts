@@ -35,6 +35,7 @@ export async function signUpWithPassword(
     return { success: false, message: "Supabase client unavailable" };
   }
 
+  console.log("about to call supabase.auth.signUp", email);
   const { error, data } = await supabase.auth.signUp({
     email,
     password,
@@ -52,9 +53,13 @@ export async function signUpWithPassword(
   return { success: true, sessionEstablished: !!data.session };
 }
 
+export type CompleteBrokerSignupResult =
+  | { success: true; officeId: string }
+  | { success: false; message: string };
+
 /**
  * After successful auth session, provisions `offices` row and sets `user_profiles.role = broker`.
- * Replace with Stripe subscription flow (payment method, Stripe customer/subscription ids, etc.).
+ * Returns the new `offices.id` from `complete_broker_signup` for Stripe Checkout metadata.
  */
 export async function completeBrokerSignup(input: {
   displayName: string;
@@ -69,12 +74,12 @@ export async function completeBrokerSignup(input: {
   referral: string | null;
   brokerPhone?: string | null;
   planKey: string | null;
-}): Promise<AuthResult> {
+}): Promise<CompleteBrokerSignupResult> {
   if (!supabase) {
     return { success: false, message: "Supabase client unavailable" };
   }
 
-  const { error } = await supabase.rpc("complete_broker_signup", {
+  const { data, error } = await supabase.rpc("complete_broker_signup", {
     p_display_name: input.displayName,
     p_office_name: input.officeName,
     p_team_name: input.teamName,
@@ -92,7 +97,18 @@ export async function completeBrokerSignup(input: {
     return { success: false, message: error.message };
   }
 
-  return { success: true };
+  const raw = data as unknown;
+  const officeId =
+    typeof raw === "string"
+      ? raw.trim()
+      : raw != null
+        ? String(raw).trim()
+        : "";
+  if (!officeId) {
+    return { success: false, message: "Office id missing from signup response" };
+  }
+
+  return { success: true, officeId };
 }
 
 export async function getCurrentUser() {

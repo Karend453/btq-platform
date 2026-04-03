@@ -1,5 +1,23 @@
+import type { BrokerPlanKey } from "./stripePrices";
+
 /** Marketing / signup: Brokerteq package tiers (see Pricing page). */
 export type PlanKey = "core" | "growth" | "pro";
+
+/** Map marketing tier → Stripe `BrokerPlanKey` for `createBrokerCheckout`. */
+export function planKeyToBrokerPlanKey(plan: PlanKey): BrokerPlanKey {
+  switch (plan) {
+    case "core":
+      return "broker_core_monthly";
+    case "growth":
+      return "broker_growth_monthly";
+    case "pro":
+      return "broker_pro_monthly";
+    default: {
+      const _exhaustive: never = plan;
+      return _exhaustive;
+    }
+  }
+}
 
 export const PLAN_ORDER: PlanKey[] = ["core", "growth", "pro"];
 
