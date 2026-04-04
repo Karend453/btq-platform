@@ -197,14 +197,18 @@ export function SignupPage() {
     brokerCheckoutPendingRef.current = true;
     setSubmitting(true);
 
-    console.log("before signUpWithPassword");
+    console.log("[signup] step 1/3 signUpWithPassword: start");
     const signUpResult = await signUpWithPassword(email.trim(), password, {
       displayName: fullName.trim(),
     });
-    console.log("after signUpWithPassword", signUpResult);
+    console.log("[signup] step 1/3 signUpWithPassword: result", {
+      success: signUpResult.success,
+      sessionEstablished:
+        signUpResult.success ? signUpResult.sessionEstablished : undefined,
+    });
 
     if (!signUpResult.success) {
-      console.log("signup failed");
+      console.warn("[signup] step 1/3 signUpWithPassword: failed", signUpResult.message);
       brokerCheckoutPendingRef.current = false;
       setSubmitting(false);
       setSubmitError(signUpResult.message);
@@ -212,12 +216,14 @@ export function SignupPage() {
     }
 
     if (!signUpResult.sessionEstablished) {
+      console.log("[signup] step 1/3: email confirmation required, skipping RPC + checkout");
       brokerCheckoutPendingRef.current = false;
       setSubmitting(false);
       setNeedsEmailConfirm(true);
       return;
     }
 
+    console.log("[signup] step 2/3 completeBrokerSignup (RPC): start");
     const provision = await completeBrokerSignup({
       displayName: fullName.trim(),
       officeName: firmName.trim(),
@@ -231,8 +237,13 @@ export function SignupPage() {
       brokerPhone: phone.trim(),
       planKey: effectivePlan,
     });
+    console.log("[signup] step 2/3 completeBrokerSignup (RPC): result", {
+      success: provision.success,
+      officeId: provision.success ? provision.officeId : undefined,
+    });
 
     if (!provision.success) {
+      console.warn("[signup] step 2/3 completeBrokerSignup (RPC): failed", provision.message);
       await signOut();
       brokerCheckoutPendingRef.current = false;
       setSubmitting(false);
@@ -241,6 +252,10 @@ export function SignupPage() {
     }
 
     try {
+      console.log("[signup] step 3/3 createBrokerCheckout: start", {
+        officeId: provision.officeId,
+        plan: planKeyToBrokerPlanKey(effectivePlan),
+      });
       const checkout = await createBrokerCheckout({
         officeId: provision.officeId,
         officeName: firmName.trim(),
@@ -251,13 +266,21 @@ export function SignupPage() {
       if (!url) {
         throw new Error("Checkout did not return a payment link. Try again or contact support.");
       }
+      console.log("[signup] step 3/3 createBrokerCheckout: redirecting to Stripe");
       window.location.href = url;
     } catch (err) {
+      console.error("[signup] step 3/3 createBrokerCheckout: failed", err);
       brokerCheckoutPendingRef.current = false;
       sessionStorage.setItem(SIGNUP_CHECKOUT_FAILED_KEY, "1");
       setCheckoutFailedBlocksHome(true);
       setSubmitting(false);
-      setSubmitError(err instanceof Error ? err.message : "Unable to start checkout.");
+      const msg =
+        err instanceof Error
+          ? err.message
+          : typeof err === "string"
+            ? err
+            : "Unable to start checkout.";
+      setSubmitError(msg);
     }
   }
 

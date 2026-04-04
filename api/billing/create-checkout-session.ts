@@ -218,6 +218,8 @@ export default async function handler(
         cancel_url: `${baseUrl}/settings/billing/cancelled`,
         metadata: {
           office_id: officeIdTrimmed,
+          plan_tier: plan,
+          signup_email: brokerEmailTrimmed,
           office_name: officeNameTrimmed,
           broker_email: brokerEmailTrimmed,
           broker_plan_key: plan,
@@ -226,6 +228,8 @@ export default async function handler(
         subscription_data: {
           metadata: {
             office_id: officeIdTrimmed,
+            plan_tier: plan,
+            signup_email: brokerEmailTrimmed,
             office_name: officeNameTrimmed,
             broker_email: brokerEmailTrimmed,
             broker_plan_key: plan,
