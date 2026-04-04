@@ -8,6 +8,14 @@ export type ComplianceDominantState = "rejected" | "pending_review" | "none";
 
 export type WorkItemStatus = "error" | "warning" | "success" | "pending" | "info";
 
+/** Coarse export pipeline state for list tooltips (set when `closingFinalized` is true). */
+export type ExportPackageListState =
+  | "ready"
+  | "pending"
+  | "failed"
+  | "not_created"
+  | "unknown";
+
 export type WorkItem = {
   id: string;
 
@@ -66,6 +74,9 @@ export type WorkItem = {
   workflowClosed?: boolean;
   /** `client_portfolio.portfolio_stage === "final"`. */
   closingFinalized?: boolean;
+  /** True when finalized and export ZIP is ready (`export_status` + `export_storage_path`). */
+  exportPackageReady?: boolean;
+  exportPackageListState?: ExportPackageListState;
 
   lastActivity: string;
 

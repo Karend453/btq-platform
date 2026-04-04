@@ -135,6 +135,16 @@ export type ClientPortfolioRow = {
   source: string | null;
   tags: string[] | null;
   portfolio_stage: "seeded" | "estimated" | "final";
+  /** Set when portfolio first reaches `final` (finalize closing). */
+  finalized_at?: string | null;
+  export_created_at?: string | null;
+  export_created_by?: string | null;
+  export_created_by_email?: string | null;
+  /** pending | ready | failed */
+  export_status?: string | null;
+  export_file_name?: string | null;
+  export_storage_path?: string | null;
+  retention_delete_at?: string | null;
   /**
    * Workflow status is Closed (`transactions.status`), batched in `listClientPortfolio`.
    * Omitted when not loaded via that path.
@@ -151,7 +161,19 @@ export type ClientPortfolioFilters = {
 /** Snapshot fields for transaction details overview (stage + locked financials when finalized). */
 export type ClientPortfolioForTransactionSnapshot = Pick<
   ClientPortfolioRow,
-  "id" | "portfolio_stage" | "close_price" | "event_date" | "revenue_amount"
+  | "id"
+  | "portfolio_stage"
+  | "close_price"
+  | "event_date"
+  | "revenue_amount"
+  | "finalized_at"
+  | "export_created_at"
+  | "export_created_by"
+  | "export_created_by_email"
+  | "export_status"
+  | "export_file_name"
+  | "export_storage_path"
+  | "retention_delete_at"
 >;
 
 /** Portfolio row for a single transaction (for UI: stage badge, finalize flow, final snapshot). */
@@ -162,19 +184,21 @@ export async function getClientPortfolioForTransaction(
     throw new Error(supabaseInitError ?? "Supabase is not configured.");
   }
 
-  const { scopeOfficeId, denyAll } = await resolveOfficeScopedDataAccess();
+  const { denyAll } = await resolveOfficeScopedDataAccess();
   if (denyAll) {
     return null;
   }
 
-  let q = supabase
+  // Do not filter by office_id here: scoped users can have portfolio rows whose office_id does not
+  // exactly match profile scope (legacy/sync drift). RPC finalize reads by transaction_id only; matching
+  // that avoids "UI shows Finalize" while DB returns already finalized. RLS on client_portfolio still applies.
+  const { data, error } = await supabase
     .from("client_portfolio")
-    .select("id, portfolio_stage, close_price, event_date, revenue_amount")
-    .eq("transaction_id", transactionId);
-  if (scopeOfficeId) {
-    q = q.eq("office_id", scopeOfficeId);
-  }
-  const { data, error } = await q.maybeSingle();
+    .select(
+      "id, portfolio_stage, close_price, event_date, revenue_amount, finalized_at, export_created_at, export_created_by, export_created_by_email, export_status, export_file_name, export_storage_path, retention_delete_at"
+    )
+    .eq("transaction_id", transactionId)
+    .maybeSingle();
 
   if (error) {
     throw new Error(error.message || "Failed to load client portfolio.");

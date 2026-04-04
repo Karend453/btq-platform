@@ -10,6 +10,13 @@ import {
 import { StatusBadge, StatusType } from "./StatusBadge";
 import { ArrowUpDown, Lock } from "lucide-react";
 import { Button } from "../ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "../ui/tooltip";
+import type { ExportPackageListState } from "../../../types/workItem";
 
 export interface Transaction {
   id: string;
@@ -27,12 +34,30 @@ export interface Transaction {
   rejected: number;
   workflowClosed?: boolean;
   closingFinalized?: boolean;
+  exportPackageReady?: boolean;
+  exportPackageListState?: ExportPackageListState;
 }
 
 export type TransactionRow = Transaction;
 
-/** Muted lock for finalized rows; swap class to e.g. text-amber-600/70 for a gold accent later. */
-const FINALIZE_LOCK_ICON_CLASS = "text-slate-400";
+function exportPackageTooltipText(
+  exportReady: boolean | undefined,
+  state: ExportPackageListState | undefined
+): string {
+  if (exportReady) return "Export package ready";
+  switch (state) {
+    case "pending":
+      return "Export package is being created";
+    case "failed":
+      return "Export failed";
+    case "not_created":
+      return "Export package not created yet";
+    case "ready":
+      return "Export package ready";
+    default:
+      return "Transaction is finalized, but the export package is not ready yet";
+  }
+}
 
 const canOfferFinalizeFromDashboard = (transaction: TransactionRow) => {
   return (
@@ -202,17 +227,29 @@ export function TransactionTable({
               </TableCell>
               <TableCell className="text-right">
                 {transaction.closingFinalized ? (
-                  <span
-                    className="inline-flex justify-end"
-                    title="Closing finalized"
-                    aria-label="Closing finalized"
-                  >
-                    <Lock
-                      className={`h-4 w-4 shrink-0 ${FINALIZE_LOCK_ICON_CLASS}`}
-                      strokeWidth={1.75}
-                      aria-hidden
-                    />
-                  </span>
+                  <TooltipProvider delayDuration={200}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="inline-flex justify-end">
+                          <Lock
+                            className={`h-4 w-4 shrink-0 ${
+                              transaction.exportPackageReady === true
+                                ? "text-emerald-600"
+                                : "text-amber-600"
+                            }`}
+                            strokeWidth={1.75}
+                            aria-hidden
+                          />
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="max-w-xs text-sm">
+                        {exportPackageTooltipText(
+                          transaction.exportPackageReady,
+                          transaction.exportPackageListState
+                        )}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                 ) : canOfferFinalizeFromDashboard(transaction) && onFinalizeClick ? (
                   <button
                     type="button"

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import {
+  ChevronDown,
   FileText,
   Inbox,
   Paperclip,
@@ -10,12 +11,16 @@ import {
   Upload,
   Eye,
   Pencil,
-  ChevronDown,
-  ChevronRight,
 } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
 import { Card, CardContent, CardHeader } from "../../components/ui/card";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "../../components/ui/collapsible";
+import { cn } from "../../components/ui/utils";
 import {
   Sheet,
   SheetContent,
@@ -175,8 +180,6 @@ export default function TransactionInbox({
   const [renameDocId, setRenameDocId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [renameSaving, setRenameSaving] = useState(false);
-  /** UI-only: hide inbox preview body (default collapsed). */
-  const [inboxSectionCollapsed, setInboxSectionCollapsed] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isControlled = controlledAttachDrawerOpen !== undefined && onAttachDrawerOpenChange !== undefined;
@@ -441,134 +444,142 @@ export default function TransactionInbox({
   return (
     <>
       {/* Document Inbox Card */}
-      <Card className="gap-0 overflow-hidden border-slate-200/90 bg-white shadow-sm">
-        <CardHeader className="space-y-3 border-b border-slate-100 px-4 py-4 sm:space-y-0">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <button
-              type="button"
-              onClick={() => setInboxSectionCollapsed((c) => !c)}
-              className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-left hover:text-slate-900"
-              aria-expanded={!inboxSectionCollapsed}
-            >
-              {inboxSectionCollapsed ? (
-                <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
-              ) : (
-                <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
-              )}
-              <span className="flex items-center gap-1.5 text-base font-semibold leading-none text-slate-900">
-                <Inbox className="h-4 w-4 shrink-0 text-slate-500" />
-                Document Inbox
-              </span>
-              <Badge
-                variant="outline"
-                className="shrink-0 border-slate-200 bg-slate-50 text-xs font-normal text-slate-600"
-              >
-                {unattachedCount} unattached
-              </Badge>
-            </button>
-            <div className="flex flex-shrink-0 flex-wrap gap-2">
-              <input
-                ref={fileInputRef}
-                type="file"
-                className="hidden"
-                accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif"
-                onChange={handleUploadFile}
-              />
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={!transactionId || isUploading || isReadOnly}
-                onClick={() => fileInputRef.current?.click()}
-                className="border-slate-200"
-              >
-                <Upload className="mr-2 h-4 w-4" />
-                {isUploading ? "Uploading…" : "Upload"}
-              </Button>
-              <Button
-                variant="default"
-                size="sm"
-                className="bg-slate-900 text-white hover:bg-slate-800"
-                onClick={() => handleOpenAttachDrawer()}
-              >
-                <Inbox className="mr-2 h-4 w-4" />
-                Open inbox
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-        {!inboxSectionCollapsed && (
-        <CardContent className="px-4 pb-5 pt-4">
-          {previewInboxDocs.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50/50 py-8 text-center text-sm text-slate-500">
-              <Inbox className="mx-auto mb-2 h-9 w-9 text-slate-300" />
-              <p>No unattached documents</p>
-              <p className="mt-1 text-xs text-slate-400">Upload a file or open the inbox to see all documents.</p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {previewInboxDocs.map((doc) => (
-                <div
-                  key={doc.id}
-                  className="flex items-center gap-3 rounded-lg border border-slate-200/90 bg-slate-50/40 px-3 py-2.5 transition-colors hover:bg-slate-50"
+      <Collapsible defaultOpen>
+        <Card className="gap-0 overflow-hidden border-slate-200/90 bg-white shadow-sm">
+          <CardHeader className="space-y-3 border-b border-slate-100 px-4 py-4 sm:space-y-0">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-h-10 min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="flex items-center gap-1.5 text-base font-semibold leading-none text-slate-900">
+                  <Inbox className="h-4 w-4 shrink-0 text-slate-500" aria-hidden />
+                  Document Inbox
+                </span>
+                <Badge
+                  variant="outline"
+                  className="shrink-0 border-slate-200 bg-slate-50 text-xs font-normal text-slate-600"
                 >
-                  <FileText className="h-4 w-4 shrink-0 text-slate-500" aria-hidden />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium text-slate-900">{doc.filename}</div>
-                    <div className="text-[11px] text-slate-500">{formatRelativeTime(doc.receivedAt)}</div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-1">
-                    {!isReadOnly && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-slate-600"
-                        title="Rename"
-                        onClick={() => openRenameDialog(doc)}
-                      >
-                        <Pencil className="h-4 w-4" />
-                        <span className="sr-only">Rename</span>
-                      </Button>
+                  {unattachedCount} unattached
+                </Badge>
+              </div>
+              <div className="flex flex-shrink-0 flex-wrap items-center gap-1.5">
+                <CollapsibleTrigger asChild>
+                  <button
+                    type="button"
+                    className={cn(
+                      "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md outline-none",
+                      "text-slate-500 transition-colors hover:bg-slate-100/80",
+                      "focus-visible:ring-2 focus-visible:ring-slate-400/30 focus-visible:ring-offset-2",
+                      "data-[state=open]:[&>svg]:rotate-180"
                     )}
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-slate-600"
-                      title="View"
-                      onClick={() => void handleViewDocument(doc)}
-                    >
-                      <Eye className="h-4 w-4" />
-                      <span className="sr-only">View</span>
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-slate-600"
-                      title="Attach to checklist"
-                      onClick={() => handleOpenAttachDrawer()}
-                    >
-                      <Paperclip className="h-4 w-4" />
-                      <span className="sr-only">Attach</span>
-                    </Button>
-                  </div>
+                    aria-label="Toggle Document Inbox section"
+                  >
+                    <ChevronDown className="h-4 w-4 transition-transform duration-200" aria-hidden />
+                  </button>
+                </CollapsibleTrigger>
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    className="hidden"
+                    accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif"
+                    onChange={handleUploadFile}
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!transactionId || isUploading || isReadOnly}
+                    onClick={() => fileInputRef.current?.click()}
+                    className="border-slate-200"
+                  >
+                    <Upload className="mr-2 h-4 w-4" />
+                    {isUploading ? "Uploading…" : "Upload"}
+                  </Button>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    className="bg-slate-900 text-white hover:bg-slate-800"
+                    onClick={() => handleOpenAttachDrawer()}
+                  >
+                    <Inbox className="mr-2 h-4 w-4" />
+                    Open inbox
+                  </Button>
                 </div>
-              ))}
-              {unattachedCount > 3 && (
-                <button
-                  type="button"
-                  onClick={() => handleOpenAttachDrawer()}
-                  className="w-full rounded-md py-1.5 text-center text-sm text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                >
-                  View all {unattachedCount} documents in inbox
-                </button>
-              )}
+              </div>
             </div>
-          )}
-        </CardContent>
-        )}
-      </Card>
+          </CardHeader>
+          <CollapsibleContent className="overflow-hidden">
+            <CardContent className="px-4 pb-5 pt-4">
+              {previewInboxDocs.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50/50 py-8 text-center text-sm text-slate-500">
+                  <Inbox className="mx-auto mb-2 h-9 w-9 text-slate-300" />
+                  <p>No unattached documents</p>
+                  <p className="mt-1 text-xs text-slate-400">Upload a file or open the inbox to see all documents.</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {previewInboxDocs.map((doc) => (
+                    <div
+                      key={doc.id}
+                      className="flex items-center gap-3 rounded-lg border border-slate-200/90 bg-slate-50/40 px-3 py-2.5 transition-colors hover:bg-slate-50"
+                    >
+                      <FileText className="h-4 w-4 shrink-0 text-slate-500" aria-hidden />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium text-slate-900">{doc.filename}</div>
+                        <div className="text-[11px] text-slate-500">{formatRelativeTime(doc.receivedAt)}</div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        {!isReadOnly && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-slate-600"
+                            title="Rename"
+                            onClick={() => openRenameDialog(doc)}
+                          >
+                            <Pencil className="h-4 w-4" />
+                            <span className="sr-only">Rename</span>
+                          </Button>
+                        )}
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-slate-600"
+                          title="View"
+                          onClick={() => void handleViewDocument(doc)}
+                        >
+                          <Eye className="h-4 w-4" />
+                          <span className="sr-only">View</span>
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-slate-600"
+                          title="Attach to checklist"
+                          onClick={() => handleOpenAttachDrawer()}
+                        >
+                          <Paperclip className="h-4 w-4" />
+                          <span className="sr-only">Attach</span>
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                  {unattachedCount > 3 && (
+                    <button
+                      type="button"
+                      onClick={() => handleOpenAttachDrawer()}
+                      className="w-full rounded-md py-1.5 text-center text-sm text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                    >
+                      View all {unattachedCount} documents in inbox
+                    </button>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </CollapsibleContent>
+        </Card>
+      </Collapsible>
 
       {/* Attach Document Drawer */}
       <Sheet

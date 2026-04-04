@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { MessageSquare, Save, Archive, AlertTriangle, ExternalLink } from "lucide-react";
+import { MessageSquare, Save, Lock, AlertTriangle, ExternalLink } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Card, CardContent } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
@@ -74,13 +74,15 @@ import {
   getClientPortfolioForTransaction,
   type ClientPortfolioForTransactionSnapshot,
 } from "../../services/clientPortfolio";
+import { createAndPersistTransactionExportPackage } from "../../services/transactionExportPackage";
 import TransactionOverview from "./sections/TransactionOverview";
+import TransactionExportPackageSection from "./sections/TransactionExportPackageSection";
 import TransactionInbox from "./sections/TransactionInbox";
 import TransactionControls from "./sections/TransactionControls";
 import TransactionActivity from "./sections/TransactionActivity";
 import Checklist from "./sections/Checklist";
 import type { ChecklistItem, InboxDocument } from "./sections/TransactionInbox";
-import type { ArchiveMetadata, TransactionStatus } from "./sections/TransactionControls";
+import type { TransactionStatus } from "./sections/TransactionControls";
 import type { ActivityLogEntry, ActivityFilter } from "./sections/TransactionActivity";
 
 type CommentShape = {
@@ -109,6 +111,23 @@ function formatCurrency(value?: number | string | null) {
     currency: "USD",
     maximumFractionDigits: 0,
   }).format(numericValue);
+}
+
+/** Closing as a workflow status requires persisted financial fields (closing date, sale price, GCI). */
+function isClosingFinancialsCompleteForClosed(
+  txn: TransactionRow | null,
+  closingDateForm: string | null
+): boolean {
+  if (!txn) return false;
+  const dateStr =
+    (closingDateForm ?? "").trim() ||
+    (txn.closing_date ? String(txn.closing_date).slice(0, 10).trim() : "");
+  if (!dateStr) return false;
+  const sp = txn.saleprice;
+  if (sp === null || sp === undefined || Number.isNaN(Number(sp))) return false;
+  const gci = txn.gci;
+  if (gci === null || gci === undefined || Number.isNaN(Number(gci))) return false;
+  return true;
 }
 
 function formatRelativeTime(date: Date) {
@@ -192,6 +211,8 @@ export default function TransactionDetailsPage() {
   const { user: authUser, loading: authLoading } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const finalizeDeepLinkConsumed = useRef(false);
+  /** When true, closing the "Complete Closing Details" dialog must not revert the status dropdown (successful save). */
+  const skipCompleteClosingStatusRevertRef = useRef(false);
   const id = useMemo(() => {
     const parts = window.location.pathname.split("/").filter(Boolean);
     return parts[parts.length - 1] ?? "";
@@ -215,7 +236,6 @@ export default function TransactionDetailsPage() {
   const [assignedAdmin, setAssignedAdmin] = useState<string | null>(null);
   const [closingDate, setClosingDate] = useState<string | null>(null);
   const [contractDate, setContractDate] = useState<string | null>(null);
-  const [archiveMetadata, setArchiveMetadata] = useState<ArchiveMetadata | null>(null);
   const [activityLog, setActivityLog] = useState<ActivityLogEntry[]>([]);
   const [activityFilter, setActivityFilter] = useState<ActivityFilter>("all");
   const [attachDrawerOpen, setAttachDrawerOpen] = useState(false);
@@ -237,6 +257,12 @@ export default function TransactionDetailsPage() {
   const [finalizeClosingDate, setFinalizeClosingDate] = useState("");
   const [finalizeRevenue, setFinalizeRevenue] = useState("");
   const [finalizeSubmitting, setFinalizeSubmitting] = useState(false);
+
+  const [completeClosingModalOpen, setCompleteClosingModalOpen] = useState(false);
+  const [completeClosingDate, setCompleteClosingDate] = useState("");
+  const [completeSalePrice, setCompleteSalePrice] = useState("");
+  const [completeGci, setCompleteGci] = useState("");
+  const [completeClosingSubmitting, setCompleteClosingSubmitting] = useState(false);
 
   // Review modal state
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
@@ -674,8 +700,20 @@ export default function TransactionDetailsPage() {
     window.location.href = `/transactions/${id}/edit`;
   }
 
-  function openFinalizeClosingModal() {
+  async function openFinalizeClosingModal() {
     if (!transaction) return;
+    if (id) {
+      try {
+        const row = await getClientPortfolioForTransaction(id);
+        setPortfolioSnapshot(row);
+        if (row?.portfolio_stage === "final") {
+          toast.info("Closing is already finalized — portfolio numbers are locked.");
+          return;
+        }
+      } catch {
+        /* continue; user may still finalize if portfolio row is missing */
+      }
+    }
     const sp = transaction.saleprice;
     const closeStr =
       sp !== null && sp !== undefined
@@ -712,12 +750,43 @@ export default function TransactionDetailsPage() {
         closingDate: date,
         revenueAmount: revenue,
       });
-      toast.success("Closing finalized — portfolio values are locked.");
       setFinalizeClosingOpen(false);
-      const row = await getClientPortfolioForTransaction(id);
+      let row = await getClientPortfolioForTransaction(id);
       setPortfolioSnapshot(row);
+
+      const user = await getCurrentUser();
+      if (user?.id) {
+        const exportResult = await createAndPersistTransactionExportPackage(id, {
+          userId: user.id,
+          email: user.email ?? null,
+        });
+        row = await getClientPortfolioForTransaction(id);
+        setPortfolioSnapshot(row);
+        if (exportResult.ok) {
+          toast.success(
+            "Closing finalized — portfolio values are locked. Export package is ready below."
+          );
+        } else {
+          toast.success("Closing finalized — portfolio values are locked.");
+          toast.warning("Export package could not be created.", {
+            description: exportResult.errorMessage,
+          });
+        }
+      } else {
+        toast.success("Closing finalized — portfolio values are locked.");
+      }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not finalize closing");
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(msg || "Could not finalize closing");
+      if (id && msg.toLowerCase().includes("already finalized")) {
+        try {
+          const row = await getClientPortfolioForTransaction(id);
+          setPortfolioSnapshot(row);
+        } catch {
+          /* ignore */
+        }
+        setFinalizeClosingOpen(false);
+      }
     } finally {
       setFinalizeSubmitting(false);
     }
@@ -805,7 +874,7 @@ export default function TransactionDetailsPage() {
     }
 
     finalizeDeepLinkConsumed.current = true;
-    openFinalizeClosingModal();
+    void openFinalizeClosingModal();
     stripFinalizeParam();
   }, [finalizeDeepLink, transaction, portfolioSnapshot, setSearchParams]);
 
@@ -960,8 +1029,52 @@ export default function TransactionDetailsPage() {
 
   const isReadOnly = transactionStatus === "Archived";
 
+  const canOfferFinalizeClosing = useMemo(() => {
+    if (!transaction) return false;
+    const statusClosed = (transaction.status ?? "").trim().toLowerCase() === "closed";
+    if (!statusClosed) return false;
+    if (portfolioSnapshot?.portfolio_stage === "final") return false;
+    const active = checklistItems.filter((i) => !i.archivedAt);
+    const docs = active.map((item) => checklistItemForControlsToEngineDocument(item));
+    const r = getTransactionClosingReadiness(docs);
+    return (
+      r.missingRequiredCount === 0 &&
+      r.submittedRequiredCount === 0 &&
+      r.rejectedRequiredCount === 0
+    );
+  }, [transaction, portfolioSnapshot, checklistItems]);
+
+  const completeClosingFormValid = useMemo(() => {
+    const date = completeClosingDate.trim();
+    if (!date) return false;
+    const price = Number(String(completeSalePrice).replace(/[^0-9.-]/g, ""));
+    const gciNum = Number(String(completeGci).replace(/[^0-9.-]/g, ""));
+    return !Number.isNaN(price) && !Number.isNaN(gciNum);
+  }, [completeClosingDate, completeSalePrice, completeGci]);
+
   async function handleSaveTransactionControls() {
     if (!id || isReadOnly) return;
+    if (
+      transactionStatus === "Closed" &&
+      !isClosingFinancialsCompleteForClosed(transaction, closingDate)
+    ) {
+      const cd =
+        (closingDate ?? "").trim() ||
+        (transaction?.closing_date ? String(transaction.closing_date).slice(0, 10) : "");
+      const sp = transaction?.saleprice;
+      const saleStr =
+        sp !== null && sp !== undefined && !Number.isNaN(Number(sp)) ? String(sp) : "";
+      const gciVal = transaction?.gci;
+      const gciStr =
+        gciVal !== null && gciVal !== undefined && !Number.isNaN(Number(gciVal))
+          ? String(gciVal)
+          : "";
+      setCompleteClosingDate(cd);
+      setCompleteSalePrice(saleStr);
+      setCompleteGci(gciStr);
+      setCompleteClosingModalOpen(true);
+      return;
+    }
     const user = await getCurrentUser();
     const row = transaction as TransactionRow | null;
     const claimAgent =
@@ -982,6 +1095,48 @@ export default function TransactionDetailsPage() {
     }
     await reloadTransaction();
     toast.success("Saved");
+  }
+
+  async function handleSubmitCompleteClosingDetails() {
+    if (!id || isReadOnly || !completeClosingFormValid) return;
+    const price = Number(String(completeSalePrice).replace(/[^0-9.-]/g, ""));
+    const gciNum = Number(String(completeGci).replace(/[^0-9.-]/g, ""));
+    const date = completeClosingDate.trim();
+    if (!date || Number.isNaN(price) || Number.isNaN(gciNum)) {
+      toast.error("Enter valid closing date, sale price, and GCI.");
+      return;
+    }
+    setCompleteClosingSubmitting(true);
+    try {
+      const user = await getCurrentUser();
+      const row = transaction as TransactionRow | null;
+      const claimAgent =
+        currentUserRole === "Agent" &&
+        user?.id &&
+        row &&
+        (row.agent_user_id == null || String(row.agent_user_id).trim() === "");
+
+      const { data: updated, error } = await updateTransaction(id, {
+        closingDate: date,
+        salePrice: price,
+        gci: gciNum,
+        status: "Closed",
+        ...(claimAgent ? { agentUserId: user.id } : {}),
+      });
+      if (error || !updated) {
+        console.error("[handleSubmitCompleteClosingDetails]", error);
+        toast.error(error?.message ?? "Could not save transaction");
+        return;
+      }
+      setClosingDate(date);
+      setTransactionStatus("Closed");
+      skipCompleteClosingStatusRevertRef.current = true;
+      setCompleteClosingModalOpen(false);
+      await reloadTransaction();
+      toast.success("Saved");
+    } finally {
+      setCompleteClosingSubmitting(false);
+    }
   }
 
   function handleStatusChange(status: TransactionStatus) {
@@ -1093,61 +1248,6 @@ export default function TransactionDetailsPage() {
     }
   }
 
-  function handleOpenArchiveModal() {
-    if (transactionStatus !== "Closed") return;
-    const confirmed = window.confirm(
-      "Archive this transaction? It will become read-only. Download the Archive Package for your records."
-    );
-    if (!confirmed) return;
-    const txn = transaction as TransactionRow & { identifier?: string; office?: string; agent?: string };
-    const activeForReadiness = checklistItems.filter((i) => !i.archivedAt);
-    const engineDocs = activeForReadiness.map((item) =>
-      checklistItemForControlsToEngineDocument(item)
-    );
-    const readiness = getTransactionClosingReadiness(engineDocs);
-    setArchiveMetadata({
-      archivedAt: new Date(),
-      archivedBy: { name: "Current User", role: currentUserRole },
-      archiveReceipt: {
-        transactionSummary: {
-          identifier: txn?.identifier ?? "Unknown",
-          id: id ?? "Unknown",
-          office: txn?.office ?? "Unknown Office",
-          assignedAgent: txn?.agent ?? "—",
-          status: "Closed",
-        },
-        documentSummary: {
-          requiredComplete: readiness.acceptedRequiredCount - (readiness.waivedRequiredCount ?? 0),
-          requiredWaived: readiness.waivedRequiredCount ?? 0,
-          optionalComplete: activeForReadiness.filter(
-            (i) => i.requirement === "optional" && i.reviewStatus === "complete"
-          ).length,
-          totalDocuments: activeForReadiness.length,
-        },
-        activityLogCount: 0,
-      },
-      archivedActivityLog: [],
-    });
-    setTransactionStatus("Archived");
-  }
-
-  function handleDownloadArchivePackage() {
-    const pkg = {
-      transaction: { id, status: transactionStatus, closingDate, contractDate, assignedAdmin },
-      archivedMetadata: archiveMetadata,
-      archivedAt: new Date().toISOString(),
-    };
-    const blob = new Blob([JSON.stringify(pkg, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `archive-${id}-${Date.now()}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }
-
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 p-5">
@@ -1202,9 +1302,100 @@ export default function TransactionDetailsPage() {
           }}
           onEdit={handleEdit}
           portfolioSnapshot={portfolioSnapshot}
-          onFinalizeClosingClick={openFinalizeClosingModal}
-          finalizeClosingDisabled={isReadOnly || finalizeSubmitting}
+          exportGenerationBusy={finalizeSubmitting}
+          finalizeInProgress={finalizeSubmitting}
+          onFinalizeClosingClick={() => void openFinalizeClosingModal()}
+          finalizeClosingDisabled={isReadOnly || finalizeSubmitting || !canOfferFinalizeClosing}
         />
+
+        <TransactionExportPackageSection
+          portfolioSnapshot={portfolioSnapshot}
+          exportBusy={finalizeSubmitting}
+        />
+
+        <Dialog
+          open={completeClosingModalOpen}
+          onOpenChange={(open) => {
+            if (!open) {
+              if (!skipCompleteClosingStatusRevertRef.current) {
+                setTransactionStatus((transaction?.status ?? "Pre-Contract") as TransactionStatus);
+              } else {
+                skipCompleteClosingStatusRevertRef.current = false;
+              }
+              setCompleteClosingModalOpen(false);
+            }
+          }}
+        >
+          <DialogContent className="sm:max-w-md gap-0 border-slate-200/80 bg-white p-0 shadow-sm sm:rounded-xl">
+            <DialogHeader className="space-y-1.5 border-b border-slate-100/90 px-6 pb-4 pt-6">
+              <DialogTitle className="text-lg font-semibold tracking-tight text-slate-900">
+                Complete Closing Details
+              </DialogTitle>
+              <DialogDescription className="text-sm leading-relaxed text-slate-600">
+                These details are required before marking this transaction as Closed.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 px-6 py-5">
+              <div className="space-y-2">
+                <Label htmlFor="complete-closing-date" className="text-sm font-medium text-slate-600">
+                  Closing Date <span className="text-red-600">*</span>
+                </Label>
+                <Input
+                  id="complete-closing-date"
+                  type="date"
+                  value={completeClosingDate}
+                  onChange={(e) => setCompleteClosingDate(e.target.value)}
+                  className="h-10 border-slate-200/90 bg-slate-50/50 shadow-none transition-colors focus-visible:border-slate-300 focus-visible:ring-2 focus-visible:ring-slate-400/20 focus-visible:ring-offset-0"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="complete-sale-price" className="text-sm font-medium text-slate-600">
+                  Sale Price <span className="text-red-600">*</span>
+                </Label>
+                <Input
+                  id="complete-sale-price"
+                  inputMode="decimal"
+                  value={completeSalePrice}
+                  onChange={(e) => setCompleteSalePrice(e.target.value)}
+                  placeholder="0"
+                  className="h-10 border-slate-200/90 bg-slate-50/50 shadow-none transition-colors focus-visible:border-slate-300 focus-visible:ring-2 focus-visible:ring-slate-400/20 focus-visible:ring-offset-0"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="complete-gci" className="text-sm font-medium text-slate-600">
+                  GCI <span className="text-red-600">*</span>
+                </Label>
+                <Input
+                  id="complete-gci"
+                  inputMode="decimal"
+                  value={completeGci}
+                  onChange={(e) => setCompleteGci(e.target.value)}
+                  placeholder="0"
+                  className="h-10 border-slate-200/90 bg-slate-50/50 shadow-none transition-colors focus-visible:border-slate-300 focus-visible:ring-2 focus-visible:ring-slate-400/20 focus-visible:ring-offset-0"
+                />
+              </div>
+            </div>
+            <DialogFooter className="gap-2 border-t border-slate-100/90 bg-slate-50/40 px-6 py-4 sm:gap-0">
+              <Button
+                type="button"
+                variant="outline"
+                className="border-slate-200/90 bg-white shadow-none"
+                onClick={() => setCompleteClosingModalOpen(false)}
+                disabled={completeClosingSubmitting}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                className="shadow-sm"
+                onClick={() => void handleSubmitCompleteClosingDetails()}
+                disabled={completeClosingSubmitting || !completeClosingFormValid}
+              >
+                {completeClosingSubmitting ? "Saving…" : "Save & Mark Closed"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <Dialog open={finalizeClosingOpen} onOpenChange={setFinalizeClosingOpen}>
           <DialogContent className="sm:max-w-md gap-0 border-slate-200/80 bg-white p-0 shadow-sm sm:rounded-xl">
@@ -1273,7 +1464,7 @@ export default function TransactionDetailsPage() {
                 onClick={() => void handleSubmitFinalizeClosing()}
                 disabled={finalizeSubmitting}
               >
-                {finalizeSubmitting ? "Saving…" : "Confirm"}
+                {finalizeSubmitting ? "Finalizing…" : "Confirm"}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -1286,38 +1477,26 @@ export default function TransactionDetailsPage() {
           checklistItems={checklistItems}
           isReadOnly={isReadOnly}
           currentUserRole={currentUserRole}
-          archiveMetadata={archiveMetadata}
           onStatusChange={handleStatusChange}
           onClosingDateChange={handleClosingDateChange}
-          onOpenArchiveModal={handleOpenArchiveModal}
-          onDownloadArchivePackage={handleDownloadArchivePackage}
-          onViewArchivedActivityLog={() => {}}
           intakeEmail={intakeEmail}
           onCopyIntakeEmail={handleCopyIntakeEmail}
         />
 
-        <div className="space-y-3">
-          <div>
-            <h2 className="text-sm font-semibold text-slate-900 tracking-tight">Documents</h2>
-            <p className="mt-0.5 text-xs text-slate-500">
-              Upload files to the inbox, then attach them to checklist items.
-            </p>
-          </div>
-          <TransactionInbox
-            transactionId={id}
-            inboxDocuments={inboxDocuments}
-            onInboxDocumentsChange={setInboxDocuments}
-            checklistItems={checklistItems}
-            onChecklistItemsChange={setChecklistItems}
-            addActivityEntry={addActivityEntry}
-            currentUserRole={currentUserRole}
-            isReadOnly={isReadOnly}
-            attachDrawerOpen={attachDrawerOpen}
-            attachTargetItem={attachTargetItem}
-            onAttachDrawerOpenChange={handleAttachDrawerOpenChange}
-            onAttachTargetChange={setAttachTargetItem}
-          />
-        </div>
+        <TransactionInbox
+          transactionId={id}
+          inboxDocuments={inboxDocuments}
+          onInboxDocumentsChange={setInboxDocuments}
+          checklistItems={checklistItems}
+          onChecklistItemsChange={setChecklistItems}
+          addActivityEntry={addActivityEntry}
+          currentUserRole={currentUserRole}
+          isReadOnly={isReadOnly}
+          attachDrawerOpen={attachDrawerOpen}
+          attachTargetItem={attachTargetItem}
+          onAttachDrawerOpenChange={handleAttachDrawerOpenChange}
+          onAttachTargetChange={setAttachTargetItem}
+        />
 
         <Checklist
           checklistTemplateId={checklistTemplateId}
@@ -1780,8 +1959,8 @@ export default function TransactionDetailsPage() {
                 <div className="border-t pt-4">
                   <div className="bg-slate-100 border border-slate-200 rounded-lg p-4 text-center">
                     <p className="text-sm text-slate-600">
-                      <Archive className="h-4 w-4 inline mr-1" />
-                      This transaction is archived. Comments are read-only.
+                      <Lock className="h-4 w-4 inline mr-1" />
+                      This transaction is finalized. Comments are read-only.
                     </p>
                   </div>
                 </div>

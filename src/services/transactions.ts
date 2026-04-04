@@ -1,6 +1,11 @@
 // src/services/transactions.ts
 
-import { WorkItem, WorkItemStatus, type ComplianceDominantState } from "../types/workItem";
+import {
+  WorkItem,
+  WorkItemStatus,
+  type ComplianceDominantState,
+  type ExportPackageListState,
+} from "../types/workItem";
 import { supabase } from "../lib/supabaseClient";
 import type { PostgrestError } from "@supabase/supabase-js";
 import {
@@ -561,6 +566,13 @@ export async function updateTransaction(
 
 const CHECKLIST_BATCH_SIZE = 120;
 
+export type PortfolioSnapshotListFlags = {
+  closingFinalized: boolean;
+  /** True only when finalized, export_status is ready, and export_storage_path is non-empty. */
+  exportPackageReady: boolean;
+  exportListState: ExportPackageListState;
+};
+
 /** Mirrors dashboard TransactionTable row shape (StatusType-compatible). */
 export type ComplianceOverviewTableRow = {
   id: string;
@@ -580,6 +592,9 @@ export type ComplianceOverviewTableRow = {
   workflowClosed: boolean;
   /** `client_portfolio.portfolio_stage === "final"` — locked closing snapshot. */
   closingFinalized: boolean;
+  /** True when finalized and export ZIP is ready (ready + storage path). Mirrors list rules. */
+  exportPackageReady?: boolean;
+  exportPackageListState?: ExportPackageListState;
 };
 
 export type ComplianceOverviewLegend = {
@@ -670,32 +685,62 @@ function closingSortKey(iso: string | null): number {
   return Number.isNaN(d) ? Number.POSITIVE_INFINITY : d;
 }
 
-/** Batch-load finalized flags from `client_portfolio` for dashboard rows. */
-async function fetchClosingFinalizedFlagsForTransactionIds(
-  transactionIds: string[],
-  /** When set (broker office scope), restricts portfolio rows to this office. */
-  scopeOfficeId?: string | null
-): Promise<Map<string, boolean>> {
-  const map = new Map<string, boolean>();
+type ClientPortfolioListRow = {
+  transaction_id?: string | null;
+  portfolio_stage?: string | null;
+  export_status?: string | null;
+  export_storage_path?: string | null;
+};
+
+function derivePortfolioSnapshotListFlags(row: ClientPortfolioListRow): PortfolioSnapshotListFlags {
+  const closingFinalized = row.portfolio_stage === "final";
+  if (!closingFinalized) {
+    return { closingFinalized: false, exportPackageReady: false, exportListState: "unknown" };
+  }
+  const st = (row.export_status ?? "").trim().toLowerCase();
+  const path = (row.export_storage_path ?? "").trim();
+  if (st === "failed") {
+    return { closingFinalized: true, exportPackageReady: false, exportListState: "failed" };
+  }
+  if (st === "ready" && path !== "") {
+    return { closingFinalized: true, exportPackageReady: true, exportListState: "ready" };
+  }
+  if (st === "pending") {
+    return { closingFinalized: true, exportPackageReady: false, exportListState: "pending" };
+  }
+  if (st === "ready" && !path) {
+    return { closingFinalized: true, exportPackageReady: false, exportListState: "unknown" };
+  }
+  if (!st) {
+    return { closingFinalized: true, exportPackageReady: false, exportListState: "not_created" };
+  }
+  return { closingFinalized: true, exportPackageReady: false, exportListState: "unknown" };
+}
+
+/**
+ * Batch-load `client_portfolio` closing + export flags for list/dashboard rows.
+ * Does not filter by office_id so results align with per-transaction portfolio reads (RLS still applies).
+ */
+async function fetchPortfolioSnapshotFlagsForTransactionIds(
+  transactionIds: string[]
+): Promise<Map<string, PortfolioSnapshotListFlags>> {
+  const map = new Map<string, PortfolioSnapshotListFlags>();
   if (transactionIds.length === 0 || !supabase) return map;
   for (let i = 0; i < transactionIds.length; i += CHECKLIST_BATCH_SIZE) {
     const chunk = transactionIds.slice(i, i + CHECKLIST_BATCH_SIZE);
-    let q = supabase
+    const { data, error } = await supabase
       .from("client_portfolio")
-      .select("transaction_id, portfolio_stage")
+      .select("transaction_id, portfolio_stage, export_status, export_storage_path")
       .in("transaction_id", chunk);
-    if (scopeOfficeId) {
-      q = q.eq("office_id", scopeOfficeId);
-    }
-    const { data, error } = await q;
     if (error) {
-      console.error("[fetchClosingFinalizedFlagsForTransactionIds]", error);
+      console.error("[fetchPortfolioSnapshotFlagsForTransactionIds]", error);
       continue;
     }
     for (const row of data ?? []) {
-      const r = row as { transaction_id?: string | null; portfolio_stage?: string | null };
+      const r = row as ClientPortfolioListRow;
       const tid = r.transaction_id?.trim();
-      if (tid) map.set(tid, r.portfolio_stage === "final");
+      if (!tid) continue;
+      map.set(tid, derivePortfolioSnapshotListFlags(r));
     }
   }
   return map;
@@ -861,9 +906,9 @@ export async function fetchComplianceOverviewData(): Promise<ComplianceOverviewD
   );
 
   const ids = rows.map((r) => r.id);
-  const [checklistRows, closingFinalizedByTxId] = await Promise.all([
+  const [checklistRows, portfolioFlagsByTxId] = await Promise.all([
     fetchChecklistRowsForTransactions(ids),
-    fetchClosingFinalizedFlagsForTransactionIds(ids, scopeOfficeId),
+    fetchPortfolioSnapshotFlagsForTransactionIds(ids),
   ]);
   const byTx = new Map<string, ChecklistItemDbRow[]>();
   for (const cr of checklistRows) {
@@ -919,6 +964,7 @@ export async function fetchComplianceOverviewData(): Promise<ComplianceOverviewD
     const fields = dominantStateToTableFields(dominant, readiness);
     const agentName = resolveAgentLabelForListRow(tx, profileById);
     const wf = (tx.status ?? "").trim().toLowerCase();
+    const pf = portfolioFlagsByTxId.get(tx.id);
 
     tableRows.push({
       id: tx.id,
@@ -932,7 +978,9 @@ export async function fetchComplianceOverviewData(): Promise<ComplianceOverviewD
       pendingReview: readiness.submittedRequiredCount,
       rejected: readiness.rejectedRequiredCount,
       workflowClosed: wf === "closed",
-      closingFinalized: closingFinalizedByTxId.get(tx.id) === true,
+      closingFinalized: pf?.closingFinalized === true,
+      exportPackageReady: pf?.exportPackageReady,
+      exportPackageListState: pf?.exportListState,
     });
   }
 
@@ -984,10 +1032,10 @@ export async function listTransactions(
   );
   const items = rows.map((row) => toWorkItem(row, rollupViewer));
   const ids = items.map((i) => i.id);
-  const [counts, checklistRows, closingFinalizedByTxId] = await Promise.all([
+  const [counts, checklistRows, portfolioFlagsByTxId] = await Promise.all([
     fetchComplianceDocCountsByTransactionIds(ids),
     fetchChecklistRowsForTransactions(ids),
-    fetchClosingFinalizedFlagsForTransactionIds(ids, scopeOfficeId),
+    fetchPortfolioSnapshotFlagsForTransactionIds(ids),
   ]);
 
   const byTx = new Map<string, ChecklistItemDbRow[]>();
@@ -1014,6 +1062,7 @@ export async function listTransactions(
     const agentDisplayName = resolveAgentLabelForListRow(tx, profileById);
 
     const wfStatus = (tx.status ?? "").trim().toLowerCase();
+    const pf = portfolioFlagsByTxId.get(tx.id);
 
     return {
       ...item,
@@ -1031,7 +1080,9 @@ export async function listTransactions(
       pendingReviewRequiredCount: readiness.submittedRequiredCount,
       rejectedRequiredCount: readiness.rejectedRequiredCount,
       workflowClosed: wfStatus === "closed",
-      closingFinalized: closingFinalizedByTxId.get(tx.id) === true,
+      closingFinalized: pf?.closingFinalized === true,
+      exportPackageReady: pf?.exportPackageReady === true,
+      exportPackageListState: pf?.exportListState,
     };
   });
 }

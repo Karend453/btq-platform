@@ -400,7 +400,7 @@ export function getTransactionClosingReadiness(
 
 /**
  * Derive human-readable close validation issues from ClosingReadiness.
- * For UI tooltips and "Not Ready to Close" messaging.
+ * For UI tooltips and "Not Ready to Finalize" messaging.
  */
 export function getCloseValidationIssues(
   readiness: ClosingReadiness

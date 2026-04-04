@@ -1,9 +1,11 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   Building2,
   ChevronDown,
   FileText,
   LayoutGrid,
+  Loader2,
+  Lock,
   SquarePen,
 } from "lucide-react";
 import { Button } from "../../components/ui/button";
@@ -22,6 +24,12 @@ import {
   DialogContent,
   DialogTitle,
 } from "../../components/ui/dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "../../components/ui/tooltip";
 import type { TransactionRow } from "../../../services/transactions";
 import type { ClientPortfolioForTransactionSnapshot } from "../../../services/clientPortfolio";
 import { ExternalToolPanelContent } from "./ExternalToolPanel";
@@ -89,9 +97,15 @@ type TransactionOverviewSectionProps = {
   onEdit: () => void;
   /** `undefined` = loading; `null` = no client_portfolio row */
   portfolioSnapshot?: ClientPortfolioForTransactionSnapshot | null;
+  /** True while finalize RPC + export ZIP pipeline is running (spinner on export lock). */
+  exportGenerationBusy?: boolean;
+  /** True while Finalize modal submit is running (primary button loading label). */
+  finalizeInProgress?: boolean;
   onFinalizeClosingClick?: () => void;
   finalizeClosingDisabled?: boolean;
 };
+
+type ExportPackageLockState = "ready" | "pending" | "failed" | "unknown";
 
 function SummaryField({
   label,
@@ -119,6 +133,8 @@ export default function TransactionOverviewSection({
   onSave,
   onEdit,
   portfolioSnapshot,
+  exportGenerationBusy = false,
+  finalizeInProgress = false,
   onFinalizeClosingClick,
   finalizeClosingDisabled,
 }: TransactionOverviewSectionProps) {
@@ -126,6 +142,38 @@ export default function TransactionOverviewSection({
   const isFinalized = portfolioStage === "final";
   const portfolioLoading = portfolioSnapshot === undefined;
   const intakeEmail = row.intake_email ?? "";
+
+  const exportPackageLockState = useMemo((): ExportPackageLockState | null => {
+    if (!isFinalized || portfolioLoading) return null;
+    const st = portfolioSnapshot?.export_status?.trim().toLowerCase();
+    const path = (portfolioSnapshot?.export_storage_path ?? "").trim();
+    if (st === "failed") return "failed";
+    if (st === "ready" && path) return "ready";
+    if (exportGenerationBusy || st === "pending") return "pending";
+    return "unknown";
+  }, [isFinalized, portfolioLoading, portfolioSnapshot, exportGenerationBusy]);
+
+  const exportPackageFullyReady = exportPackageLockState === "ready";
+
+  const exportLockTooltip =
+    exportPackageLockState === "ready"
+      ? "Export package ready"
+      : exportPackageLockState === "pending"
+        ? "Export package is being created"
+        : exportPackageLockState === "failed"
+          ? "Export package failed"
+          : "Transaction is finalized, but the export package is not ready yet.";
+
+  const finalizedBadgeTooltip = useMemo(() => {
+    if (exportPackageLockState === "pending") return "Export package is being created";
+    if (exportPackageLockState === "failed") return "Export package failed";
+    if (exportPackageLockState === "unknown") {
+      const st = (portfolioSnapshot?.export_status ?? "").trim();
+      if (!st) return "Export package not created yet";
+      return "Transaction is finalized, but the export package is not ready yet.";
+    }
+    return "Export package not created yet";
+  }, [exportPackageLockState, portfolioSnapshot]);
 
   const [activeTool, setActiveTool] = useState<ActiveExternalTool | null>(null);
   const [formsMenuOpen, setFormsMenuOpen] = useState(false);
@@ -152,14 +200,78 @@ export default function TransactionOverviewSection({
                 {title}
               </h1>
               {isFinalized ? (
-                <Badge
-                  variant="secondary"
-                  className="font-normal text-emerald-800 bg-emerald-50 border border-emerald-200"
-                >
-                  Closing finalized
-                </Badge>
+                portfolioLoading ? (
+                  <Badge
+                    variant="secondary"
+                    className="font-normal border border-slate-200 bg-slate-50 text-slate-800"
+                  >
+                    Closing finalized
+                  </Badge>
+                ) : exportPackageFullyReady ? (
+                  <Badge
+                    variant="secondary"
+                    className="font-normal text-emerald-800 bg-emerald-50 border border-emerald-200"
+                  >
+                    Closing finalized
+                  </Badge>
+                ) : (
+                  <TooltipProvider delayDuration={200}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="inline-flex">
+                          <Badge
+                            variant="secondary"
+                            className="font-normal border border-amber-300 bg-amber-50 text-amber-950"
+                          >
+                            Closing finalized
+                          </Badge>
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="max-w-xs text-sm">
+                        {finalizedBadgeTooltip}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )
+              ) : null}
+              {isFinalized && exportPackageLockState != null && !portfolioLoading ? (
+                <TooltipProvider delayDuration={200}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span
+                        className="inline-flex shrink-0 cursor-default rounded-md p-0.5 text-slate-600 outline-none ring-offset-2 focus-visible:ring-2 focus-visible:ring-slate-400"
+                        aria-label={exportLockTooltip}
+                      >
+                        {exportPackageLockState === "ready" ? (
+                          <Lock className="h-4 w-4 text-emerald-600" strokeWidth={2.25} aria-hidden />
+                        ) : exportPackageLockState === "pending" ? (
+                          <Loader2
+                            className="h-4 w-4 animate-spin text-amber-500"
+                            strokeWidth={2.25}
+                            aria-hidden
+                          />
+                        ) : (
+                          <Lock
+                            className={`h-4 w-4 ${exportPackageLockState === "failed" ? "text-amber-700" : "text-amber-500"}`}
+                            strokeWidth={2.25}
+                            aria-hidden
+                          />
+                        )}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" className="max-w-xs text-sm">
+                      {exportLockTooltip}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               ) : null}
             </div>
+            {isFinalized && exportPackageLockState === "failed" ? (
+              <p className="mt-1 text-xs font-medium text-amber-900">
+                Export package could not be created — closing is still finalized. See Export Package
+                below.
+              </p>
+            ) : null}
             {(agentDisplayName ?? "").trim() ? (
               <p className="text-sm text-slate-600">Agent: {agentDisplayName}</p>
             ) : null}
@@ -167,7 +279,15 @@ export default function TransactionOverviewSection({
               Summary — edit details to complete reporting & financial data
             </p>
             {isFinalized ? (
-              <p className="text-sm text-emerald-900/90">
+              <p
+                className={
+                  portfolioLoading
+                    ? "text-sm text-slate-600"
+                    : exportPackageFullyReady
+                      ? "text-sm text-emerald-900/90"
+                      : "text-sm text-amber-900/90"
+                }
+              >
                 Financial figures below reflect the locked portfolio snapshot from finalized closing;
                 edits on the transaction record no longer change these values.
               </p>
@@ -288,12 +408,13 @@ export default function TransactionOverviewSection({
           </Dialog>
           {onFinalizeClosingClick ? (
             <Button
-              variant="secondary"
+              variant="default"
               size="sm"
               onClick={onFinalizeClosingClick}
               disabled={!!finalizeClosingDisabled || portfolioLoading || isFinalized}
+              className="min-h-9 min-w-[10.5rem] font-semibold shadow-sm transition-[box-shadow,transform] hover:shadow-md hover:brightness-[1.03] active:scale-[0.98] active:shadow-sm disabled:pointer-events-none disabled:opacity-60 disabled:active:scale-100"
             >
-              Finalize Closing
+              {finalizeInProgress ? "Finalizing & Creating Export…" : "Finalize Closing"}
             </Button>
           ) : null}
           <Button variant="outline" size="sm" onClick={onEdit} className="shadow-none">

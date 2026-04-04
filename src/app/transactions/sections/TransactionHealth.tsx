@@ -39,7 +39,7 @@ export default function TransactionHealth({ checklistItems }: TransactionHealthP
                 isReadyToClose ? "text-emerald-950" : "text-slate-900"
               }`}
             >
-              {isReadyToClose ? "Ready to Close" : "Not Ready to Close"}
+              {isReadyToClose ? "Ready to Finalize" : "Not Ready to Finalize"}
             </p>
           </div>
         </div>

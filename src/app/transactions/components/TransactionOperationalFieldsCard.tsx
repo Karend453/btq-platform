@@ -7,23 +7,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../components/ui/select";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "../../components/ui/tooltip";
 
 type TransactionStatus =
   | "Pre-Contract"
   | "Under Contract"
   | "Closed"
   | "Archived";
-
-interface CloseValidation {
-  allowed: boolean;
-  issues: string[];
-}
 
 interface TransactionOperationalFieldsCardProps {
   transactionStatus: TransactionStatus;
@@ -32,7 +21,6 @@ interface TransactionOperationalFieldsCardProps {
   closingDate: string | null;
   adminOptions: string[];
   isReadOnly: boolean;
-  closeValidation: CloseValidation;
   onTransactionStatusChange: (value: TransactionStatus) => void;
   onAssignedAdminChange: (value: string | null) => void;
   onContractDateChange: (value: string | null) => void;
@@ -46,15 +34,15 @@ export function TransactionOperationalFieldsCard({
   closingDate,
   adminOptions,
   isReadOnly,
-  closeValidation,
   onTransactionStatusChange,
   onAssignedAdminChange,
   onContractDateChange,
   onClosingDateChange,
 }: TransactionOperationalFieldsCardProps) {
+  const statusIsFinalizedDisplay = transactionStatus === "Archived";
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-      {/* Status Dropdown */}
       <div>
         <Label
           htmlFor="transaction-status"
@@ -63,50 +51,34 @@ export function TransactionOperationalFieldsCard({
           Status
         </Label>
 
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div>
-                <Select
-                  value={transactionStatus}
-                  onValueChange={(value) =>
-                    onTransactionStatusChange(value as TransactionStatus)
-                  }
-                  disabled={isReadOnly}
-                >
-                  <SelectTrigger id="transaction-status">
-                    <SelectValue />
-                  </SelectTrigger>
+        {statusIsFinalizedDisplay ? (
+          <div
+            id="transaction-status"
+            className="flex h-10 items-center rounded-md border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-900"
+          >
+            Finalized
+          </div>
+        ) : (
+          <Select
+            value={transactionStatus}
+            onValueChange={(value) =>
+              onTransactionStatusChange(value as TransactionStatus)
+            }
+            disabled={isReadOnly}
+          >
+            <SelectTrigger id="transaction-status">
+              <SelectValue />
+            </SelectTrigger>
 
-                  <SelectContent>
-                    <SelectItem value="Pre-Contract">Pre-Contract</SelectItem>
-                    <SelectItem value="Under Contract">Under Contract</SelectItem>
-                    <SelectItem
-                      value="Closed"
-                      disabled={!closeValidation.allowed}
-                    >
-                      Closed {!closeValidation.allowed && " 🔒"}
-                    </SelectItem>
-                    <SelectItem value="Archived" disabled>
-                      Archived (use Archive button)
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </TooltipTrigger>
-
-            {!closeValidation.allowed && transactionStatus !== "Closed" && (
-              <TooltipContent side="right">
-                <p className="text-sm">
-                  Resolve required document issues before closing
-                </p>
-              </TooltipContent>
-            )}
-          </Tooltip>
-        </TooltipProvider>
+            <SelectContent>
+              <SelectItem value="Pre-Contract">Pre-Contract</SelectItem>
+              <SelectItem value="Under Contract">Under Contract</SelectItem>
+              <SelectItem value="Closed">Closed</SelectItem>
+            </SelectContent>
+          </Select>
+        )}
       </div>
 
-      {/* Assigned Admin */}
       <div>
         <Label
           htmlFor="assigned-admin"
@@ -137,7 +109,6 @@ export function TransactionOperationalFieldsCard({
         </Select>
       </div>
 
-      {/* Contract Date */}
       <div>
         <Label
           htmlFor="contract-date"
@@ -157,7 +128,6 @@ export function TransactionOperationalFieldsCard({
         />
       </div>
 
-      {/* Closing Date */}
       <div>
         <Label
           htmlFor="closing-date"

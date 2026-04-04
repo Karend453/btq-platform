@@ -14,6 +14,12 @@ import {
 } from "../components/ui/select";
 import { Card, CardContent } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "../components/ui/tooltip";
 import { StatusBadge, StatusType } from "../components/dashboard/StatusBadge";
 import {
   Table,
@@ -26,7 +32,11 @@ import {
 
 import { listTransactions } from "../../services/transactions";
 import { getUserProfileRoleKey } from "../../services/auth";
-import type { ComplianceDominantState, WorkItem } from "../../types/workItem";
+import type {
+  ComplianceDominantState,
+  ExportPackageListState,
+  WorkItem,
+} from "../../types/workItem";
 
 type StatusFilter = "all" | StatusType;
 type SortBy = "closingDate" | "agentName" | "address";
@@ -60,8 +70,36 @@ function agentDisplaySingleLine(agent: string | undefined): string {
   return lines[0];
 }
 
-/** Matches dashboard Compliance Overview finalize rules. */
-const FINALIZE_LOCK_ICON_CLASS = "text-slate-500";
+function exportPackageTooltipText(
+  exportReady: boolean | undefined,
+  state: ExportPackageListState | undefined
+): string {
+  if (exportReady) return "Export package ready";
+  switch (state) {
+    case "pending":
+      return "Export package is being created";
+    case "failed":
+      return "Export failed";
+    case "not_created":
+      return "Export package not created yet";
+    case "ready":
+      return "Export package ready";
+    default:
+      return "Transaction is finalized, but the export package is not ready yet";
+  }
+}
+
+/**
+ * Workflow-first list ordering: active (Pre-Contract / Under Contract) → Closed → Finalized / Archived.
+ * Lower tier sorts above. Within a tier, the user-selected sort still applies.
+ */
+function workflowOrderingTier(row: WorkItem): 0 | 1 | 2 {
+  if (row.closingFinalized === true || row.isArchived) return 2;
+  const st = (row.rawTransactionStatus ?? row.stage ?? "").trim().toLowerCase();
+  if (st === "archived") return 2;
+  if (row.workflowClosed === true || st === "closed") return 1;
+  return 0;
+}
 
 function canOfferFinalizeClosing(row: WorkItem): boolean {
   return (
@@ -156,6 +194,10 @@ export default function TransactionsPage() {
       return Number.isNaN(n) ? null : n;
     };
     copy.sort((a, b) => {
+      const wa = workflowOrderingTier(a);
+      const wb = workflowOrderingTier(b);
+      if (wa !== wb) return wa - wb;
+
       if (sortBy === "closingDate") {
         const da = parseClosing(a);
         const db = parseClosing(b);
@@ -355,15 +397,56 @@ export default function TransactionsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {sortedRows.map((t) => (
+                {sortedRows.map((t) => {
+                  const finalizedExportReady =
+                    t.closingFinalized === true && t.exportPackageReady === true;
+                  const finalizedAwaitingExport =
+                    t.closingFinalized === true && t.exportPackageReady !== true;
+                  return (
                   <TableRow
                     key={t.id}
-                    className="cursor-pointer"
+                    className={
+                      finalizedExportReady
+                        ? "cursor-pointer border-l-4 border-l-emerald-600 bg-emerald-50/50"
+                        : finalizedAwaitingExport
+                          ? "cursor-pointer border-l-4 border-l-amber-500 bg-amber-50/50"
+                          : "cursor-pointer"
+                    }
                     onClick={() => openTransaction(t.id)}
                   >
                     <TableCell className="max-w-[220px] whitespace-normal px-2 py-3 leading-normal">
-                      {t.identifier}
-                      {t.isArchived ? " (Archived)" : ""}
+                      <span className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium text-slate-900">{t.identifier}</span>
+                        {t.closingFinalized ? (
+                          <TooltipProvider delayDuration={200}>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="inline-flex items-center rounded-full">
+                                  <Badge
+                                    variant="outline"
+                                    className={
+                                      finalizedExportReady
+                                        ? "h-6 shrink-0 rounded-full border-emerald-300 bg-emerald-50 px-2 py-0 text-[10px] font-semibold uppercase tracking-wide text-emerald-900"
+                                        : "h-6 shrink-0 rounded-full border-amber-300 bg-amber-50 px-2 py-0 text-[10px] font-semibold uppercase tracking-wide text-amber-950"
+                                    }
+                                  >
+                                    Finalized
+                                  </Badge>
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent side="top" className="max-w-xs text-sm">
+                                {exportPackageTooltipText(
+                                  t.exportPackageReady,
+                                  t.exportPackageListState
+                                )}
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        ) : null}
+                        {t.isArchived ? (
+                          <span className="text-muted-foreground">(Archived)</span>
+                        ) : null}
+                      </span>
                     </TableCell>
                     <TableCell className="px-2 py-3 text-muted-foreground">{t.type}</TableCell>
                     <TableCell className="px-2 py-3 leading-normal">
@@ -385,17 +468,29 @@ export default function TransactionsPage() {
                       onClick={(e) => e.stopPropagation()}
                     >
                       {t.closingFinalized ? (
-                        <span
-                          className="inline-flex justify-end w-full pr-0.5"
-                          title="Closing finalized"
-                          aria-label="Closing finalized"
-                        >
-                          <Lock
-                            className={`h-[17px] w-[17px] shrink-0 opacity-95 ${FINALIZE_LOCK_ICON_CLASS}`}
-                            strokeWidth={2}
-                            aria-hidden
-                          />
-                        </span>
+                        <TooltipProvider delayDuration={200}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="inline-flex justify-end w-full pr-0.5">
+                                <Lock
+                                  className={`h-4 w-4 shrink-0 ${
+                                    finalizedExportReady
+                                      ? "text-emerald-600"
+                                      : "text-amber-600"
+                                  }`}
+                                  strokeWidth={2}
+                                  aria-hidden
+                                />
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-xs text-sm">
+                              {exportPackageTooltipText(
+                                t.exportPackageReady,
+                                t.exportPackageListState
+                              )}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
                       ) : canOfferFinalizeClosing(t) ? (
                         <button
                           type="button"
@@ -411,7 +506,8 @@ export default function TransactionsPage() {
                       ) : null}
                     </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
           </div>
