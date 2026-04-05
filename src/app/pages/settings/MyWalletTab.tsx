@@ -1,17 +1,16 @@
 import React, { useEffect, useState } from "react";
-import { AlertCircle, CreditCard, FileText, Receipt, Wallet } from "lucide-react";
+import { AlertCircle, CreditCard, Wallet } from "lucide-react";
 import {
   createBillingPortalSession,
-  getOfficeBilling,
-  type OfficeBillingView,
+  getWalletBillingSummary,
 } from "../../../services/officeAgentsBilling";
+import type { WalletBillingSummary } from "../../../types/billing";
 import { getOfficeById, type Office } from "../../../services/offices";
 import { getUserDisplayName, useAuth } from "../../contexts/AuthContext";
 import { useSettingsProfile } from "./SettingsProfileContext";
 import { Alert, AlertDescription, AlertTitle } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
-import { Separator } from "../../components/ui/separator";
 
 function ReadonlyField({ label, value }: { label: string; value: string | null | undefined }) {
   const display = value?.trim() ? value : "—";
@@ -39,23 +38,52 @@ function officeLabelForDisplay(office: Office | null): string | null {
   return display || null;
 }
 
-function formatSeats(used: number | null, included: number | null): string {
-  if (used == null && included == null) return "—";
-  const u = used != null ? String(used) : "—";
-  const i = included != null ? String(included) : "—";
-  return `${u} / ${i} (used / included)`;
+function formatMoney(amount: number, currency: string): string {
+  if (!Number.isFinite(amount)) return "—";
+  const code = (currency?.trim() || "USD").toUpperCase();
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: code,
+    }).format(amount);
+  } catch {
+    return `${amount.toFixed(2)} ${code}`;
+  }
+}
+
+function formatDateIso(iso: string | null): string {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "—";
+    return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(d);
+  } catch {
+    return "—";
+  }
+}
+
+/** Stripe subscription.status → title-style words (e.g. past_due → Past Due). */
+function formatSubscriptionStatus(raw: string): string {
+  const s = raw.trim();
+  if (!s) return "—";
+  return s
+    .replace(/_/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(" ");
 }
 
 /**
- * Broker wallet: identity from existing services; billing sections from {@link getOfficeBilling} (mock until backend).
+ * Broker wallet: account from BTQ; billing summary and payment method from Stripe (server-backed).
  */
 export function MyWalletTab() {
   const { user, loading: authLoading } = useAuth();
   const { profile } = useSettingsProfile();
   const [office, setOffice] = useState<Office | null | undefined>(undefined);
-  const [billing, setBilling] = useState<OfficeBillingView | null>(null);
-  const [billingLoading, setBillingLoading] = useState(true);
-  const [billingError, setBillingError] = useState<string | null>(null);
+  const [wallet, setWallet] = useState<WalletBillingSummary | null>(null);
+  const [walletLoading, setWalletLoading] = useState(true);
+  const [walletError, setWalletError] = useState<string | null>(null);
   const [portalBusy, setPortalBusy] = useState(false);
   const [portalNotice, setPortalNotice] = useState<string | null>(null);
 
@@ -78,32 +106,25 @@ export function MyWalletTab() {
   }, [authLoading, profile?.office_id]);
 
   useEffect(() => {
-    if (authLoading || office === undefined) return;
+    if (authLoading) return;
     let cancelled = false;
-    const oid = office?.id?.trim();
-    if (!oid) {
-      setBilling(null);
-      setBillingError(null);
-      setBillingLoading(false);
-      return;
-    }
-    setBillingLoading(true);
-    setBillingError(null);
-    getOfficeBilling(oid).then((result) => {
+    setWalletLoading(true);
+    setWalletError(null);
+    getWalletBillingSummary().then((result) => {
       if (cancelled) return;
       if (!result.ok) {
-        setBilling(null);
-        setBillingError(result.error);
-        setBillingLoading(false);
+        setWallet(null);
+        setWalletError(result.error);
+        setWalletLoading(false);
         return;
       }
-      setBilling(result.data);
-      setBillingLoading(false);
+      setWallet(result.data);
+      setWalletLoading(false);
     });
     return () => {
       cancelled = true;
     };
-  }, [authLoading, office]);
+  }, [authLoading]);
 
   const loading = authLoading || office === undefined;
   const profileDisplayName = profile?.display_name?.trim();
@@ -113,32 +134,33 @@ export function MyWalletTab() {
   const roleDisplay = roleLabelForDisplay(profile?.role);
   const officeName = office ? officeLabelForDisplay(office) : null;
 
-  async function handleManageBilling() {
-    const oid = office?.id?.trim();
-    if (!oid) return;
+  async function handleUpdatePaymentMethod() {
+    if (portalBusy) return;
     setPortalNotice(null);
     setPortalBusy(true);
-    const result = await createBillingPortalSession(oid);
-    setPortalBusy(false);
-    if (!result.ok) {
-      setPortalNotice(result.error);
-      return;
+    let navigatingAway = false;
+    try {
+      const result = await createBillingPortalSession();
+      if (!result.ok) {
+        setPortalNotice(result.error);
+        return;
+      }
+      navigatingAway = true;
+      window.location.assign(result.data.url);
+    } catch {
+      setPortalNotice("Could not reach billing. Check your connection and try again.");
+    } finally {
+      if (!navigatingAway) setPortalBusy(false);
     }
-    const { url, unavailableReason } = result.data;
-    if (url) {
-      window.location.assign(url);
-      return;
-    }
-    setPortalNotice(unavailableReason ?? "Billing portal is not available.");
   }
 
   return (
     <div className="space-y-4">
       {portalNotice ? (
-        <Alert>
-          <AlertCircle className="h-4 w-4" aria-hidden />
-          <AlertTitle>Billing portal</AlertTitle>
-          <AlertDescription>{portalNotice}</AlertDescription>
+        <Alert variant="default" className="border-slate-200 bg-slate-50/80">
+          <AlertCircle className="h-4 w-4 text-slate-600" aria-hidden />
+          <AlertTitle className="text-slate-800">Could not open billing portal</AlertTitle>
+          <AlertDescription className="text-slate-600">{portalNotice}</AlertDescription>
         </Alert>
       ) : null}
 
@@ -152,14 +174,14 @@ export function MyWalletTab() {
               <div className="min-w-0 space-y-1">
                 <CardTitle className="text-lg font-semibold leading-snug">Account</CardTitle>
                 <CardDescription className="text-slate-600 text-sm leading-relaxed">
-                  Your profile and office link (unchanged from BTQ records).
+                  Your profile and office in BTQ.
                 </CardDescription>
               </div>
             </div>
           </CardHeader>
           <CardContent className="space-y-4 text-sm text-slate-600">
             {loading ? (
-              <p className="text-slate-600">Loading…</p>
+              <p className="text-slate-500">Loading…</p>
             ) : (
               <>
                 <div className="rounded-lg border border-slate-100 bg-slate-50/70 px-4 py-3.5 space-y-2">
@@ -183,192 +205,66 @@ export function MyWalletTab() {
           </CardContent>
         </Card>
 
-        <div className="space-y-4 lg:col-span-2">
-          <Card className="border-slate-200">
-            <CardHeader className="space-y-1">
-              <div className="flex items-start gap-3">
-                <div className="rounded-lg bg-slate-100 p-2 text-slate-700 shrink-0">
-                  <Receipt className="h-5 w-5" aria-hidden />
-                </div>
-                <div className="min-w-0 space-y-1">
-                  <CardTitle className="text-lg font-semibold leading-snug">Broker plan</CardTitle>
-                  <CardDescription className="text-slate-600 text-sm leading-relaxed">
-                    Preview layout — not live subscription data until billing is connected.
-                  </CardDescription>
-                </div>
+        <Card className="border-slate-200 lg:col-span-2">
+          <CardHeader className="space-y-1">
+            <div className="flex items-start gap-3">
+              <div className="rounded-lg bg-slate-100 p-2 text-slate-700 shrink-0">
+                <CreditCard className="h-5 w-5" aria-hidden />
               </div>
-            </CardHeader>
-            <CardContent className="text-sm text-slate-600 space-y-2">
-              {billingLoading ? (
-                <p className="text-slate-600">Loading billing preview…</p>
-              ) : billingError ? (
-                <p className="text-destructive text-sm" role="alert">
-                  {billingError}
-                </p>
-              ) : billing ? (
-                <>
-                  <p className="font-medium text-slate-900">{billing.brokerPlanLabel}</p>
-                  {billing.brokerPlanDetail ? (
-                    <p className="leading-relaxed text-slate-600">{billing.brokerPlanDetail}</p>
-                  ) : null}
-                </>
-              ) : (
-                <p className="text-slate-600">Link an office to see plan information.</p>
-              )}
-            </CardContent>
-          </Card>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Card className="border-slate-200">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base font-semibold">Seat count</CardTitle>
-                <CardDescription className="text-xs">Billable seats (preview)</CardDescription>
-              </CardHeader>
-              <CardContent className="text-sm text-slate-600 space-y-2">
-                {billingLoading ? (
-                  <p>Loading…</p>
-                ) : billing ? (
-                  <>
-                    <p className="text-lg font-semibold text-slate-900 tabular-nums">
-                      {formatSeats(billing.usedSeats, billing.includedSeats)}
-                    </p>
-                    {billing.seatNote ? <p className="text-xs leading-relaxed">{billing.seatNote}</p> : null}
-                  </>
-                ) : (
-                  <p>—</p>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card className="border-slate-200">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base font-semibold">Estimated billing summary</CardTitle>
-                <CardDescription className="text-xs">Not a quote or invoice</CardDescription>
-              </CardHeader>
-              <CardContent className="text-sm text-slate-600 space-y-2">
-                {billingLoading ? (
-                  <p>Loading…</p>
-                ) : billing ? (
-                  <>
-                    <p className="text-lg font-semibold text-slate-900">{billing.estimatedTotalLabel}</p>
-                    {billing.estimatedDetail ? (
-                      <p className="text-xs leading-relaxed">{billing.estimatedDetail}</p>
-                    ) : null}
-                  </>
-                ) : (
-                  <p>—</p>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-
-          <Card className="border-slate-200">
-            <CardHeader className="space-y-1">
-              <div className="flex items-start gap-3">
-                <div className="rounded-lg bg-slate-100 p-2 text-slate-700 shrink-0">
-                  <CreditCard className="h-5 w-5" aria-hidden />
-                </div>
-                <div className="min-w-0 space-y-1">
-                  <CardTitle className="text-lg font-semibold leading-snug">Payment &amp; subscription</CardTitle>
-                  <CardDescription className="text-slate-600 text-sm leading-relaxed">
-                    Stripe Customer Portal will appear here when connected.
-                  </CardDescription>
-                </div>
+              <div className="min-w-0 space-y-1">
+                <CardTitle className="text-lg font-semibold leading-snug">Billing</CardTitle>
+                <CardDescription className="text-slate-600 text-sm leading-relaxed">
+                  Subscription details from Stripe. Update your payment method in the secure Stripe portal.
+                </CardDescription>
               </div>
-            </CardHeader>
-            <CardContent className="space-y-4 text-sm text-slate-600">
-              {billingLoading ? (
-                <p>Loading…</p>
-              ) : billing ? (
-                <div className="space-y-4">
-                  <div className="space-y-1">
-                    <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Payment method</p>
-                    <p className="text-slate-900">{billing.paymentMethodSummary}</p>
-                  </div>
-                  <Separator />
-                  <div className="space-y-1">
-                    <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                      Subscription status
-                    </p>
-                    <p className="font-medium text-slate-900">{billing.subscriptionStatusLabel}</p>
-                    {billing.subscriptionStatusDetail ? (
-                      <p className="text-xs leading-relaxed">{billing.subscriptionStatusDetail}</p>
-                    ) : null}
-                  </div>
-                  <Separator />
-                  <div className="space-y-2">
-                    <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                      Extra line items (read-only)
-                    </p>
-                    <ul className="rounded-md border border-slate-100 divide-y divide-slate-100">
-                      {billing.extraLineItems.map((row) => (
-                        <li
-                          key={row.label}
-                          className="flex flex-col sm:flex-row sm:justify-between gap-1 px-3 py-2.5"
-                        >
-                          <span className="text-slate-700">{row.label}</span>
-                          <span className="text-slate-900 sm:text-right">{row.value}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
-              ) : (
-                <p>—</p>
-              )}
-
-              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center pt-2">
-                <Button
-                  type="button"
-                  className="w-full sm:w-auto"
-                  onClick={() => void handleManageBilling()}
-                  disabled={portalBusy || !office?.id || billingLoading}
-                >
-                  {portalBusy ? "Working…" : "Manage Billing"}
-                </Button>
-                <Button variant="outline" className="w-full sm:w-auto" asChild>
-                  <a
-                    href="mailto:billing@brokerteq.com?subject=Billing%20inquiry"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Contact Billing Support
-                  </a>
-                </Button>
-              </div>
-              <p className="text-xs text-slate-500 leading-relaxed">
-                Manage Billing will open the Stripe portal when your workspace is connected. Until then,
-                you&apos;ll see a short notice instead.
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-5 text-sm text-slate-600">
+            {walletLoading ? (
+              <p className="text-slate-500">Loading billing information…</p>
+            ) : walletError ? (
+              <p className="text-slate-600" role="status">
+                {walletError}
               </p>
-            </CardContent>
-          </Card>
-        </div>
+            ) : wallet && !wallet.connected ? (
+              <p className="text-slate-600">Billing is not connected yet.</p>
+            ) : wallet?.connected ? (
+              <>
+                <dl className="grid gap-3 sm:grid-cols-2 sm:gap-x-6 sm:gap-y-3">
+                  <ReadonlyField label="Plan" value={wallet.planName} />
+                  <ReadonlyField
+                    label="Subscription status"
+                    value={formatSubscriptionStatus(wallet.subscriptionStatus)}
+                  />
+                  <ReadonlyField label="Next billing date" value={formatDateIso(wallet.nextBillingDate)} />
+                  <ReadonlyField
+                    label="Monthly total"
+                    value={`${formatMoney(wallet.monthlyTotal, wallet.currency)}/mo`}
+                  />
+                  <div className="sm:col-span-2">
+                    <ReadonlyField label="Billable seats" value={String(wallet.seatCount)} />
+                  </div>
+                </dl>
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  Seat changes apply to your next billing cycle.
+                </p>
+                <div className="pt-1">
+                  <Button
+                    type="button"
+                    onClick={() => void handleUpdatePaymentMethod()}
+                    disabled={portalBusy}
+                    aria-busy={portalBusy}
+                  >
+                    {portalBusy ? "Opening…" : "Update payment method"}
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <p className="text-slate-600">No billing data available.</p>
+            )}
+          </CardContent>
+        </Card>
       </div>
-
-      <Card className="border-slate-200">
-        <CardHeader className="space-y-1">
-          <div className="flex items-start gap-3">
-            <div className="rounded-lg bg-slate-100 p-2 text-slate-700 shrink-0">
-              <FileText className="h-5 w-5" aria-hidden />
-            </div>
-            <div className="min-w-0 space-y-1">
-              <CardTitle className="text-lg font-semibold leading-snug">Invoices &amp; history</CardTitle>
-              <CardDescription className="text-slate-700 text-base leading-relaxed">
-                Not connected yet.
-              </CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="text-sm text-slate-600">
-          <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50/60 px-4 py-10 text-center">
-            <p className="font-medium text-slate-800">No invoices to show</p>
-            <p className="mt-2 text-slate-600 leading-relaxed max-w-md mx-auto">
-              When your organization has billable activity in BTQ, invoices and payment history will appear
-              here.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
 }

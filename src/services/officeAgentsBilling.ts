@@ -1,3 +1,5 @@
+import { supabase } from "../lib/supabaseClient";
+import type { BillingPortalSessionResponse, WalletBillingSummary } from "../types/billing";
 import { getOfficeRosterForOfficeId, type OfficeRosterRow } from "./officeRoster";
 
 /** Roster row shape; single source of truth remains `user_profiles` via {@link getOfficeRosterForOfficeId}. */
@@ -12,21 +14,6 @@ export type AddOfficeAgentPayload = {
   display_name?: string | null;
 };
 
-/** Read-model for wallet UI; populated from backend later. */
-export type OfficeBillingView = {
-  brokerPlanLabel: string;
-  brokerPlanDetail: string | null;
-  includedSeats: number | null;
-  usedSeats: number | null;
-  seatNote: string | null;
-  estimatedTotalLabel: string | null;
-  estimatedDetail: string | null;
-  paymentMethodSummary: string | null;
-  subscriptionStatusLabel: string | null;
-  subscriptionStatusDetail: string | null;
-  extraLineItems: { label: string; value: string }[];
-};
-
 export type AddOfficeAgentPreviewResult = {
   /** True while actions are mock-only; UI should not imply roster or billing changed. */
   isPreviewOnly: true;
@@ -34,11 +21,6 @@ export type AddOfficeAgentPreviewResult = {
 
 export type RemoveOfficeAgentPreviewResult = {
   isPreviewOnly: true;
-};
-
-export type BillingPortalSessionResult = {
-  url: string | null;
-  unavailableReason: string | null;
 };
 
 /**
@@ -54,10 +36,104 @@ export async function getOfficeAgents(officeId: string): Promise<{
   return { agents: rows, error };
 }
 
+function parseApiErrorJson(body: unknown): string | null {
+  if (
+    body &&
+    typeof body === "object" &&
+    body !== null &&
+    "error" in body &&
+    typeof (body as { error: unknown }).error === "string"
+  ) {
+    return (body as { error: string }).error;
+  }
+  return null;
+}
+
+/**
+ * Live wallet summary: server resolves the user’s office from profile + memberships, then reads
+ * `offices.stripe_subscription_id` and Stripe (no browser Stripe calls).
+ */
+export async function getWalletBillingSummary(): Promise<ServiceResult<WalletBillingSummary>> {
+  if (!supabase) return { ok: false, error: "Supabase client unavailable." };
+
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError || !sessionData.session?.access_token) {
+    return { ok: false, error: "Not signed in." };
+  }
+
+  const res = await fetch("/api/billing/wallet-summary", {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${sessionData.session.access_token}`,
+    },
+  });
+
+  let body: unknown = null;
+  try {
+    body = await res.json();
+  } catch {
+    body = null;
+  }
+
+  if (!res.ok) {
+    return { ok: false, error: parseApiErrorJson(body) ?? `Request failed (${res.status})` };
+  }
+
+  if (!body || typeof body !== "object" || body === null || !("connected" in body)) {
+    return { ok: false, error: "Invalid response from server." };
+  }
+
+  return { ok: true, data: body as WalletBillingSummary };
+}
+
+/**
+ * Stripe Customer Portal — server resolves office and `stripe_customer_id`; returns a hosted session URL.
+ */
+export async function createBillingPortalSession(): Promise<
+  ServiceResult<BillingPortalSessionResponse>
+> {
+  if (!supabase) return { ok: false, error: "Supabase client unavailable." };
+
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError || !sessionData.session?.access_token) {
+    return { ok: false, error: "Not signed in." };
+  }
+
+  const res = await fetch("/api/billing/create-billing-portal-session", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${sessionData.session.access_token}`,
+    },
+    body: "{}",
+  });
+
+  let body: unknown = null;
+  try {
+    body = await res.json();
+  } catch {
+    body = null;
+  }
+
+  if (!res.ok) {
+    return { ok: false, error: parseApiErrorJson(body) ?? `Request failed (${res.status})` };
+  }
+
+  if (
+    !body ||
+    typeof body !== "object" ||
+    body === null ||
+    !("url" in body) ||
+    typeof (body as { url: unknown }).url !== "string"
+  ) {
+    return { ok: false, error: "Invalid response from server." };
+  }
+
+  return { ok: true, data: { url: (body as { url: string }).url } };
+}
+
 // =============================================================================
-// MOCK IMPLEMENTATION — no persistence, no Supabase writes, no Stripe.
-// Replace this block with real API calls when backend + Stripe Customer Portal are ready.
-// Pages should keep calling the exported functions above; only this section changes.
+// MOCK — team add/remove only (no persistence). Replace when team APIs are wired.
 // =============================================================================
 
 const MOCK_LATENCY_MS = 450;
@@ -102,58 +178,6 @@ export async function removeOfficeAgent(
   if (!oid) return { ok: false, error: "Office is required." };
   if (!aid) return { ok: false, error: "Agent is required." };
   return { ok: true, data: { isPreviewOnly: true } };
-}
-
-/**
- * Mock: static placeholder snapshot for layout and copy review. Not live billing data.
- */
-export async function getOfficeBilling(officeId: string): Promise<ServiceResult<OfficeBillingView>> {
-  await mockDelay();
-  const id = officeId.trim();
-  if (!id) {
-    return { ok: false, error: "Office is required." };
-  }
-  return {
-    ok: true,
-    data: {
-      brokerPlanLabel: "Broker team (preview)",
-      brokerPlanDetail:
-        "Plan details will appear here once your subscription is connected to the app.",
-      includedSeats: null,
-      usedSeats: null,
-      seatNote: "Seat counts will sync when billing is connected. No manual seat overrides in BTQ.",
-      estimatedTotalLabel: "—",
-      estimatedDetail:
-        "Estimates are unavailable until billing is connected. Nothing here is a quote or invoice.",
-      paymentMethodSummary: "Not connected — manage with Brokerteq until the portal is live.",
-      subscriptionStatusLabel: "Not connected",
-      subscriptionStatusDetail: "Subscription status will show here after Stripe integration.",
-      extraLineItems: [
-        { label: "Add-ons", value: "None shown (preview)" },
-        { label: "Notes", value: "Line items will list billable add-ons when available." },
-      ],
-    },
-  };
-}
-
-/**
- * Mock: no Customer Portal URL. Real impl returns `{ url }` from your backend.
- */
-export async function createBillingPortalSession(
-  officeId: string
-): Promise<ServiceResult<BillingPortalSessionResult>> {
-  await mockDelay();
-  const id = officeId.trim();
-  if (!id) {
-    return { ok: false, error: "Office is required." };
-  }
-  return {
-    ok: true,
-    data: {
-      url: null,
-      unavailableReason: "Self-serve billing is not connected yet. Use Contact Billing Support for now.",
-    },
-  };
 }
 
 // =============================================================================
