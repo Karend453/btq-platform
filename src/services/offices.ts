@@ -1,7 +1,7 @@
 import { supabase } from "../lib/supabaseClient";
 import { getCurrentUser } from "./auth";
 
-/** Row from `public.offices`, keyed by `user_profiles.office_id` → `offices.id`. */
+/** Row from `public.offices`. Current office resolution prefers `office_memberships`, with legacy `user_profiles.office_id` fallback. */
 export type Office = {
   id: string;
   name: string;
@@ -13,36 +13,84 @@ export type Office = {
   broker_name: string | null;
   broker_email: string | null;
   mls_name: string | null;
+  /** Signup / marketing tier (`complete_broker_signup`). */
+  plan_tier?: string | null;
   stripe_customer_id?: string | null;
   stripe_subscription_id?: string | null;
+  /** Last tier from Stripe metadata / webhook; overrides display when set. */
+  billing_plan_tier?: string | null;
+  billing_status?: string | null;
+  billing_seat_quantity?: number | null;
+  billing_current_period_end?: string | null;
+  billing_cancel_at_period_end?: boolean | null;
+  billing_email?: string | null;
+  app_access_status?: string | null;
 };
 
 /**
- * Read-only: loads the office linked to the signed-in user (`user_profiles.office_id` = `offices.id`).
- * Returns null if unauthenticated, no link, missing row, or query error (e.g. RLS).
+ * Picks which `offices.id` to treat as the signed-in user's current office.
+ * Prefers active `office_memberships`; uses `user_profiles.office_id` when there are no memberships
+ * or (if multiple memberships) when the legacy field matches one of them; otherwise oldest membership wins.
+ */
+function resolveCurrentOfficeIdFromMembershipsAndProfile(
+  membershipRows: { office_id: string }[],
+  profileOfficeId: string | null,
+  membershipError: Error | null,
+): string | null {
+  if (membershipError) {
+    console.warn("[getCurrentOffice] office_memberships:", membershipError.message);
+    return profileOfficeId;
+  }
+
+  const ids = membershipRows.map((r) => r.office_id).filter((id) => id != null && String(id).trim() !== "");
+  if (ids.length === 0) return profileOfficeId;
+  if (ids.length === 1) return ids[0] ?? null;
+
+  if (profileOfficeId && ids.includes(profileOfficeId)) return profileOfficeId;
+  return ids[0] ?? null;
+}
+
+/**
+ * Read-only: loads the office for the signed-in user. Resolves office id from active
+ * `office_memberships` first, then falls back to legacy `user_profiles.office_id` when needed.
+ * Returns null if unauthenticated, no resolvable office id, missing `offices` row, or query error (e.g. RLS).
  */
 export async function getCurrentOffice(): Promise<Office | null> {
   const user = await getCurrentUser();
   if (!user?.id) return null;
 
-  const { data: profile, error: profileError } = await supabase
-    .from("user_profiles")
-    .select("office_id")
-    .eq("id", user.id)
-    .maybeSingle();
+  const [{ data: profile, error: profileError }, { data: membershipRows, error: membershipError }] =
+    await Promise.all([
+      supabase.from("user_profiles").select("office_id").eq("id", user.id).maybeSingle(),
+      supabase
+        .from("office_memberships")
+        .select("office_id")
+        .eq("user_id", user.id)
+        .eq("status", "active")
+        .order("created_at", { ascending: true }),
+    ]);
 
   if (profileError) {
     console.warn("[getCurrentOffice] user_profiles:", profileError.message);
-    return null;
   }
 
-  const officeId = profile?.office_id;
+  const rawProfileOid = profile?.office_id;
+  const profileOfficeId =
+    rawProfileOid == null || rawProfileOid === "" ? null : String(rawProfileOid);
+
+  const memErr = membershipError ? new Error(membershipError.message) : null;
+  const officeId = resolveCurrentOfficeIdFromMembershipsAndProfile(
+    (membershipRows ?? []) as { office_id: string }[],
+    profileOfficeId,
+    memErr,
+  );
+
   if (officeId == null || officeId === "") return null;
 
   const { data: office, error: officeError } = await supabase
     .from("offices")
     .select(
-      "id, name, display_name, state, address_line1, city, postal_code, broker_name, broker_email, mls_name"
+      "id, name, display_name, state, address_line1, city, postal_code, broker_name, broker_email, mls_name, plan_tier, stripe_customer_id, stripe_subscription_id, billing_plan_tier, billing_status, billing_seat_quantity, billing_current_period_end, billing_cancel_at_period_end, billing_email, app_access_status"
     )
     .eq("id", officeId)
     .maybeSingle();
@@ -66,7 +114,7 @@ export async function getOfficeById(officeId: string): Promise<Office | null> {
   const { data: office, error: officeError } = await supabase
     .from("offices")
     .select(
-      "id, name, display_name, state, address_line1, city, postal_code, broker_name, broker_email, mls_name"
+      "id, name, display_name, state, address_line1, city, postal_code, broker_name, broker_email, mls_name, plan_tier, stripe_customer_id, stripe_subscription_id, billing_plan_tier, billing_status, billing_seat_quantity, billing_current_period_end, billing_cancel_at_period_end, billing_email, app_access_status"
     )
     .eq("id", id)
     .maybeSingle();

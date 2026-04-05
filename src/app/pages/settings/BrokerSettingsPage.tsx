@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { Building2, CreditCard, Settings, User, Users, Wallet } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { AccountInfoTab } from "./AccountInfoTab";
-import { ManageSubagentsTab } from "./ManageSubagentsTab";
+import { TeamManagementTab } from "./TeamManagementTab";
 import { MyOfficeTab } from "./MyOfficeTab";
 import { MySubscriptionsTab } from "./MySubscriptionsTab";
 import { MyWalletTab } from "./MyWalletTab";
@@ -12,7 +12,7 @@ const TAB_CONFIG = [
   { value: "subscriptions", label: "My Subscriptions", icon: CreditCard },
   { value: "wallet", label: "My Wallet", icon: Wallet },
   { value: "account", label: "Account Info", icon: User },
-  { value: "subagents", label: "Manage Subagents", icon: Users },
+  { value: "subagents", label: "Team Management", icon: Users },
 ] as const;
 
 const DEFAULT_TAB = "office";
@@ -82,7 +82,7 @@ export function BrokerSettingsPage() {
             <AccountInfoTab />
           </TabsContent>
           <TabsContent value="subagents" className="mt-4">
-            <ManageSubagentsTab />
+            <TeamManagementTab />
           </TabsContent>
         </Tabs>
       </div>

@@ -1,49 +1,201 @@
 import { supabase } from "../lib/supabaseClient";
 import { getCurrentUser } from "./auth";
 
-/** One row in the broker’s office roster (read-only). */
-export type OfficeRosterRow = {
+/** Canonical keys for office membership role (lowercase); stored on `office_memberships.role`. */
+export type OfficeRole = "agent" | "admin" | "broker" | "btq_admin";
+
+export type OfficeRosterMember = {
   id: string;
-  display_name: string | null;
+  office_id: string;
   email: string | null;
   role: string | null;
+  display_name: string | null;
+  created_at: string;
 };
 
-async function fetchOfficeRosterByOfficeId(
-  officeId: string
-): Promise<{ rows: OfficeRosterRow[]; error: string | null }> {
-  const { data, error } = await supabase
-    .from("user_profiles")
-    .select("id, display_name, email, role")
-    .eq("office_id", officeId)
-    .order("display_name", { ascending: true, nullsFirst: false })
-    .order("email", { ascending: true });
+export type OfficeRosterSummary = {
+  brokerCount: number;
+  adminCount: number;
+  agentCount: number;
+  /** `admin` + `agent` — billable seats (broker is included in base plan, not an extra seat). */
+  projectedBillableSeats: number;
+  /** Internal BTQ users excluded from customer-facing roster and billing counts. */
+  btqAdminExcludedCount: number;
+};
 
-  if (error) {
-    return { rows: [], error: error.message };
-  }
+function normalizeRole(role: string | null | undefined): string {
+  return (role ?? "").trim().toLowerCase();
+}
 
-  return { rows: (data ?? []) as OfficeRosterRow[], error: null };
+/** `agent` and `admin` count toward billable seats; `broker` is base plan; `btq_admin` is internal. */
+export function isBillableSeatRole(role: string | null | undefined): boolean {
+  const r = normalizeRole(role);
+  return r === "agent" || r === "admin";
+}
+
+/** Roles shown on broker-facing roster UIs (`btq_admin` hidden). */
+export function isVisibleCustomerRosterRole(role: string | null | undefined): boolean {
+  const r = normalizeRole(role);
+  return r === "broker" || r === "admin" || r === "agent";
+}
+
+export function memberDisplayName(m: Pick<OfficeRosterMember, "display_name" | "email">): string {
+  const name = m.display_name?.trim();
+  if (name) return name;
+  const email = m.email?.trim();
+  if (email) return email;
+  return "—";
+}
+
+/** Human-readable label for an office membership role (settings, roster tables, back office). */
+export function formatOfficeRoleLabel(role: string | null | undefined): string {
+  const r = normalizeRole(role);
+  if (r === "admin") return "Admin";
+  if (r === "agent") return "Agent";
+  if (r === "broker") return "Broker";
+  if (r === "btq_admin") return "BTQ Admin";
+  return "—";
 }
 
 /**
- * Same roster rows as {@link getOfficeRosterForCurrentBroker}, keyed by `offices.id`
- * (`user_profiles.office_id`). For Back Office read-only views; caller should enforce route auth.
+ * Split roster members into broker / admin / agent buckets for UI. Only includes roles allowed by
+ * {@link isVisibleCustomerRosterRole}; other roles are omitted.
  */
-export async function getOfficeRosterForOfficeId(officeId: string): Promise<{
-  rows: OfficeRosterRow[];
+export function partitionCustomerRosterByRole(members: OfficeRosterMember[]): {
+  brokers: OfficeRosterMember[];
+  admins: OfficeRosterMember[];
+  agents: OfficeRosterMember[];
+} {
+  const visible = members.filter((m) => isVisibleCustomerRosterRole(m.role));
+  const brokers: OfficeRosterMember[] = [];
+  const admins: OfficeRosterMember[] = [];
+  const agents: OfficeRosterMember[] = [];
+  for (const m of visible) {
+    const r = normalizeRole(m.role);
+    if (r === "broker") brokers.push(m);
+    else if (r === "admin") admins.push(m);
+    else if (r === "agent") agents.push(m);
+  }
+  return { brokers, admins, agents };
+}
+
+export function summarizeOfficeRoster(members: OfficeRosterMember[]): OfficeRosterSummary {
+  let brokerCount = 0;
+  let adminCount = 0;
+  let agentCount = 0;
+  let btqAdminExcludedCount = 0;
+
+  for (const m of members) {
+    const r = normalizeRole(m.role);
+    if (r === "btq_admin") {
+      btqAdminExcludedCount += 1;
+      continue;
+    }
+    if (r === "broker") brokerCount += 1;
+    else if (r === "admin") adminCount += 1;
+    else if (r === "agent") agentCount += 1;
+  }
+
+  return {
+    brokerCount,
+    adminCount,
+    agentCount,
+    projectedBillableSeats: adminCount + agentCount,
+    btqAdminExcludedCount,
+  };
+}
+
+type MembershipUserJoin = {
+  id: string;
+  email: string | null;
+  display_name: string | null;
+};
+
+type OfficeMembershipQueryRow = {
+  id: string;
+  office_id: string;
+  role: string | null;
+  status: string;
+  created_at: string;
+  user: MembershipUserJoin | MembershipUserJoin[] | null;
+};
+
+function unwrapJoinedUser(
+  user: OfficeMembershipQueryRow["user"],
+): MembershipUserJoin | null {
+  if (user == null) return null;
+  return Array.isArray(user) ? user[0] ?? null : user;
+}
+
+/** Maps active `office_memberships` rows (+ joined profile) to the flat roster shape used across the app. */
+function mapOfficeMembershipToRosterMember(row: OfficeMembershipQueryRow): OfficeRosterMember {
+  const u = unwrapJoinedUser(row.user);
+  const userId = u?.id?.trim();
+  return {
+    id: userId ? userId : row.id,
+    office_id: row.office_id,
+    email: u?.email ?? null,
+    role: row.role ?? null,
+    display_name: u?.display_name ?? null,
+    created_at: row.created_at,
+  };
+}
+
+/**
+ * Office roster from `office_memberships` (active only), joined to `user_profiles` for identity fields.
+ * Same office scope as {@link getCurrentOffice} when listing the broker’s office.
+ */
+export async function listOfficeRoster(officeId: string): Promise<{
+  members: OfficeRosterMember[];
   error: string | null;
 }> {
   const id = officeId.trim();
-  if (!id) return { rows: [], error: null };
-  return fetchOfficeRosterByOfficeId(id);
+  if (!id) return { members: [], error: null };
+
+  const { data, error } = await supabase
+    .from("office_memberships")
+    .select(
+      `
+      id,
+      office_id,
+      role,
+      status,
+      created_at,
+      user:user_profiles (
+        id,
+        email,
+        display_name
+      )
+    `,
+    )
+    .eq("office_id", id)
+    .eq("status", "active")
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    return { members: [], error: error.message };
+  }
+
+  const rows = (data ?? []) as OfficeMembershipQueryRow[];
+  return { members: rows.map(mapOfficeMembershipToRosterMember), error: null };
+}
+
+/** Same rows as {@link listOfficeRoster}; kept for call sites that expect `{ rows }`. */
+export type OfficeRosterRow = OfficeRosterMember;
+
+export async function getOfficeRosterForOfficeId(officeId: string): Promise<{
+  rows: OfficeRosterMember[];
+  error: string | null;
+}> {
+  const { members, error } = await listOfficeRoster(officeId);
+  return { rows: members, error };
 }
 
 /**
- * Profiles in the same office as the signed-in user, when their profile role is `broker`.
- * Requires RLS policy `user_profiles_select_same_office_broker` (see migrations).
+ * Profiles in the same office as the signed-in user when their profile role is `broker`.
+ * Requires RLS allowing brokers to read same-office `user_profiles`.
  */
-export async function getOfficeRosterForCurrentBroker(): Promise<OfficeRosterRow[]> {
+export async function getOfficeRosterForCurrentBroker(): Promise<OfficeRosterMember[]> {
   const user = await getCurrentUser();
   if (!user?.id) return [];
 
@@ -58,17 +210,63 @@ export async function getOfficeRosterForCurrentBroker(): Promise<OfficeRosterRow
     return [];
   }
 
-  const role = ((viewer?.role as string | undefined) ?? "").trim().toLowerCase();
+  const role = normalizeRole(viewer?.role as string | undefined);
   if (role !== "broker") return [];
 
   const officeId = viewer?.office_id as string | null | undefined;
   if (officeId == null || officeId === "") return [];
 
-  const { rows, error } = await fetchOfficeRosterByOfficeId(officeId);
+  const { members, error } = await listOfficeRoster(officeId);
   if (error) {
     console.warn("[getOfficeRosterForCurrentBroker] roster:", error);
     return [];
   }
 
-  return rows;
+  return members;
+}
+
+/** Roles a broker can assign when adding someone to the office (`broker_add_office_member`). */
+export type TeamAddableOfficeRole = "admin" | "agent";
+
+/**
+ * Adds or reactivates a team member by email: upserts `office_memberships` to `active` for this office only.
+ * Does not change `user_profiles`. Caller must be an active broker for the office (enforced in RPC).
+ */
+export async function brokerAddOfficeMember(params: {
+  officeId: string;
+  email: string;
+  role: TeamAddableOfficeRole;
+}): Promise<{ error: string | null }> {
+  if (!supabase) return { error: "Supabase client unavailable" };
+  const officeId = params.officeId.trim();
+  const email = params.email.trim();
+  if (!officeId) return { error: "Office is required." };
+  if (!email) return { error: "Email is required." };
+
+  const { error } = await supabase.rpc("broker_add_office_member", {
+    p_office_id: officeId,
+    p_email: email,
+    p_role: params.role,
+  });
+  return { error: error?.message ?? null };
+}
+
+/**
+ * Soft-removes a member: sets `office_memberships.status = inactive` (no delete, no `user_profiles` changes).
+ * Caller must be an active broker; target must be admin or agent in that office (RPC).
+ */
+export async function brokerDeactivateOfficeMember(params: {
+  officeId: string;
+  userId: string;
+}): Promise<{ error: string | null }> {
+  if (!supabase) return { error: "Supabase client unavailable" };
+  const officeId = params.officeId.trim();
+  const userId = params.userId.trim();
+  if (!officeId || !userId) return { error: "Office and member are required." };
+
+  const { error } = await supabase.rpc("broker_deactivate_office_member", {
+    p_office_id: officeId,
+    p_user_id: userId,
+  });
+  return { error: error?.message ?? null };
 }

@@ -3,7 +3,9 @@ import { Link, useParams } from "react-router-dom";
 import { ArrowLeft, Building2, Users } from "lucide-react";
 import { getOfficeById, type Office } from "../../../services/offices";
 import {
+  formatOfficeRoleLabel,
   getOfficeRosterForOfficeId,
+  memberDisplayName,
   type OfficeRosterRow,
 } from "../../../services/officeRoster";
 
@@ -19,22 +21,6 @@ function formatAddress(o: Office): string {
 function displayOfficeName(o: Office): string {
   const d = o.display_name?.trim();
   return d || o.name;
-}
-
-function roleLabelForDisplay(raw: string | null | undefined): string {
-  const r = (raw ?? "").trim().toLowerCase();
-  if (r === "admin") return "Admin";
-  if (r === "agent") return "Agent";
-  if (r === "broker") return "Broker";
-  return "—";
-}
-
-function displayNameForRow(row: OfficeRosterRow): string {
-  const name = row.display_name?.trim();
-  if (name) return name;
-  const email = row.email?.trim();
-  if (email) return email;
-  return "—";
 }
 
 export function BackOfficeOfficeDetailPage() {
@@ -206,16 +192,16 @@ export function BackOfficeOfficeDetailPage() {
                   <p className="mt-1 font-mono text-xs">{rosterError}</p>
                   <p className="mt-2 text-amber-800">
                     If this office should have users, check whether RLS on{" "}
+                    <code className="text-xs">public.office_memberships</code> and{" "}
                     <code className="text-xs">public.user_profiles</code> allows your account to read
-                    profiles for this office.
+                    membership rows and joined profiles for this office.
                   </p>
                 </div>
               )}
 
               {!rosterLoading && !rosterError && rosterRows.length === 0 && (
                 <p className="text-sm text-slate-600">
-                  No profiles are linked to this office (<code className="text-xs">user_profiles.office_id</code>
-                  ).
+                  No active members for this office (<code className="text-xs">office_memberships</code>).
                 </p>
               )}
 
@@ -238,12 +224,12 @@ export function BackOfficeOfficeDetailPage() {
                     <tbody className="divide-y divide-slate-100">
                       {rosterRows.map((row) => (
                         <tr key={row.id}>
-                          <td className="px-4 py-3 text-slate-900">{displayNameForRow(row)}</td>
+                          <td className="px-4 py-3 text-slate-900">{memberDisplayName(row)}</td>
                           <td className="break-words px-4 py-3 text-slate-900">
                             {row.email?.trim() || "—"}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-slate-900">
-                            {roleLabelForDisplay(row.role)}
+                            {formatOfficeRoleLabel(row.role)}
                           </td>
                         </tr>
                       ))}
