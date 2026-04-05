@@ -25,15 +25,6 @@ import {
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 
-/** Maps RPC / PostgREST errors to short UI copy (no invite flow in v1). */
-function formatAddMemberError(message: string): string {
-  const m = message.trim();
-  if (/no user found with that email/i.test(m)) {
-    return "No account exists for that email yet. Invites are not available in this version — the person must sign up first.";
-  }
-  return m;
-}
-
 function RosterSection({
   title,
   description,
@@ -98,7 +89,7 @@ function RosterSection({
             {rows.length === 0 ? (
               <tr>
                 <td className="px-3 py-4 text-slate-500 align-top" colSpan={colSpan}>
-                  No {title.toLowerCase()} yet. Use the plus button above to add someone by email.
+                  No {title.toLowerCase()} yet. Use the plus button above to add a team member.
                 </td>
               </tr>
             ) : (
@@ -135,8 +126,8 @@ function RosterSection({
 }
 
 /**
- * Active roster from `office_memberships` for the current office. Brokers may add admins/agents (existing users
- * by email) or set memberships inactive; no Stripe or invitations in v1.
+ * Active roster from `office_memberships` for the current office. Brokers add admins/agents (invite new users or
+ * attach existing accounts) and may deactivate seats.
  */
 export function TeamManagementTab() {
   const [rosterLoading, setRosterLoading] = useState(true);
@@ -147,10 +138,13 @@ export function TeamManagementTab() {
   const [viewerIsBroker, setViewerIsBroker] = useState(false);
 
   const [pendingAddRole, setPendingAddRole] = useState<TeamAddableOfficeRole | null>(null);
+  const [addFirstName, setAddFirstName] = useState("");
+  const [addLastName, setAddLastName] = useState("");
   const [addEmail, setAddEmail] = useState("");
   const [addSaving, setAddSaving] = useState(false);
   const [addFormError, setAddFormError] = useState<string | null>(null);
   const [removeBusyUserId, setRemoveBusyUserId] = useState<string | null>(null);
+  const [billingSyncWarning, setBillingSyncWarning] = useState<string | null>(null);
 
   const loadRoster = useCallback(async () => {
     setRosterError(null);
@@ -191,6 +185,8 @@ export function TeamManagementTab() {
 
   const handleRequestAdd = useCallback((role: TeamAddableOfficeRole) => {
     setAddFormError(null);
+    setAddFirstName("");
+    setAddLastName("");
     setAddEmail("");
     setPendingAddRole(role);
   }, []);
@@ -198,6 +194,8 @@ export function TeamManagementTab() {
   const handleAddDialogOpenChange = useCallback((open: boolean) => {
     if (!open) {
       setPendingAddRole(null);
+      setAddFirstName("");
+      setAddLastName("");
       setAddEmail("");
       setAddFormError(null);
       setAddSaving(false);
@@ -212,19 +210,23 @@ export function TeamManagementTab() {
       setAddFormError(null);
       const { error } = await brokerAddOfficeMember({
         officeId,
+        firstName: addFirstName,
+        lastName: addLastName,
         email: addEmail,
         role: pendingAddRole,
       });
       setAddSaving(false);
       if (error) {
-        setAddFormError(formatAddMemberError(error));
+        setAddFormError(error.trim());
         return;
       }
       setPendingAddRole(null);
+      setAddFirstName("");
+      setAddLastName("");
       setAddEmail("");
       await loadRoster();
     },
-    [addEmail, loadRoster, officeId, pendingAddRole],
+    [addEmail, addFirstName, addLastName, loadRoster, officeId, pendingAddRole],
   );
 
   const handleRemoveMember = useCallback(
@@ -240,11 +242,18 @@ export function TeamManagementTab() {
       }
       setRemoveBusyUserId(member.id);
       setRosterError(null);
-      const { error } = await brokerDeactivateOfficeMember({ officeId, userId: member.id });
+      setBillingSyncWarning(null);
+      const { error, billingSyncWarning: syncWarn } = await brokerDeactivateOfficeMember({
+        officeId,
+        userId: member.id,
+      });
       setRemoveBusyUserId(null);
       if (error) {
         setRosterError(error);
         return;
+      }
+      if (syncWarn) {
+        setBillingSyncWarning(syncWarn);
       }
       await loadRoster();
     },
@@ -307,6 +316,14 @@ export function TeamManagementTab() {
 
   return (
     <div className="space-y-4">
+      {billingSyncWarning ? (
+        <div
+          className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950"
+          role="status"
+        >
+          {billingSyncWarning}
+        </div>
+      ) : null}
       <Dialog open={pendingAddRole !== null} onOpenChange={handleAddDialogOpenChange}>
         <DialogContent className="border-slate-200 sm:max-w-md">
           <form onSubmit={submitAddMember}>
@@ -315,24 +332,56 @@ export function TeamManagementTab() {
                 {pendingAddRole === "admin" ? "Add an admin" : pendingAddRole === "agent" ? "Add an agent" : "Add member"}
               </DialogTitle>
               <DialogDescription className="text-slate-600 text-base">
-                Enter the email on their BTQ account. If no account exists, you will see an error — invitations are not
-                available yet.
+                New people receive an email to activate their account. If this email already has a BTQ account, they are
+                attached to your office without a new signup.
               </DialogDescription>
             </DialogHeader>
-            <div className="space-y-2 py-2">
-              <Label htmlFor="team-add-email" className="text-slate-700">
-                Email
-              </Label>
-              <Input
-                id="team-add-email"
-                type="email"
-                autoComplete="email"
-                placeholder="name@company.com"
-                value={addEmail}
-                onChange={(ev) => setAddEmail(ev.target.value)}
-                disabled={addSaving}
-                className="border-slate-200"
-              />
+            <div className="space-y-3 py-2">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="team-add-first" className="text-slate-700">
+                    First name
+                  </Label>
+                  <Input
+                    id="team-add-first"
+                    type="text"
+                    autoComplete="given-name"
+                    value={addFirstName}
+                    onChange={(ev) => setAddFirstName(ev.target.value)}
+                    disabled={addSaving}
+                    className="border-slate-200"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="team-add-last" className="text-slate-700">
+                    Last name
+                  </Label>
+                  <Input
+                    id="team-add-last"
+                    type="text"
+                    autoComplete="family-name"
+                    value={addLastName}
+                    onChange={(ev) => setAddLastName(ev.target.value)}
+                    disabled={addSaving}
+                    className="border-slate-200"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="team-add-email" className="text-slate-700">
+                  Email
+                </Label>
+                <Input
+                  id="team-add-email"
+                  type="email"
+                  autoComplete="email"
+                  placeholder="name@company.com"
+                  value={addEmail}
+                  onChange={(ev) => setAddEmail(ev.target.value)}
+                  disabled={addSaving}
+                  className="border-slate-200"
+                />
+              </div>
               {addFormError ? (
                 <p className="text-destructive text-sm leading-relaxed" role="alert">
                   {addFormError}
@@ -366,9 +415,9 @@ export function TeamManagementTab() {
             <div className="min-w-0 space-y-1">
               <CardTitle className="text-lg">Team Management</CardTitle>
               <CardDescription className="text-slate-700 text-base leading-relaxed">
-                Roster rows reflect active office memberships. As the broker, you can add admins and agents by email or
-                deactivate a seat (membership is set to inactive, not deleted). Stripe billing is not connected here
-                yet.
+                Roster rows reflect active office memberships. As the broker, you can add admins and agents (new
+                accounts or existing users) or deactivate a seat (membership is set to inactive, not deleted). Paid seat
+                counts sync to Stripe for billing.
               </CardDescription>
             </div>
           </div>

@@ -228,37 +228,91 @@ export async function getOfficeRosterForCurrentBroker(): Promise<OfficeRosterMem
 /** Roles a broker can assign when adding someone to the office (`broker_add_office_member`). */
 export type TeamAddableOfficeRole = "admin" | "agent";
 
+async function billingApiHeaders(): Promise<
+  { ok: true; headers: Record<string, string> } | { ok: false; error: string }
+> {
+  if (!supabase) return { ok: false, error: "Supabase client unavailable" };
+  const { data, error } = await supabase.auth.getSession();
+  if (error || !data.session?.access_token) {
+    return { ok: false, error: "Not signed in." };
+  }
+  return {
+    ok: true,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${data.session.access_token}`,
+    },
+  };
+}
+
+function parseApiErrorJson(body: unknown): string | null {
+  if (
+    body &&
+    typeof body === "object" &&
+    body !== null &&
+    "error" in body &&
+    typeof (body as { error: unknown }).error === "string"
+  ) {
+    return (body as { error: string }).error;
+  }
+  return null;
+}
+
 /**
- * Adds or reactivates a team member by email: upserts `office_memberships` to `active` for this office only.
- * Does not change `user_profiles`. Caller must be an active broker for the office (enforced in RPC).
+ * Adds or reactivates a team member: validates, updates Stripe when seat count increases, then invites new
+ * users or attaches existing users via `office_memberships` (service role on the server).
  */
 export async function brokerAddOfficeMember(params: {
   officeId: string;
+  firstName: string;
+  lastName: string;
   email: string;
   role: TeamAddableOfficeRole;
 }): Promise<{ error: string | null }> {
-  if (!supabase) return { error: "Supabase client unavailable" };
   const officeId = params.officeId.trim();
+  const firstName = params.firstName.trim();
+  const lastName = params.lastName.trim();
   const email = params.email.trim();
   if (!officeId) return { error: "Office is required." };
+  if (!firstName || !lastName) return { error: "First and last name are required." };
   if (!email) return { error: "Email is required." };
 
-  const { error } = await supabase.rpc("broker_add_office_member", {
-    p_office_id: officeId,
-    p_email: email,
-    p_role: params.role,
+  const h = await billingApiHeaders();
+  if (!h.ok) return { error: h.error };
+
+  const res = await fetch("/api/billing/add-team-member", {
+    method: "POST",
+    headers: h.headers,
+    body: JSON.stringify({
+      officeId,
+      firstName,
+      lastName,
+      email,
+      role: params.role,
+    }),
   });
-  return { error: error?.message ?? null };
+
+  let body: unknown = null;
+  try {
+    body = await res.json();
+  } catch {
+    body = null;
+  }
+
+  if (!res.ok) {
+    return { error: parseApiErrorJson(body) || `Request failed (${res.status})` };
+  }
+  return { error: null };
 }
 
 /**
  * Soft-removes a member: sets `office_memberships.status = inactive` (no delete, no `user_profiles` changes).
- * Caller must be an active broker; target must be admin or agent in that office (RPC).
+ * Then syncs Stripe seat quantity to match active admin+agent memberships. If Stripe sync fails, deactivation still stands.
  */
 export async function brokerDeactivateOfficeMember(params: {
   officeId: string;
   userId: string;
-}): Promise<{ error: string | null }> {
+}): Promise<{ error: string | null; billingSyncWarning?: string | null }> {
   if (!supabase) return { error: "Supabase client unavailable" };
   const officeId = params.officeId.trim();
   const userId = params.userId.trim();
@@ -268,5 +322,47 @@ export async function brokerDeactivateOfficeMember(params: {
     p_office_id: officeId,
     p_user_id: userId,
   });
-  return { error: error?.message ?? null };
+  if (error) return { error: error.message };
+
+  const h = await billingApiHeaders();
+  if (!h.ok) {
+    return { error: null, billingSyncWarning: h.error };
+  }
+
+  const res = await fetch("/api/billing/sync-subscription-seats", {
+    method: "POST",
+    headers: h.headers,
+    body: JSON.stringify({ officeId }),
+  });
+
+  let body: unknown = null;
+  try {
+    body = await res.json();
+  } catch {
+    body = null;
+  }
+
+  if (!res.ok) {
+    const msg = parseApiErrorJson(body) || `Billing sync failed (${res.status})`;
+    return { error: null, billingSyncWarning: msg };
+  }
+
+  if (
+    body &&
+    typeof body === "object" &&
+    body !== null &&
+    "billingMismatch" in body &&
+    (body as { billingMismatch?: boolean }).billingMismatch === true
+  ) {
+    const detail =
+      typeof (body as { message?: string }).message === "string"
+        ? (body as { message: string }).message
+        : "Stripe seat count could not be updated.";
+    return {
+      error: null,
+      billingSyncWarning: `Team updated, but billing may be out of sync: ${detail}`,
+    };
+  }
+
+  return { error: null };
 }

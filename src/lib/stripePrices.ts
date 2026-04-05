@@ -29,6 +29,11 @@ export function getPlanPriceId(plan: BillingPlanKey): string {
   }
 }
 
+/**
+ * BTQ Paid Seat Monthly price id (must match Stripe Dashboard).
+ * **Required** in any environment where Checkout seat line items or Team Management seat sync runs.
+ * There is no runtime fallback: a wrong or missing value would charge the wrong product or fail closed.
+ */
 export function getSeatPriceId(): string {
   return requireEnv("STRIPE_PRICE_SEAT");
 }
