@@ -49,6 +49,32 @@ function safeFileName(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
+function getSafeContentType(filename: string, contentType?: string): string {
+  const trimmed = contentType?.trim();
+  const lower = trimmed?.toLowerCase();
+  if (
+    trimmed &&
+    lower !== "application/octet-stream" &&
+    lower !== "binary/octet-stream"
+  ) {
+    return trimmed;
+  }
+  const ext = filename.split(".").pop()?.toLowerCase() ?? "";
+  const byExt: Record<string, string> = {
+    pdf: "application/pdf",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    png: "image/png",
+    gif: "image/gif",
+    webp: "image/webp",
+    doc: "application/msword",
+    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    xls: "application/vnd.ms-excel",
+    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  };
+  return byExt[ext] ?? "application/pdf";
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method !== "POST") {
     return new Response(JSON.stringify({ error: "Method not allowed" }), {
@@ -217,10 +243,13 @@ Deno.serve(async (req: Request) => {
 
     const bytes = new Uint8Array(await downloadRes.arrayBuffer());
 
+    const resolvedContentType = getSafeContentType(fileName, att.content_type);
+    console.log("[resend-inbound] upload:", fileName, "contentType:", resolvedContentType);
+
     const { error: uploadError } = await supabase.storage
       .from(BUCKET)
       .upload(storagePath, bytes, {
-        contentType: att.content_type || "application/octet-stream",
+        contentType: resolvedContentType,
         upsert: false,
       });
 
