@@ -95,6 +95,63 @@ function getSafeContentType(filename: string, contentType?: string): string {
   return byExt[ext] ?? "application/pdf";
 }
 
+const IMAGE_ATTACHMENT_EXTENSIONS = new Set([
+  "jpg",
+  "jpeg",
+  "png",
+  "gif",
+  "webp",
+]);
+
+/** Heuristic: skip likely email-signature / footer images without blocking real document scans. */
+function shouldSkipAttachment(fileName: string, byteLength: number): boolean {
+  const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
+  if (!IMAGE_ATTACHMENT_EXTENSIONS.has(ext)) {
+    return false;
+  }
+
+  const lower = fileName.toLowerCase();
+
+  const documentHints = [
+    "floorplan",
+    "floor_plan",
+    "plat",
+    "survey",
+    "siteplan",
+    "site_plan",
+    "map",
+    "exhibit",
+    "diagram",
+    "sketch",
+  ];
+  if (documentHints.some((h) => lower.includes(h))) {
+    return false;
+  }
+
+  const signatureJunk = [
+    "image00",
+    "logo",
+    "signature",
+    "facebook",
+    "instagram",
+    "linkedin",
+    "twitter",
+    "icon",
+    "header",
+    "footer",
+    "spacer",
+  ];
+  if (signatureJunk.some((j) => lower.includes(j))) {
+    return true;
+  }
+
+  if (byteLength < 15 * 1024) {
+    return true;
+  }
+
+  return false;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method !== "POST") {
     return new Response(JSON.stringify({ error: "Method not allowed" }), {
@@ -276,6 +333,16 @@ Deno.serve(async (req: Request) => {
     }
 
     const bytes = new Uint8Array(await downloadRes.arrayBuffer());
+
+    if (shouldSkipAttachment(fileName, bytes.length)) {
+      console.log(
+        "[super-handler] Skipped attachment (image filter):",
+        fileName,
+        bytes.length,
+        "bytes"
+      );
+      continue;
+    }
 
     const resolvedContentType = getSafeContentType(fileName, att.content_type);
     console.log(
