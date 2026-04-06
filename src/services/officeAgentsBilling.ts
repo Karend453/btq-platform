@@ -2,7 +2,7 @@ import { supabase } from "../lib/supabaseClient";
 import type { BillingPortalSessionResponse, WalletBillingSummary } from "../types/billing";
 import { getOfficeRosterForOfficeId, type OfficeRosterRow } from "./officeRoster";
 
-/** Roster row shape; single source of truth remains `user_profiles` via {@link getOfficeRosterForOfficeId}. */
+/** Roster row shape; membership from `office_memberships`, names from joined `user_profiles` via {@link getOfficeRosterForOfficeId}. */
 export type OfficeAgent = OfficeRosterRow;
 
 export type ServiceResult<T> =
@@ -24,7 +24,7 @@ export type RemoveOfficeAgentPreviewResult = {
 };
 
 /**
- * Live roster read — delegates to `officeRoster` (Supabase / `user_profiles` only).
+ * Live roster read — delegates to `officeRoster` (`office_memberships` + `user_profiles`).
  */
 export async function getOfficeAgents(officeId: string): Promise<{
   agents: OfficeAgent[];

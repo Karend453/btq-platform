@@ -105,8 +105,7 @@ export function summarizeOfficeRoster(members: OfficeRosterMember[]): OfficeRost
   };
 }
 
-type MembershipUserJoin = {
-  id: string;
+type MembershipProfileJoin = {
   email: string | null;
   display_name: string | null;
 };
@@ -114,29 +113,30 @@ type MembershipUserJoin = {
 type OfficeMembershipQueryRow = {
   id: string;
   office_id: string;
+  user_id: string;
   role: string | null;
   status: string;
   created_at: string;
-  user: MembershipUserJoin | MembershipUserJoin[] | null;
+  user_profiles: MembershipProfileJoin | MembershipProfileJoin[] | null;
 };
 
-function unwrapJoinedUser(
-  user: OfficeMembershipQueryRow["user"],
-): MembershipUserJoin | null {
-  if (user == null) return null;
-  return Array.isArray(user) ? user[0] ?? null : user;
+function unwrapJoinedProfile(
+  profile: OfficeMembershipQueryRow["user_profiles"],
+): MembershipProfileJoin | null {
+  if (profile == null) return null;
+  return Array.isArray(profile) ? profile[0] ?? null : profile;
 }
 
 /** Maps active `office_memberships` rows (+ joined profile) to the flat roster shape used across the app. */
 function mapOfficeMembershipToRosterMember(row: OfficeMembershipQueryRow): OfficeRosterMember {
-  const u = unwrapJoinedUser(row.user);
-  const userId = u?.id?.trim();
+  const p = unwrapJoinedProfile(row.user_profiles);
+  const userId = row.user_id?.trim();
   return {
     id: userId ? userId : row.id,
     office_id: row.office_id,
-    email: u?.email ?? null,
+    email: p?.email ?? null,
     role: row.role ?? null,
-    display_name: u?.display_name ?? null,
+    display_name: p?.display_name ?? null,
     created_at: row.created_at,
   };
 }
@@ -158,13 +158,13 @@ export async function listOfficeRoster(officeId: string): Promise<{
       `
       id,
       office_id,
+      user_id,
       role,
       status,
       created_at,
-      user:user_profiles (
-        id,
-        email,
-        display_name
+      user_profiles (
+        display_name,
+        email
       )
     `,
     )

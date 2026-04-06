@@ -129,8 +129,8 @@ export async function getOfficeById(officeId: string): Promise<Office | null> {
 
 /**
  * Back Office: full office list **only** via `list_offices_for_back_office` (no client `select` on
- * `public.offices` for the list). The RPC enforces a temporary **`admin`-only** BTQ wall in the DB
- * (same semantics as `canAccessBtqBackOffice` in `auth.ts`); not the final role model.
+ * `public.offices` for the list). The RPC enforces a BTQ Back Office gate in the DB (`btq_admin`,
+ * plus legacy `admin`); aligns with `canAccessBtqBackOffice` in `auth.ts`.
  */
 export async function listOfficesForBackOffice(): Promise<{
   offices: Office[];
@@ -159,7 +159,7 @@ export type CreateOfficeForBackOfficeInput = {
 };
 
 /**
- * Back Office: insert via `create_office_for_back_office` only (temporary `admin` gate in DB).
+ * Back Office: insert via `create_office_for_back_office` only (same gate as list RPC).
  */
 export async function createOfficeForBackOffice(
   input: CreateOfficeForBackOfficeInput

@@ -219,7 +219,7 @@ function mapProfileRoleToUserRole(raw: string | null | undefined): UserRole | nu
  */
 export async function getUserProfileRoleKey(): Promise<"admin" | "agent" | "broker" | "btq_admin" | null> {
   const raw = await fetchUserProfileRoleRaw();
-  const r = (raw ?? "").trim().toLowerCase();
+  const r = (raw ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
   let key: "admin" | "agent" | "broker" | "btq_admin" | null = null;
   if (r === "admin") key = "admin";
   else if (r === "agent") key = "agent";
@@ -248,7 +248,8 @@ export async function getUserProfileRoleKey(): Promise<"admin" | "agent" | "brok
 export function canAccessBtqBackOffice(
   roleKey: "admin" | "agent" | "broker" | "btq_admin" | null
 ): boolean {
-  return roleKey === "btq_admin";
+  if (roleKey === "btq_admin") return true;
+  return false;
 }
 
 /**
