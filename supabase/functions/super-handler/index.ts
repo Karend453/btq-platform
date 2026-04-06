@@ -9,6 +9,9 @@ import { Webhook } from "svix";
 
 const BUCKET = "transaction-documents";
 
+/** PDF debug: `false` = force `application/pdf` for `.pdf`; `true` = omit `contentType` for `.pdf` (second test). */
+const PDF_UPLOAD_OMIT_CONTENT_TYPE_TEST = false;
+
 type EmailReceivedPayload = {
   type?: string;
   data?: {
@@ -281,13 +284,21 @@ Deno.serve(async (req: Request) => {
         fileName,
         rawContentType: att.content_type ?? null,
         resolvedContentType,
+        storagePath,
       })
     );
 
-    const { error: uploadError } = await supabase.storage.from(BUCKET).upload(storagePath, bytes, {
-      contentType: resolvedContentType,
-      upsert: false,
-    });
+    const isPdf = fileName.toLowerCase().endsWith(".pdf");
+    const { error: uploadError } = await supabase.storage.from(BUCKET).upload(
+      storagePath,
+      bytes,
+      PDF_UPLOAD_OMIT_CONTENT_TYPE_TEST && isPdf
+        ? { upsert: false }
+        : {
+            upsert: false,
+            contentType: isPdf ? "application/pdf" : resolvedContentType,
+          }
+    );
 
     if (uploadError) {
       console.error("[super-handler] Storage upload failed:", uploadError, storagePath);
