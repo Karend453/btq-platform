@@ -56,15 +56,25 @@ function safeFileName(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
+const TRUSTED_MIME_TYPES = new Set<string>([
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+]);
+
 function getSafeContentType(filename: string, contentType?: string): string {
-  const trimmed = contentType?.trim();
-  const lower = trimmed?.toLowerCase();
-  if (
-    trimmed &&
-    lower !== "application/octet-stream" &&
-    lower !== "binary/octet-stream"
-  ) {
-    return trimmed;
+  const rawTrimmed = contentType?.trim();
+  if (rawTrimmed) {
+    const base = rawTrimmed.split(";")[0]!.trim().toLowerCase();
+    if (TRUSTED_MIME_TYPES.has(base)) {
+      return base;
+    }
   }
   const ext = filename.split(".").pop()?.toLowerCase() ?? "";
   const byExt: Record<string, string> = {
@@ -265,7 +275,14 @@ Deno.serve(async (req: Request) => {
     const bytes = new Uint8Array(await downloadRes.arrayBuffer());
 
     const resolvedContentType = getSafeContentType(fileName, att.content_type);
-    console.log("[super-handler] upload:", fileName, "contentType:", resolvedContentType);
+    console.log(
+      "[super-handler]",
+      JSON.stringify({
+        fileName,
+        rawContentType: att.content_type ?? null,
+        resolvedContentType,
+      })
+    );
 
     const { error: uploadError } = await supabase.storage.from(BUCKET).upload(storagePath, bytes, {
       contentType: resolvedContentType,
