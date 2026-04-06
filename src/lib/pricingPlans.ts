@@ -47,3 +47,17 @@ export function parsePlanKey(raw: string | null | undefined): PlanKey | null {
   if (k === "core" || k === "growth" || k === "pro") return k;
   return null;
 }
+
+/**
+ * Resolves marketing {@link PlanKey} from `offices.plan_tier` / `offices.billing_plan_tier`.
+ * Stripe checkout stores `broker_*_monthly` in metadata; signup may store short keys.
+ */
+export function resolvePlanKeyFromOfficeFields(raw: string | null | undefined): PlanKey | null {
+  const direct = parsePlanKey(raw);
+  if (direct) return direct;
+  const k = (raw ?? "").trim().toLowerCase();
+  if (k === "broker_core_monthly") return "core";
+  if (k === "broker_growth_monthly") return "growth";
+  if (k === "broker_pro_monthly") return "pro";
+  return null;
+}

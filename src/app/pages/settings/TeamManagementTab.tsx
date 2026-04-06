@@ -415,9 +415,7 @@ export function TeamManagementTab() {
             <div className="min-w-0 space-y-1">
               <CardTitle className="text-lg">Team Management</CardTitle>
               <CardDescription className="text-slate-700 text-base leading-relaxed">
-                Roster rows reflect active office memberships. As the broker, you can add admins and agents (new
-                accounts or existing users) or deactivate a seat (membership is set to inactive, not deleted). Paid seat
-                counts sync to Stripe for billing.
+                Roster rows reflect active office memberships.
               </CardDescription>
             </div>
           </div>

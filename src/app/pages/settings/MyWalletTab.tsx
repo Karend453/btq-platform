@@ -12,12 +12,24 @@ import { Alert, AlertDescription, AlertTitle } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 
-function ReadonlyField({ label, value }: { label: string; value: string | null | undefined }) {
+function ReadonlyField({
+  label,
+  value,
+  nowrapValue = false,
+}: {
+  label: string;
+  value: string | null | undefined;
+  nowrapValue?: boolean;
+}) {
   const display = value?.trim() ? value : "—";
   return (
     <div className="grid grid-cols-[minmax(0,10rem)_1fr] gap-x-3 gap-y-1 text-sm sm:grid-cols-[minmax(0,12rem)_1fr]">
       <dt className="text-xs text-slate-500 shrink-0 pt-0.5">{label}</dt>
-      <dd className="text-sm text-slate-900 min-w-0 break-words">{display}</dd>
+      <dd
+        className={`text-sm text-slate-900 min-w-0 ${nowrapValue ? "whitespace-nowrap" : "break-words"}`}
+      >
+        {display}
+      </dd>
     </div>
   );
 }
@@ -197,7 +209,7 @@ export function MyWalletTab() {
                   </div>
                 </div>
                 <dl className="space-y-2.5">
-                  <ReadonlyField label="Email" value={email} />
+                  <ReadonlyField label="Email" value={email} nowrapValue />
                   <ReadonlyField label="Role" value={roleDisplay} />
                 </dl>
               </>

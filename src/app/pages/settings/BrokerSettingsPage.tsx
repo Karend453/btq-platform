@@ -1,6 +1,6 @@
 import React, { useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Building2, CreditCard, Settings, User, Users, Wallet } from "lucide-react";
+import { Building2, Layers, Settings, User, Users, Wallet } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { AccountInfoTab } from "./AccountInfoTab";
 import { TeamManagementTab } from "./TeamManagementTab";
@@ -9,7 +9,7 @@ import { MySubscriptionsTab } from "./MySubscriptionsTab";
 import { MyWalletTab } from "./MyWalletTab";
 const TAB_CONFIG = [
   { value: "office", label: "My Office", icon: Building2 },
-  { value: "subscriptions", label: "My Subscriptions", icon: CreditCard },
+  { value: "subscriptions", label: "My Subscriptions", icon: Layers },
   { value: "wallet", label: "My Wallet", icon: Wallet },
   { value: "account", label: "Account Info", icon: User },
   { value: "subagents", label: "Team Management", icon: Users },
