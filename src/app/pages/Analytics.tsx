@@ -6,6 +6,12 @@ import {
   listClientPortfolio,
   summarizeClientPortfolio,
 } from "../../services/clientPortfolio";
+import {
+  DEFAULT_PERSONAL_GCI_GOAL,
+  getCurrentUserProfileSnapshot,
+  resolvePersonalGciGoalAmount,
+} from "../../services/auth";
+import { useAuth } from "../contexts/AuthContext";
 
 function formatCurrency(value: number | null | undefined) {
   const amount = Number(value || 0);
@@ -38,6 +44,7 @@ function gciDisplayClass(row: ClientPortfolioRow) {
 
 export function Analytics() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [rows, setRows] = useState<ClientPortfolioRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -46,8 +53,23 @@ export function Analytics() {
   const [selectedAgentId, setSelectedAgentId] = useState<string>("");
   const [selectedType, setSelectedType] = useState<string>("");
 
-  // Hardcode for now until goal table is wired
-  const [gciGoal] = useState<number>(3000000);
+  const [gciGoal, setGciGoal] = useState<number>(DEFAULT_PERSONAL_GCI_GOAL);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    let cancelled = false;
+    getCurrentUserProfileSnapshot()
+      .then((p) => {
+        if (cancelled) return;
+        setGciGoal(resolvePersonalGciGoalAmount(p?.personal_gci_goal));
+      })
+      .catch(() => {
+        if (!cancelled) setGciGoal(DEFAULT_PERSONAL_GCI_GOAL);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
 
   useEffect(() => {
     let isMounted = true;

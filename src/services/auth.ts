@@ -302,6 +302,19 @@ export type AccountInfoReadonly = {
   role: string | null;
 };
 
+/** Default GCI goal when `user_profiles.personal_gci_goal` is null (analytics / client portfolio). */
+export const DEFAULT_PERSONAL_GCI_GOAL = 3_000_000;
+
+/** Map stored profile value to the dollar amount used for progress (positive number, or default). */
+export function resolvePersonalGciGoalAmount(
+  raw: number | string | null | undefined
+): number {
+  if (raw == null || raw === "") return DEFAULT_PERSONAL_GCI_GOAL;
+  const n = typeof raw === "string" ? Number(raw) : Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_PERSONAL_GCI_GOAL;
+  return n;
+}
+
 /** Single-row profile for Settings: one query shared across `/settings` tabs (see SettingsProfileProvider). */
 export type UserProfileSnapshot = {
   id: string;
@@ -309,6 +322,7 @@ export type UserProfileSnapshot = {
   role: string | null;
   display_name: string | null;
   office_id: string | null;
+  personal_gci_goal: number | null;
 };
 
 export async function getCurrentUserProfileSnapshot(): Promise<UserProfileSnapshot | null> {
@@ -317,7 +331,7 @@ export async function getCurrentUserProfileSnapshot(): Promise<UserProfileSnapsh
 
   const { data, error } = await supabase
     .from("user_profiles")
-    .select("id, email, role, display_name, office_id")
+    .select("id, email, role, display_name, office_id, personal_gci_goal")
     .eq("id", user.id)
     .single();
 
@@ -326,6 +340,20 @@ export async function getCurrentUserProfileSnapshot(): Promise<UserProfileSnapsh
     }
 
   return data as UserProfileSnapshot;
+}
+
+/** Persist nullable personal GCI goal; use RPC so RLS does not require broad `user_profiles` UPDATE. */
+export async function setPersonalGciGoal(
+  goal: number | null
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  if (!supabase) {
+    return { ok: false, message: "Supabase client unavailable" };
+  }
+  const { error } = await supabase.rpc("set_my_personal_gci_goal", { p_goal: goal });
+  if (error) {
+    return { ok: false, message: error.message };
+  }
+  return { ok: true };
 }
 
 /**
