@@ -7,11 +7,16 @@ import {
   getAccountInfoReadonly,
   type AccountInfoReadonly,
 } from "../../services/auth";
-import { getCurrentOffice } from "../../services/offices";
+import { getCurrentOffice, listOfficesForBackOffice } from "../../services/offices";
 import {
   fetchComplianceOverviewData,
   type ComplianceOverviewData,
 } from "../../services/transactions";
+import {
+  readDashboardOfficeSelection,
+  writeDashboardOfficeSelection,
+} from "./dashboardOfficeStorage";
+import type { DashboardOfficeOption } from "../components/dashboard/DashboardHeader";
 import {
   Users,
   FileText,
@@ -39,24 +44,56 @@ function formatUsdCompact(n: number): string {
   }).format(n);
 }
 
+async function loadDashboardOfficeOptions(): Promise<{
+  options: DashboardOfficeOption[];
+  roleKey: Awaited<ReturnType<typeof getUserProfileRoleKey>>;
+}> {
+  const roleKey = await getUserProfileRoleKey();
+  if (roleKey === "btq_admin") {
+    const { offices } = await listOfficesForBackOffice();
+    const options = (offices ?? [])
+      .map((o) => ({
+        id: o.id,
+        label: o.display_name?.trim() || o.name,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+    return { options, roleKey };
+  }
+  const o = await getCurrentOffice();
+  if (!o) {
+    return { options: [], roleKey };
+  }
+  return {
+    options: [{ id: o.id, label: o.display_name?.trim() || o.name }],
+    roleKey,
+  };
+}
+
+function pickInitialOfficeId(
+  options: { id: string }[] | undefined,
+  persisted: string | null,
+): string | null {
+  if (!options?.length) return null;
+  if (persisted && options.some((o) => o.id === persisted)) return persisted;
+  return options[0].id;
+}
+
 export function Dashboard() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [welcomeFromCheckout, setWelcomeFromCheckout] = useState(false);
   const { user } = useAuth();
-  const [selectedOffice, setSelectedOffice] = useState("all");
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
   const [complianceOverview, setComplianceOverview] = useState<ComplianceOverviewData | null>(null);
   const [complianceLoading, setComplianceLoading] = useState(true);
   const [profileRoleKey, setProfileRoleKey] = useState<
-    "admin" | "agent" | "broker" | null | undefined
+    "admin" | "agent" | "broker" | "btq_admin" | null | undefined
   >(undefined);
   const [accountInfo, setAccountInfo] = useState<AccountInfoReadonly | null | undefined>(
     undefined
   );
-  const [currentOffice, setCurrentOffice] = useState<
-    { id: string; label: string } | null | undefined
-  >(undefined);
+  const [officeOptions, setOfficeOptions] = useState<DashboardOfficeOption[]>([]);
+  const [selectedOfficeId, setSelectedOfficeId] = useState<string | null>(null);
 
   const displayName =
     accountInfo?.display_name?.trim() ||
@@ -75,34 +112,52 @@ export function Dashboard() {
     let cancelled = false;
 
     async function load() {
+      if (!user?.id) {
+        setComplianceLoading(false);
+        setProfileRoleKey(undefined);
+        return;
+      }
       setComplianceLoading(true);
-      const [data, roleKey, accountRow, officeRow] = await Promise.all([
-        fetchComplianceOverviewData(),
-        getUserProfileRoleKey(),
-        getAccountInfoReadonly(),
-        getCurrentOffice(),
-      ]);
-      if (!cancelled) {
-        setComplianceOverview(data ?? null);
+      try {
+        const [accountRow, { options, roleKey }] = await Promise.all([
+          getAccountInfoReadonly(),
+          loadDashboardOfficeOptions(),
+        ]);
+        if (cancelled) return;
+        const safeOptions = options ?? [];
+        setOfficeOptions(safeOptions);
         setProfileRoleKey(roleKey);
         setAccountInfo(accountRow);
-        setCurrentOffice(
-          officeRow
-            ? {
-                id: officeRow.id,
-                label: officeRow.display_name?.trim() || officeRow.name,
-              }
-            : null
-        );
-        setComplianceLoading(false);
+        const persisted = readDashboardOfficeSelection(user.id);
+        const selected = pickInitialOfficeId(safeOptions, persisted);
+        setSelectedOfficeId(selected);
+        if (selected != null) {
+          writeDashboardOfficeSelection(user.id, selected);
+        }
+        const data = await fetchComplianceOverviewData({ dashboardOfficeId: selected });
+        if (cancelled) return;
+        setComplianceOverview(data ?? null);
+      } finally {
+        if (!cancelled) setComplianceLoading(false);
       }
     }
 
-    load();
+    void load();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [user?.id]);
+
+  const handleDashboardOfficeChange = (officeId: string) => {
+    if (!user?.id) return;
+    setSelectedOfficeId(officeId);
+    writeDashboardOfficeSelection(user.id, officeId);
+    setComplianceLoading(true);
+    void fetchComplianceOverviewData({ dashboardOfficeId: officeId }).then((data) => {
+      setComplianceOverview(data ?? null);
+      setComplianceLoading(false);
+    });
+  };
 
   const showWelcomeBanner =
     welcomeFromCheckout || searchParams.get("welcome") === "1";
@@ -193,7 +248,9 @@ export function Dashboard() {
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-slate-50">
       <DashboardHeader
-        office={currentOffice === undefined ? null : currentOffice}
+        officeOptions={officeOptions}
+        selectedOfficeId={selectedOfficeId}
+        onOfficeChange={handleDashboardOfficeChange}
         officeLoading={complianceLoading}
         profileTo={profileTo}
         settingsTo={settingsTo}

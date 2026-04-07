@@ -24,9 +24,9 @@ export type DashboardOfficeOption = { id: string; label: string };
 
 interface DashboardHeaderProps {
   /** Offices the user may view on the dashboard (one or many). */
-  officeOptions: DashboardOfficeOption[];
+  officeOptions?: DashboardOfficeOption[];
   /** Selected office id; null when no offices or not yet resolved. */
-  selectedOfficeId: string | null;
+  selectedOfficeId?: string | null;
   onOfficeChange: (officeId: string) => void;
   officeLoading?: boolean;
   profileTo: string;
@@ -36,8 +36,8 @@ interface DashboardHeaderProps {
 }
 
 export function DashboardHeader({
-  officeOptions,
-  selectedOfficeId,
+  officeOptions = [],
+  selectedOfficeId = null,
   onOfficeChange,
   officeLoading = false,
   profileTo,
