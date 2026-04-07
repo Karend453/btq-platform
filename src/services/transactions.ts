@@ -1047,17 +1047,41 @@ export function getComplianceDominantStateForTransaction(
   return getComplianceReadinessAndDominant(tx, checklistRowsForTx, rollupViewer).dominant;
 }
 
+export type FetchComplianceOverviewOptions = {
+  /**
+   * Dashboard-only: filters the primary `transactions` query by `transactions.office` when non-empty.
+   * For `btq_admin`, pass the selected office to narrow tenant-wide RLS results to one office.
+   * For profile-scoped users, values should match their allowed office; profile scope still wins when set.
+   */
+  dashboardOfficeId?: string | null;
+};
+
 /**
  * Compliance Overview: two queries (transactions + batched checklist_items), then
  * checklistItemToEngineDocument + getTransactionClosingReadiness per transaction in memory.
- * Agent scope: only that agent's transactions. Office: `transactions.office` = `user_profiles.office_id` when set.
- * No profile office (non–btq_admin): unscoped here; `btq_admin` unscoped on client.
+ * Agent scope: only that agent's transactions. Office: `transactions.office` when `scopeOfficeId` or dashboard selection applies.
  */
-export async function fetchComplianceOverviewData(): Promise<ComplianceOverviewData | null> {
+export async function fetchComplianceOverviewData(
+  options?: FetchComplianceOverviewOptions,
+): Promise<ComplianceOverviewData | null> {
   const user = await getCurrentUser();
   const role = await getTransactionRuntimeRole();
 
   const { scopeOfficeId, denyAll } = await resolveOfficeScopedDataAccess();
+  const roleKey = await getUserProfileRoleKey();
+  const dash = (options?.dashboardOfficeId ?? "").trim();
+
+  /** Effective office filter on `transactions.office` (client-side, aligned with RLS). */
+  let officeFilter: string | null = scopeOfficeId;
+  if (dash) {
+    if (roleKey === "btq_admin") {
+      officeFilter = dash;
+    } else if (scopeOfficeId) {
+      officeFilter = scopeOfficeId;
+    } else {
+      officeFilter = dash;
+    }
+  }
 
   const emptyKpis: DashboardKpis = {
     activeTransactionCount: 0,
@@ -1076,8 +1100,8 @@ export async function fetchComplianceOverviewData(): Promise<ComplianceOverviewD
   }
 
   let txQuery = supabase.from("transactions").select("*");
-  if (scopeOfficeId) {
-    txQuery = txQuery.eq("office", scopeOfficeId);
+  if (officeFilter) {
+    txQuery = txQuery.eq("office", officeFilter);
   }
   const { data: txData, error: txErr } = await txQuery;
 
