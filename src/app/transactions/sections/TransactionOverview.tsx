@@ -30,7 +30,10 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "../../components/ui/tooltip";
-import type { TransactionRow } from "../../../services/transactions";
+import {
+  formatUnifiedCommissionPercentDisplay,
+  type TransactionRow,
+} from "../../../services/transactions";
 import type { ClientPortfolioForTransactionSnapshot } from "../../../services/clientPortfolio";
 import { ExternalToolPanelContent } from "./ExternalToolPanel";
 
@@ -52,7 +55,7 @@ const TOOL_CONFIG: Record<
   },
   skyslope: {
     label: "SkySlope",
-    launchUrl: "https://app.skyslope.com/",
+    launchUrl: "https://skyslope.com/forms-login/",
     showEmail: true,
   },
   lofty: {
@@ -61,19 +64,6 @@ const TOOL_CONFIG: Record<
     showEmail: false,
   },
 };
-
-/** Compact list/buyer commission % for summary: `3% / 3%`, one side, or — */
-function formatCommissionPercentSummary(
-  row: Pick<TransactionRow, "listcommissionpercent" | "buyercommissionpercent">
-): string {
-  const list = (row.listcommissionpercent ?? "").trim();
-  const buyer = (row.buyercommissionpercent ?? "").trim();
-  const withPct = (s: string) => (s.endsWith("%") ? s : `${s}%`);
-  if (!list && !buyer) return "—";
-  if (list && buyer) return `${withPct(list)} / ${withPct(buyer)}`;
-  if (list) return withPct(list);
-  return withPct(buyer);
-}
 
 function formatPortfolioClosingDate(value: string | null | undefined): string {
   if (!value) return "—";
@@ -430,7 +420,7 @@ export default function TransactionOverviewSection({
         <SummaryField label="Office" value={officeValue} />
         <SummaryField
           label="Commission"
-          value={formatCommissionPercentSummary(row)}
+          value={formatUnifiedCommissionPercentDisplay(row)}
         />
         <SummaryField
           label="GCI"

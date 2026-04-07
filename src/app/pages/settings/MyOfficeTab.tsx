@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Building2, Info } from "lucide-react";
+import { Building2 } from "lucide-react";
 import { getOfficeById, type Office } from "../../../services/offices";
 import { useSettingsProfile } from "./SettingsProfileContext";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
@@ -86,20 +86,6 @@ export function MyOfficeTab() {
             </p>
           )}
         </CardContent>
-      </Card>
-
-      <Card className="border-amber-200/80 bg-amber-50/40">
-        <CardHeader className="pb-2">
-          <div className="flex items-start gap-3">
-            <Info className="h-5 w-5 text-amber-800/80 shrink-0 mt-0.5" aria-hidden />
-            <div className="min-w-0 space-y-1">
-              <CardTitle className="text-base text-amber-950">Office details</CardTitle>
-              <CardDescription className="text-amber-950/80 text-sm leading-relaxed">
-                These details are managed at the brokerage level.
-              </CardDescription>
-            </div>
-          </div>
-        </CardHeader>
       </Card>
     </div>
   );
