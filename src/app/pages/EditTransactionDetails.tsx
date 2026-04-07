@@ -3,11 +3,13 @@ import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import {
   formatAgentLabelForList,
+  getActiveCommissionSide,
   getAssignedAgentDisplayNameFromRow,
   getTransaction,
   updateTransaction,
   type TransactionRow,
 } from "../../services/transactions";
+import { Input } from "../components/ui/input";
 
 /** DB numeric columns: '' → null; '0' → 0 */
 function parseNullableNumber(raw: string): number | null {
@@ -16,6 +18,24 @@ function parseNullableNumber(raw: string): number | null {
   const n = Number(t);
   if (!Number.isFinite(n)) return null;
   return n;
+}
+
+/** Gross commission income (sale price × commission %). */
+function computeGciFromSaleAndPercent(
+  salePriceRaw: string,
+  percentRaw: string
+): string {
+  const pct = percentRaw.trim();
+  if (pct === "") return "";
+  const p = Number(pct);
+  if (!Number.isFinite(p)) return "";
+  const sp = parseNullableNumber(salePriceRaw);
+  if (sp == null) return "";
+  const dollars = (sp * p) / 100;
+  if (!Number.isFinite(dollars)) return "";
+  const rounded = Math.round(dollars * 100) / 100;
+  if (Number.isInteger(rounded)) return String(rounded);
+  return rounded.toFixed(2);
 }
 
 /** Commission text columns: '' → null; '0' preserved */
@@ -27,10 +47,7 @@ function parseNullableCommissionString(raw: string): string | null {
 
 type FormData = {
   salePrice: string;
-  listCommissionPercent: string;
-  buyerCommissionPercent: string;
-  listCommissionAmount: string;
-  buyerCommissionAmount: string;
+  commissionPercent: string;
   gci: string;
   referralFeeAmount: string;
 };
@@ -41,13 +58,14 @@ export default function EditTransactionDetails() {
 
   const [isLoading, setIsLoading] = useState(true);
   const [transaction, setTransaction] = useState<TransactionRow | null>(null);
+  /** Resolved once per load; drives list_* vs buyer_* save mapping. */
+  const [commissionSide, setCommissionSide] = useState<"list" | "buyer" | null>(
+    null
+  );
 
   const [formData, setFormData] = useState<FormData>({
     salePrice: "",
-    listCommissionPercent: "",
-    buyerCommissionPercent: "",
-    listCommissionAmount: "",
-    buyerCommissionAmount: "",
+    commissionPercent: "",
     gci: "",
     referralFeeAmount: "",
   });
@@ -69,13 +87,31 @@ export default function EditTransactionDetails() {
 
       setTransaction(tx);
 
+      const side = getActiveCommissionSide(tx);
+      setCommissionSide(side);
+      const unifiedPercent =
+        side === "list"
+          ? (tx.listcommissionpercent ?? "")
+          : (tx.buyercommissionpercent ?? "");
+      const legacyCommissionDollar =
+        side === "list"
+          ? (tx.listcommissionamount ?? "")
+          : (tx.buyercommissionamount ?? "");
+      const saleStr = tx.saleprice != null ? String(tx.saleprice) : "";
+      const fromFormula = computeGciFromSaleAndPercent(saleStr, unifiedPercent);
+      const gciInitial =
+        tx.gci != null
+          ? String(tx.gci)
+          : fromFormula !== ""
+            ? fromFormula
+            : legacyCommissionDollar.trim() !== ""
+              ? legacyCommissionDollar.trim()
+              : "";
+
       setFormData({
-        salePrice: tx.saleprice != null ? String(tx.saleprice) : "",
-        listCommissionPercent: tx.listcommissionpercent ?? "",
-        buyerCommissionPercent: tx.buyercommissionpercent ?? "",
-        listCommissionAmount: tx.listcommissionamount ?? "",
-        buyerCommissionAmount: tx.buyercommissionamount ?? "",
-        gci: tx.gci != null ? String(tx.gci) : "",
+        salePrice: saleStr,
+        commissionPercent: unifiedPercent,
+        gci: gciInitial,
         referralFeeAmount:
           tx.referral_fee_amount != null ? String(tx.referral_fee_amount) : "",
       });
@@ -96,6 +132,34 @@ export default function EditTransactionDetails() {
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
 
+    if (name === "salePrice") {
+      setFormData((prev) => {
+        const next = { ...prev, salePrice: value };
+        if (prev.commissionPercent.trim() !== "") {
+          return {
+            ...next,
+            gci: computeGciFromSaleAndPercent(value, prev.commissionPercent),
+          };
+        }
+        return next;
+      });
+      return;
+    }
+
+    if (name === "commissionPercent") {
+      setFormData((prev) => {
+        const next = { ...prev, commissionPercent: value };
+        if (value.trim() === "") {
+          return next;
+        }
+        return {
+          ...next,
+          gci: computeGciFromSaleAndPercent(prev.salePrice, value),
+        };
+      });
+      return;
+    }
+
     setFormData((prev) => ({
       ...prev,
       [name]: value,
@@ -108,25 +172,22 @@ export default function EditTransactionDetails() {
     }
 
     try {
-      const { data, error } = await updateTransaction(id, {
+      const side = commissionSide ?? "list";
+      const pct = parseNullableCommissionString(formData.commissionPercent);
+
+      const { error } = await updateTransaction(id, {
         salePrice: parseNullableNumber(formData.salePrice),
-        listCommissionPercent: parseNullableCommissionString(
-          formData.listCommissionPercent
-        ),
-        buyerCommissionPercent: parseNullableCommissionString(
-          formData.buyerCommissionPercent
-        ),
-        listCommissionAmount: parseNullableCommissionString(
-          formData.listCommissionAmount
-        ),
-        buyerCommissionAmount: parseNullableCommissionString(
-          formData.buyerCommissionAmount
-        ),
+        listCommissionPercent:
+          side === "list" ? pct : null,
+        buyerCommissionPercent:
+          side === "buyer" ? pct : null,
+        listCommissionAmount: null,
+        buyerCommissionAmount: null,
         gci: parseNullableNumber(formData.gci),
         referralFeeAmount: parseNullableNumber(formData.referralFeeAmount),
       });
 
-      if (error || !data) {
+      if (error) {
         console.error("[EditTransactionDetails] updateTransaction", error);
         toast.error(error?.message ?? "Failed to save transaction details.");
         return;
@@ -165,62 +226,54 @@ export default function EditTransactionDetails() {
 
       <section className="space-y-4">
         <h2 className="text-lg font-semibold">Financial Details</h2>
-        <div className="grid grid-cols-2 gap-4">
-          <input
-            className="border rounded px-3 py-2"
-            name="salePrice"
-            value={formData.salePrice}
-            placeholder="Sale Price"
-            onChange={handleChange}
-          />
+        <div className="grid max-w-3xl grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <div className="text-xs font-medium text-slate-500">Sale Price</div>
+            <Input
+              name="salePrice"
+              value={formData.salePrice}
+              placeholder="0"
+              onChange={handleChange}
+              inputMode="decimal"
+              className="h-10 border-slate-200 bg-white shadow-none"
+            />
+          </div>
 
-          <input
-            className="border rounded px-3 py-2"
-            name="listCommissionPercent"
-            value={formData.listCommissionPercent}
-            placeholder="List Commission %"
-            onChange={handleChange}
-          />
+          <div className="space-y-1.5">
+            <div className="text-xs font-medium text-slate-500">Commission %</div>
+            <Input
+              name="commissionPercent"
+              value={formData.commissionPercent}
+              placeholder="0"
+              onChange={handleChange}
+              inputMode="decimal"
+              className="h-10 border-slate-200 bg-white shadow-none"
+            />
+          </div>
 
-          <input
-            className="border rounded px-3 py-2"
-            name="listCommissionAmount"
-            value={formData.listCommissionAmount}
-            placeholder="List Commission $"
-            onChange={handleChange}
-          />
+          <div className="space-y-1.5">
+            <div className="text-xs font-medium text-slate-500">GCI</div>
+            <Input
+              name="gci"
+              value={formData.gci}
+              placeholder="0"
+              onChange={handleChange}
+              inputMode="decimal"
+              className="h-10 border-slate-200 bg-white shadow-none"
+            />
+          </div>
 
-          <input
-            className="border rounded px-3 py-2"
-            name="buyerCommissionPercent"
-            value={formData.buyerCommissionPercent}
-            placeholder="Buyer Commission %"
-            onChange={handleChange}
-          />
-
-          <input
-            className="border rounded px-3 py-2"
-            name="buyerCommissionAmount"
-            value={formData.buyerCommissionAmount}
-            placeholder="Buyer Commission $"
-            onChange={handleChange}
-          />
-
-          <input
-            className="border rounded px-3 py-2"
-            name="gci"
-            value={formData.gci}
-            placeholder="GCI"
-            onChange={handleChange}
-          />
-
-          <input
-            className="border rounded px-3 py-2"
-            name="referralFeeAmount"
-            value={formData.referralFeeAmount}
-            placeholder="Referral Fee Amount"
-            onChange={handleChange}
-          />
+          <div className="space-y-1.5">
+            <div className="text-xs font-medium text-slate-500">Referral Fee Amount</div>
+            <Input
+              name="referralFeeAmount"
+              value={formData.referralFeeAmount}
+              placeholder="0"
+              onChange={handleChange}
+              inputMode="decimal"
+              className="h-10 border-slate-200 bg-white shadow-none"
+            />
+          </div>
         </div>
       </section>
 

@@ -25,10 +25,43 @@ import {
 import type { DocumentEngineDocument } from "../lib/documents/types";
 import { syncClientPortfolioFromTransaction } from "./clientPortfolio";
 
+/** Set to `true` only while diagnosing save/RLS issues. */
+const EDIT_TX_SAVE_DEBUG = false;
+
+function logEditTxSave(stage: string, payload: Record<string, unknown>) {
+  if (!EDIT_TX_SAVE_DEBUG) return;
+  console.info("[EDIT_TX_SAVE]", stage, payload);
+}
+
 function compactDefined<T extends Record<string, unknown>>(row: T): Partial<T> {
   return Object.fromEntries(
     Object.entries(row).filter(([, v]) => v !== undefined)
   ) as Partial<T>;
+}
+
+/** Aligns client-side office filter with RLS (`transactions.office_id`), with legacy `office` fallback. */
+function rowOfficeIdForProfileScope(row: {
+  office?: string | null;
+  office_id?: string | null;
+}): string {
+  const oid = row.office_id;
+  if (oid != null && String(oid).trim() !== "") return String(oid).trim();
+  return (row.office ?? "").trim();
+}
+
+/** Stable compare for UUID / office strings (Postgres may return UUIDs with different casing). */
+function normalizeOfficeScopeKey(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function transactionOfficeMatchesScope(
+  row: { office?: string | null; office_id?: string | null },
+  scopeOfficeId: string
+): boolean {
+  return (
+    normalizeOfficeScopeKey(rowOfficeIdForProfileScope(row)) ===
+    normalizeOfficeScopeKey(scopeOfficeId)
+  );
 }
 
 
@@ -38,6 +71,8 @@ export type TransactionRow = {
   clientname: string | null;
   type: string | null;
   office: string | null;
+  /** UUID; RLS and profile scope use this. Legacy rows may rely on `office` only. */
+  office_id?: string | null;
   status: string | null;
   /** Legacy or display; may also hold admin UID when `assigned_admin_user_id` is unset. */
   assignedadmin: string | null;
@@ -93,6 +128,37 @@ export function transactionSideFlags(transactionSide: string | null | undefined)
     side.includes("seller") ||
     side.includes("list");
   return { buyerSide, sellerSide };
+}
+
+/**
+ * Which DB column pair (list_* vs buyer_*) holds this transaction's agent commission for
+ * unified display and edit (same rules as Edit Transaction Details).
+ */
+export function getActiveCommissionSide(row: TransactionRow): "list" | "buyer" {
+  const { buyerSide, sellerSide } = transactionSideFlags(row.transaction_side);
+  if (buyerSide && !sellerSide) return "buyer";
+  if (sellerSide && !buyerSide) return "list";
+  const listHas =
+    (row.listcommissionpercent ?? "").trim() !== "" ||
+    (row.listcommissionamount ?? "").trim() !== "";
+  const buyerHas =
+    (row.buyercommissionpercent ?? "").trim() !== "" ||
+    (row.buyercommissionamount ?? "").trim() !== "";
+  if (listHas && !buyerHas) return "list";
+  if (buyerHas && !listHas) return "buyer";
+  return "list";
+}
+
+/** One commission % string for summary cards (active side only; empty → "—"). */
+export function formatUnifiedCommissionPercentDisplay(row: TransactionRow): string {
+  const side = getActiveCommissionSide(row);
+  const raw =
+    side === "list"
+      ? (row.listcommissionpercent ?? "")
+      : (row.buyercommissionpercent ?? "");
+  const t = raw.trim();
+  if (!t) return "—";
+  return t.endsWith("%") ? t : `${t}%`;
 }
 
 /**
@@ -319,7 +385,7 @@ export async function getTransaction(id: string): Promise<TransactionRow | null>
   const row = data as TransactionRow;
   const { scopeOfficeId, denyAll } = await resolveOfficeScopedDataAccess();
   if (denyAll) return null;
-  if (scopeOfficeId && (row.office ?? "").trim() !== scopeOfficeId) return null;
+  if (scopeOfficeId && !transactionOfficeMatchesScope(row, scopeOfficeId)) return null;
 
   return row;
 }
@@ -478,8 +544,28 @@ export async function updateTransaction(
   id: string,
   input: UpdateTransactionInput
 ): Promise<UpdateTransactionResult> {
+  const user = await getCurrentUser();
+  const roleKey = await getUserProfileRoleKey();
   const { scopeOfficeId, denyAll } = await resolveOfficeScopedDataAccess();
+
+  logEditTxSave("ENTRY", {
+    branch: "ENTRY",
+    transactionId: id,
+    authUserId: user?.id ?? null,
+    profileRoleKey: roleKey,
+    scopeOfficeId,
+    denyAll,
+    brokerSession:
+      roleKey === "broker"
+        ? {
+            note: "Broker with profile office_id uses scopeOfficeId for client pre-check; RLS SELECT allows same-office rows but UPDATE required separate broker policy.",
+            hasScopeOfficeId: scopeOfficeId != null && String(scopeOfficeId).trim() !== "",
+          }
+        : null,
+  });
+
   if (denyAll) {
+    logEditTxSave("EXIT", { branch: "DENY_ALL_NO_OFFICE", transactionId: id });
     return {
       data: null,
       error: {
@@ -494,10 +580,38 @@ export async function updateTransaction(
   if (scopeOfficeId) {
     const { data: cur, error: curErr } = await supabase
       .from("transactions")
-      .select("office")
+      .select("office, office_id")
       .eq("id", id)
       .maybeSingle();
-    if (curErr || (cur?.office ?? "").trim() !== scopeOfficeId) {
+
+    const rowOfficeRaw = rowOfficeIdForProfileScope(cur ?? {});
+    const scopeMatch = transactionOfficeMatchesScope(cur ?? {}, scopeOfficeId);
+
+    logEditTxSave("PRE_CHECK_SCOPE", {
+      branch: "PRE_CHECK_SCOPE",
+      transactionId: id,
+      preCheckQueryError: curErr
+        ? { code: curErr.code, message: curErr.message, details: curErr.details }
+        : null,
+      rowPresent: cur != null,
+      rowOfficeResolvedForCompare: rowOfficeRaw,
+      rowOfficeId: cur && "office_id" in cur ? (cur as { office_id?: unknown }).office_id : undefined,
+      rowOfficeLegacy: cur && "office" in cur ? (cur as { office?: unknown }).office : undefined,
+      scopeOfficeId,
+      normalizedRowKey: normalizeOfficeScopeKey(rowOfficeRaw),
+      normalizedScopeKey: normalizeOfficeScopeKey(scopeOfficeId),
+      scopeMatch,
+    });
+
+    if (curErr || !scopeMatch) {
+      logEditTxSave("EXIT", {
+        branch: "PRE_CHECK_SCOPE_FAIL",
+        transactionId: id,
+        authUserId: user?.id ?? null,
+        profileRoleKey: roleKey,
+        userFacingToast: "Transaction not found or access denied.",
+        reason: curErr ? "pre_check_supabase_error" : "office_scope_mismatch_or_missing_row",
+      });
       return {
         data: null,
         error: {
@@ -509,6 +623,13 @@ export async function updateTransaction(
         } as PostgrestError,
       };
     }
+  } else {
+    logEditTxSave("PRE_CHECK_SCOPE", {
+      branch: "PRE_CHECK_SCOPE",
+      transactionId: id,
+      skipped: true,
+      reason: "scopeOfficeId_null_btq_admin_or_unscoped_agent",
+    });
   }
 
   const patch = compactDefined({
@@ -540,14 +661,49 @@ export async function updateTransaction(
     agent_user_id: input.agentUserId,
   });
 
-  const { data, error } = await supabase
+  logEditTxSave("PATCH", {
+    branch: "PATCH_REQUEST",
+    transactionId: id,
+    patchKeyCount: Object.keys(patch).length,
+    patchKeys: Object.keys(patch),
+  });
+
+  // Use `.select("id")` without `.single()`: PostgREST + `.single()` sends
+  // `Accept: application/vnd.pgrst.object+json` and returns 406 PGRST116 when the
+  // response is not exactly one row (e.g. zero rows updated under RLS, or no row
+  // in RETURNING). An array response avoids that coercion error.
+  const patchResult = await supabase
     .from("transactions")
     .update(patch)
     .eq("id", id)
-    .select()
-    .single();
+    .select("id");
+
+  const { data: updatedRows, error } = patchResult;
+  const httpStatus =
+    patchResult && typeof patchResult === "object" && "status" in patchResult
+      ? (patchResult as { status?: number }).status
+      : undefined;
+
+  logEditTxSave("PATCH", {
+    branch: "PATCH_RESPONSE",
+    transactionId: id,
+    profileRoleKey: roleKey,
+    httpStatus: httpStatus ?? null,
+    updatedRowCount: updatedRows?.length ?? 0,
+    updatedRowsIds: updatedRows?.map((r) => (r as { id?: string }).id) ?? [],
+    patchError: error
+      ? { code: error.code, message: error.message, details: error.details, hint: error.hint }
+      : null,
+    patchErrorJson: error ? JSON.stringify(error) : null,
+  });
 
   if (error) {
+    logEditTxSave("EXIT", {
+      branch: "PATCH_SUPABASE_ERROR",
+      transactionId: id,
+      profileRoleKey: roleKey,
+      messageMatchingToast: error.message,
+    });
     console.error("[updateTransaction] Supabase error:", {
       code: error.code,
       message: error.message,
@@ -557,9 +713,55 @@ export async function updateTransaction(
     return { data: null, error };
   }
 
+  if (!updatedRows?.length) {
+    logEditTxSave("EXIT", {
+      branch: "PATCH_RETURNED_ZERO_ROWS",
+      transactionId: id,
+      authUserId: user?.id ?? null,
+      profileRoleKey: roleKey,
+      httpStatus: httpStatus ?? null,
+      updatedRowsLength: updatedRows?.length ?? 0,
+      userFacingToast: "Transaction not found or access denied.",
+      diagnosisForBroker:
+        roleKey === "broker"
+          ? "Broker: Postgres updated 0 rows. SELECT RLS allows brokers for same office_id; UPDATE policies had no broker office-scoped rule — apply brokers_can_update_office_transactions migration."
+          : null,
+      diagnosisGeneric:
+        roleKey !== "broker"
+          ? "Zero rows from UPDATE+RETURNING: RLS denied UPDATE (wrong role policies) or id not found."
+          : null,
+    });
+    return {
+      data: null,
+      error: {
+        message: "Transaction not found or access denied.",
+        details: "",
+        hint: "",
+        code: "PGRST116",
+        name: "PostgrestError",
+      } as PostgrestError,
+    };
+  }
+
+  logEditTxSave("SYNC", { branch: "CLIENT_PORTFOLIO_SYNC_START", transactionId: id });
   await syncClientPortfolioFromTransaction(id);
 
-  return { data: data as TransactionRow, error: null };
+  const reloaded = await getTransaction(id);
+  logEditTxSave("RELOAD", {
+    branch: "POST_UPDATE_GET_TRANSACTION",
+    transactionId: id,
+    reloadReturnedRow: reloaded != null,
+  });
+  if (!reloaded) {
+    logEditTxSave("EXIT", {
+      branch: "RELOAD_AFTER_UPDATE_NULL",
+      transactionId: id,
+      note: "PATCH succeeded but getTransaction returned null (office scope after reload or RLS)",
+    });
+  }
+
+  logEditTxSave("EXIT", { branch: "SUCCESS", transactionId: id, reloadReturnedRow: reloaded != null });
+  return { data: reloaded, error: null };
 }
 
 // ─── Compliance Overview (dashboard): batched checklist + document engine ───
