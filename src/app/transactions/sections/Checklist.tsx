@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { Link as RouterLink } from "react-router-dom";
 import {
   FileText,
   Paperclip,
@@ -6,7 +7,7 @@ import {
   CheckCircle2,
   XCircle,
   AlertCircle,
-  Link,
+  Link as ChainLink,
   MessageSquare,
   Eye,
   Pencil,
@@ -14,6 +15,7 @@ import {
   RotateCcw,
   ChevronDown,
   ChevronRight,
+  Scissors,
 } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
@@ -783,19 +785,38 @@ export default function Checklist({
                 </>
               )}
             </div>
-            {item.attachedDocument.storage_path && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 shrink-0 text-slate-600"
-                title="View attached document"
-                onClick={() => handleViewAttachedDocument(item.attachedDocument!.storage_path)}
-              >
-                <Eye className="h-4 w-4" />
-                <span className="sr-only">View attached document</span>
-              </Button>
-            )}
+            <div className="flex shrink-0 items-center gap-0.5">
+              {transactionContext?.id && item.attachedDocument.id && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0 text-slate-600"
+                  title="Split document"
+                  asChild
+                >
+                  <RouterLink
+                    to={`/transactions/${transactionContext.id}/documents/${item.attachedDocument.id}/split`}
+                  >
+                    <Scissors className="h-4 w-4" aria-hidden />
+                    <span className="sr-only">Split document</span>
+                  </RouterLink>
+                </Button>
+              )}
+              {item.attachedDocument.storage_path && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0 text-slate-600"
+                  title="View attached document"
+                  onClick={() => handleViewAttachedDocument(item.attachedDocument!.storage_path)}
+                >
+                  <Eye className="h-4 w-4" />
+                  <span className="sr-only">View attached document</span>
+                </Button>
+              )}
+            </div>
           </div>
           {item.attachedDocument.previousVersion &&
             item.attachedDocument.version > 1 &&
@@ -808,9 +829,17 @@ export default function Checklist({
         </div>
       )}
       {item.suggestedDocument && (
-        <div className="mt-1.5 flex items-center gap-1.5 text-xs text-blue-600">
-          <Link className="h-3 w-3" />
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-blue-600">
+          <ChainLink className="h-3 w-3 shrink-0" aria-hidden />
           <span>Suggested: {item.suggestedDocument.filename}</span>
+          {transactionContext?.id && (
+            <Button type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-blue-700" title="Split document" asChild>
+              <RouterLink to={`/transactions/${transactionContext.id}/documents/${item.suggestedDocument!.id}/split`}>
+                <Scissors className="h-3.5 w-3.5" aria-hidden />
+                <span className="sr-only">Split document</span>
+              </RouterLink>
+            </Button>
+          )}
         </div>
       )}
       {(() => {

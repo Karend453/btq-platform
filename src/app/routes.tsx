@@ -10,6 +10,8 @@ import { Offices } from "./pages/Offices";
 import { SettingsPage } from "./pages/SettingsPage";
 import { OfficeChecklistTemplatesPage } from "./pages/OfficeChecklistTemplatesPage";
 import TransactionDetail from "./transactions/TransactionDetailsPage";
+import SplitAssignDocumentsPage from "./transactions/SplitAssignDocumentsPage";
+import DocumentSplitWorkspacePage from "./transactions/DocumentSplitWorkspacePage";
 import { NewTransaction } from "./pages/NewTransaction";
 import Login from "./Login";
 import { BackOfficeLogin } from "./pages/back-office/BackOfficeLogin";
@@ -58,6 +60,8 @@ export const router = createBrowserRouter([
       { path: "transactions", element: <Transactions /> },
       { path: "transactions/new", element: <NewTransaction /> },
       { path: "transactions/:id", element: <TransactionDetail /> },
+      { path: "transactions/:id/documents/:documentId/split", element: <DocumentSplitWorkspacePage /> },
+      { path: "transactions/:id/split-assign", element: <SplitAssignDocumentsPage /> },
       { path: "transactions/:id/edit", element: <EditTransactionDetails /> },
       { path: "analytics", element: <Analytics /> },
       { path: "offices", element: <Offices /> },

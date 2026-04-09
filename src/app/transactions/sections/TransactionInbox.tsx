@@ -1,16 +1,16 @@
 import React, { useState, useEffect, useRef } from "react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
   ChevronDown,
   FileText,
   Inbox,
   Paperclip,
-  Search,
-  X,
   Filter,
   Upload,
   Eye,
   Pencil,
+  Scissors,
 } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
@@ -31,13 +31,7 @@ import {
 } from "../../components/ui/sheet";
 import { Label } from "../../components/ui/label";
 import { Input } from "../../components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "../../components/ui/select";
+import { ChecklistItemSearchPicker } from "./ChecklistItemSearchPicker";
 import {
   Dialog,
   DialogContent,
@@ -175,7 +169,6 @@ export default function TransactionInbox({
   const [internalAttachTargetItem, setInternalAttachTargetItem] = useState<ChecklistItem | null>(null);
   const [selectedDocumentForAttach, setSelectedDocumentForAttach] = useState<string | null>(null);
   const [inboxFilter, setInboxFilter] = useState<InboxFilter>("all");
-  const [inboxSearchQuery, setInboxSearchQuery] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [renameDocId, setRenameDocId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
@@ -205,7 +198,6 @@ export default function TransactionInbox({
   useEffect(() => {
     if (isControlled && controlledAttachDrawerOpen && controlledAttachTargetItem) {
       setSelectedDocumentForAttach(null);
-      setInboxSearchQuery("");
       setInboxFilter("unattached");
     }
   }, [isControlled, controlledAttachDrawerOpen, controlledAttachTargetItem]);
@@ -213,7 +205,6 @@ export default function TransactionInbox({
   const handleOpenAttachDrawer = (fromItem?: ChecklistItem) => {
     setAttachTargetItem(fromItem || null);
     setSelectedDocumentForAttach(null);
-    setInboxSearchQuery("");
     setInboxFilter("unattached");
     setAttachDrawerOpen(true);
   };
@@ -420,6 +411,39 @@ export default function TransactionInbox({
     }
   };
 
+  /** Display name only; keeps document in inbox unattached to any checklist row. */
+  async function handleSaveInboxDocAsLabeled(label: string) {
+    const trimmed = label.trim();
+    if (!transactionId || !selectedDocumentForAttach || !trimmed) {
+      toast.error("Select an unattached document and enter a label");
+      return;
+    }
+    const doc = inboxDocuments.find((d) => d.id === selectedDocumentForAttach);
+    if (!doc || doc.isAttached) {
+      toast.error("Choose an unattached inbox document to label");
+      return;
+    }
+    const ok = await renameTransactionDocumentDisplayName(transactionId, selectedDocumentForAttach, trimmed);
+    if (!ok) {
+      toast.error("Could not save label");
+      return;
+    }
+    onInboxDocumentsChange(
+      inboxDocuments.map((d) => (d.id === selectedDocumentForAttach ? { ...d, filename: trimmed } : d))
+    );
+    if (addActivityEntry) {
+      addActivityEntry({
+        actor: currentUserRole,
+        category: "docs",
+        type: "document_labeled",
+        message: `${currentUserRole} saved an inbox document as “${trimmed}” (not linked to checklist)`,
+        meta: { displayName: trimmed },
+        documentId: selectedDocumentForAttach,
+      });
+    }
+    toast.success(`Labeled as “${trimmed}” — still in inbox`);
+  }
+
   const getFilteredInboxDocuments = () => {
     let filtered = inboxDocuments;
 
@@ -430,16 +454,14 @@ export default function TransactionInbox({
       filtered = filtered.filter((doc) => doc.receivedAt >= twoDaysAgo);
     }
 
-    if (inboxSearchQuery.trim()) {
-      filtered = filtered.filter((doc) =>
-        doc.filename.toLowerCase().includes(inboxSearchQuery.toLowerCase())
-      );
-    }
-
     return filtered;
   };
 
   const filteredInboxDocuments = getFilteredInboxDocuments();
+
+  const selectedInboxDocForAttach = selectedDocumentForAttach
+    ? inboxDocuments.find((d) => d.id === selectedDocumentForAttach) ?? null
+    : null;
 
   return (
     <>
@@ -502,6 +524,11 @@ export default function TransactionInbox({
                     <Inbox className="mr-2 h-4 w-4" />
                     Open inbox
                   </Button>
+                  {transactionId && (
+                    <Button variant="outline" size="sm" className="border-slate-200" asChild>
+                      <Link to={`/transactions/${transactionId}/split-assign`}>Split &amp; assign</Link>
+                    </Button>
+                  )}
                 </div>
               </div>
             </div>
@@ -551,6 +578,14 @@ export default function TransactionInbox({
                           <Eye className="h-4 w-4" />
                           <span className="sr-only">View</span>
                         </Button>
+                        {transactionId && (
+                          <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-slate-600" asChild>
+                            <Link to={`/transactions/${transactionId}/documents/${doc.id}/split`} title="Split document">
+                              <Scissors className="h-4 w-4" aria-hidden />
+                              <span className="sr-only">Split document</span>
+                            </Link>
+                          </Button>
+                        )}
                         <Button
                           type="button"
                           variant="ghost"
@@ -605,25 +640,6 @@ export default function TransactionInbox({
           </SheetHeader>
 
           <div className="space-y-5 py-5">
-            {/* Search Bar */}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-              <Input
-                placeholder="Search inbox documents..."
-                value={inboxSearchQuery}
-                onChange={(e) => setInboxSearchQuery(e.target.value)}
-                className="pl-9"
-              />
-              {inboxSearchQuery && (
-                <button
-                  onClick={() => setInboxSearchQuery("")}
-                  className="absolute right-3 top-1/2 -translate-y-1/2"
-                >
-                  <X className="h-4 w-4 text-slate-400 hover:text-slate-600" />
-                </button>
-              )}
-            </div>
-
             {/* Filter Chips */}
             <div className="flex flex-wrap items-center gap-2">
               <Filter className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
@@ -670,24 +686,21 @@ export default function TransactionInbox({
                 <Label htmlFor="attachTo" className="text-sm font-medium text-slate-700 mb-2 block">
                   Attach to checklist item
                 </Label>
-                <Select
-                  value=""
-                  onValueChange={(value) => {
-                    const item = checklistItems.find((i) => i.id === value);
-                    setAttachTargetItem(item || null);
-                  }}
-                >
-                  <SelectTrigger id="attachTo">
-                    <SelectValue placeholder="Select a checklist item..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {checklistItems.map((item) => (
-                      <SelectItem key={item.id} value={item.id}>
-                        {item.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <ChecklistItemSearchPicker
+                  id="attachTo"
+                  items={checklistItems}
+                  selectedItem={attachTargetItem}
+                  onSelect={(item) => setAttachTargetItem(item)}
+                  disabled={isReadOnly}
+                  placeholder="Select a checklist item…"
+                  onSaveAsLabeledDocument={handleSaveInboxDocAsLabeled}
+                  saveAsLabeledAllowed={
+                    !!transactionId &&
+                    !isReadOnly &&
+                    !!selectedInboxDocForAttach &&
+                    !selectedInboxDocForAttach.isAttached
+                  }
+                />
               </div>
             )}
 
@@ -771,6 +784,18 @@ export default function TransactionInbox({
                           >
                             <Pencil className="h-4 w-4" />
                             <span className="sr-only">Rename</span>
+                          </Button>
+                        )}
+                        {transactionId && (
+                          <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-slate-600" asChild>
+                            <Link
+                              to={`/transactions/${transactionId}/documents/${doc.id}/split`}
+                              title="Split document"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <Scissors className="h-4 w-4" aria-hidden />
+                              <span className="sr-only">Split document</span>
+                            </Link>
                           </Button>
                         )}
                         <Button

@@ -12,6 +12,8 @@ export type TransactionDocumentRow = {
   source: string;
   attached_to_checklist_item_id: string | null;
   created_at: string;
+  source_document_id?: string | null;
+  split_page_indices?: number[] | null;
 };
 
 export type InboxDocumentShape = {
@@ -136,6 +138,147 @@ export async function renameTransactionDocumentDisplayName(
     return false;
   }
   return true;
+}
+
+const SPLIT_SOURCE = "split";
+
+/**
+ * Build a display file name for a split output: uses `outputBaseName`, adds extension from source when missing.
+ */
+export function fileNameForSplitOutput(outputBaseName: string, sourceFileName: string): string {
+  const trimmed = outputBaseName.trim() || "Split output";
+  const hasExt = /\.[a-zA-Z0-9]{1,8}$/.test(trimmed);
+  if (hasExt) {
+    return trimmed.length > 255 ? trimmed.slice(0, 255) : trimmed;
+  }
+  const m = sourceFileName.match(/(\.[a-zA-Z0-9]+)$/);
+  const ext = m?.[1] ?? ".pdf";
+  const next = `${trimmed}${ext}`;
+  return next.length > 255 ? next.slice(0, 255) : next;
+}
+
+export type InsertSplitOutputParams = {
+  transactionId: string;
+  /** Source document row id (original unsplit file). */
+  sourceDocumentId: string;
+  sourceStoragePath: string;
+  /** 1-based page indices included in this output. */
+  pageIndices: number[];
+  /** Display name (may omit extension). */
+  outputDisplayName: string;
+  /** Original source filename (for extension inference). */
+  sourceFileName: string;
+};
+
+export type InsertSplitOutputResult =
+  | { ok: true; id: string }
+  | { ok: false; error: string };
+
+function contentTypeForFileName(fileName: string): string {
+  const lower = fileName.toLowerCase();
+  if (lower.endsWith(".pdf")) return "application/pdf";
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".gif")) return "image/gif";
+  if (lower.endsWith(".webp")) return "image/webp";
+  return "application/octet-stream";
+}
+
+/**
+ * Create a `transaction_documents` row for a split output.
+ *
+ * - **Storage:** duplicates the source object to a new key so each output has its own file (same bytes until true page-level splitting exists).
+ * - **DB:** saves display name, `source_document_id`, `split_page_indices`, and `source: split` when the schema supports it.
+ */
+export async function insertSplitOutputDocument(params: InsertSplitOutputParams): Promise<InsertSplitOutputResult> {
+  const {
+    transactionId,
+    sourceDocumentId,
+    sourceStoragePath,
+    pageIndices,
+    outputDisplayName,
+    sourceFileName,
+  } = params;
+  const path = (sourceStoragePath ?? "").trim();
+  if (!transactionId || !sourceDocumentId || !path) {
+    return { ok: false, error: "Missing transaction or source document." };
+  }
+  const fileName = fileNameForSplitOutput(outputDisplayName, sourceFileName);
+  const safeSegment = fileName.replace(/[^a-zA-Z0-9._-]/g, "_") || "split-output.pdf";
+  const sortedPages = [...pageIndices].sort((a, b) => a - b);
+
+  const { data: blob, error: downloadError } = await supabase.storage.from(BUCKET).download(path);
+  if (downloadError || !blob) {
+    console.error("[insertSplitOutputDocument] storage download failed:", downloadError);
+    return {
+      ok: false,
+      error:
+        downloadError?.message ??
+        "Could not read the source file from storage. Check permissions and try again.",
+    };
+  }
+
+  const newStoragePath = `${transactionId}/${crypto.randomUUID()}-${safeSegment}`;
+  const { error: uploadError } = await supabase.storage.from(BUCKET).upload(newStoragePath, blob, {
+    upsert: false,
+    contentType: contentTypeForFileName(fileName),
+  });
+  if (uploadError) {
+    console.error("[insertSplitOutputDocument] storage upload failed:", uploadError);
+    return {
+      ok: false,
+      error: uploadError.message || "Could not save the split copy to storage.",
+    };
+  }
+
+  const rowFull: Record<string, unknown> = {
+    transaction_id: transactionId,
+    file_name: fileName,
+    storage_path: newStoragePath,
+    source: SPLIT_SOURCE,
+    attached_to_checklist_item_id: null,
+    source_document_id: sourceDocumentId,
+    split_page_indices: sortedPages,
+  };
+
+  const { data, error } = await supabase.from("transaction_documents").insert(rowFull).select("id").single();
+
+  if (!error && data && (data as { id?: string }).id) {
+    return { ok: true, id: String((data as { id: string }).id) };
+  }
+
+  if (error) {
+    console.error("[insertSplitOutputDocument] insert failed (full row):", error);
+  }
+
+  const rowMinimal = {
+    transaction_id: transactionId,
+    file_name: fileName,
+    storage_path: newStoragePath,
+    source: "upload",
+    attached_to_checklist_item_id: null,
+  };
+  const fallback = await supabase.from("transaction_documents").insert(rowMinimal).select("id").single();
+  if (fallback.error || !(fallback.data as { id?: string } | null)?.id) {
+    await supabase.storage.from(BUCKET).remove([newStoragePath]).catch(() => {});
+    const msg = fallback.error?.message ?? error?.message ?? "Could not create the document record.";
+    return { ok: false, error: msg };
+  }
+
+  const newId = String((fallback.data as { id: string }).id);
+  const { error: metaErr } = await supabase
+    .from("transaction_documents")
+    .update({
+      source: SPLIT_SOURCE,
+      source_document_id: sourceDocumentId,
+      split_page_indices: sortedPages,
+    })
+    .eq("id", newId);
+
+  if (metaErr) {
+    console.warn("[insertSplitOutputDocument] split metadata columns not saved (apply DB migration):", metaErr);
+  }
+  return { ok: true, id: newId };
 }
 
 /**
