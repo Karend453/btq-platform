@@ -1,11 +1,10 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import {
-  formatAgentLabelForList,
   getActiveCommissionSide,
-  getAssignedAgentDisplayNameFromRow,
   getTransaction,
+  resolveAgentDisplayLabelForTransaction,
   updateTransaction,
   type TransactionRow,
 } from "../../services/transactions";
@@ -62,6 +61,7 @@ export default function EditTransactionDetails() {
   const [commissionSide, setCommissionSide] = useState<"list" | "buyer" | null>(
     null
   );
+  const [agentDisplayLabel, setAgentDisplayLabel] = useState("—");
 
   const [formData, setFormData] = useState<FormData>({
     salePrice: "",
@@ -122,11 +122,18 @@ export default function EditTransactionDetails() {
     loadTransaction();
   }, [id]);
 
-  const agentDisplayLabel = useMemo(() => {
-    if (!transaction) return "—";
-    const raw = getAssignedAgentDisplayNameFromRow(transaction);
-    const formatted = formatAgentLabelForList(raw).trim();
-    return formatted || "Unassigned";
+  useEffect(() => {
+    if (!transaction) {
+      setAgentDisplayLabel("—");
+      return;
+    }
+    let cancelled = false;
+    void resolveAgentDisplayLabelForTransaction(transaction).then((label) => {
+      if (!cancelled) setAgentDisplayLabel(label);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [transaction]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {

@@ -36,8 +36,7 @@ import {
 import {
   getTransaction,
   getAssignedAdminUserId,
-  getAssignedAgentDisplayNameFromRow,
-  formatAgentLabelForList,
+  resolveAgentDisplayLabelForTransaction,
   updateTransaction,
   type TransactionRow,
 } from "../../services/transactions";
@@ -923,12 +922,21 @@ export default function TransactionDetailsPage() {
   }, [authUser?.id]);
 
   const checklistTemplateId = transaction?.checklist_template_id?.trim() || null;
-  const assignedAgentName = useMemo(() => {
-    if (!transaction) return "Unassigned";
+  const [assignedAgentName, setAssignedAgentName] = useState("Unassigned");
+
+  useEffect(() => {
+    if (!transaction) {
+      setAssignedAgentName("Unassigned");
+      return;
+    }
+    let cancelled = false;
     const row = transaction as TransactionRow;
-    const raw = getAssignedAgentDisplayNameFromRow(row);
-    const formatted = formatAgentLabelForList(raw).trim();
-    return formatted || "Unassigned";
+    void resolveAgentDisplayLabelForTransaction(row).then((label) => {
+      if (!cancelled) setAssignedAgentName(label);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [transaction]);
 
   useEffect(() => {

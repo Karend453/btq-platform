@@ -197,7 +197,8 @@ export function agentDisplayLabelFromProfileFields(
 
 const PROFILE_BATCH_SIZE = 100;
 
-async function fetchUserProfileLabelsByIds(
+/** Batch-load `user_profiles.display_name` + `email` for agent labels (single source for transaction UI). */
+export async function fetchUserProfileLabelsByIds(
   ids: string[]
 ): Promise<Map<string, { display_name: string | null; email: string | null }>> {
   const unique = [...new Set(ids.map((id) => String(id).trim()).filter(Boolean))];
@@ -236,7 +237,29 @@ function resolveAgentLabelForListRow(
     return formatAgentLabelForList(getAssignedAgentDisplayNameFromRow(row));
   }
   const p = profileById.get(uid);
-  return formatAgentLabelForList(agentDisplayLabelFromProfileFields(p?.display_name, p?.email));
+  if (p) {
+    return formatAgentLabelForList(
+      agentDisplayLabelFromProfileFields(p.display_name, p.email)
+    );
+  }
+  return formatAgentLabelForList(getAssignedAgentDisplayNameFromRow(row));
+}
+
+/**
+ * Agent label for transaction detail/edit pages: `user_profiles` by `agent_user_id`, never list/buyer email strings.
+ */
+export async function resolveAgentDisplayLabelForTransaction(
+  row: TransactionRow
+): Promise<string> {
+  const uid = row.agent_user_id?.trim();
+  if (!uid) {
+    return (
+      formatAgentLabelForList(getAssignedAgentDisplayNameFromRow(row)).trim() ||
+      "Unassigned"
+    );
+  }
+  const map = await fetchUserProfileLabelsByIds([uid]);
+  return resolveAgentLabelForListRow(row, map).trim() || "Unassigned";
 }
 
 /**
@@ -266,20 +289,14 @@ export function getAssignedAgentDisplayNameFromRow(row: TransactionRow): string 
 }
 
 /**
- * Prefer human-readable labels over raw emails for the list and transaction details (no cross-user profile reads).
- * Roster-backed names are applied separately for brokers when available.
+ * Normalize legacy list/buyer display strings. If the value is an email, show the full address
+ * (never the local-part only). Prefer {@link resolveAgentDisplayLabelForTransaction} when `agent_user_id` is set.
  */
 export function formatAgentLabelForList(raw: string): string {
   const s = raw.trim();
   if (!s || s === "Unassigned") return raw;
-  const at = s.indexOf("@");
-  if (at <= 0 || at === s.length - 1) return raw;
-  const local = s.slice(0, at).replace(/[._]+/g, " ").trim();
-  if (!local) return raw;
-  return local
-    .split(/\s+/)
-    .map((p) => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase())
-    .join(" ");
+  if (s.includes("@")) return s;
+  return s;
 }
 
 /** List column: Listing / Purchase / Lease / Other (non-matching → Other). */
@@ -340,8 +357,12 @@ export function getTransactionRollupActionStatus(
   return "none";
 }
 
-function toWorkItem(row: TransactionRow, rollupViewer: TransactionListRollupViewer): WorkItem {
-  const agentDisplayName = formatAgentLabelForList(getAssignedAgentDisplayNameFromRow(row));
+function toWorkItem(
+  row: TransactionRow,
+  rollupViewer: TransactionListRollupViewer,
+  profileById: Map<string, { display_name: string | null; email: string | null }>
+): WorkItem {
+  const agentDisplayName = resolveAgentLabelForListRow(row, profileById);
   const { readiness, dominant, docs } = getComplianceReadinessAndDominant(row, [], rollupViewer);
   const wf = dominantStateToTableFields(dominant, readiness);
   const closing = row.closing_date ?? "";
@@ -1256,7 +1277,7 @@ export async function listTransactions(
   const profileById = await fetchUserProfileLabelsByIds(
     rows.map((r) => r.agent_user_id).filter((x): x is string => !!x?.trim())
   );
-  const items = rows.map((row) => toWorkItem(row, rollupViewer));
+  const items = rows.map((row) => toWorkItem(row, rollupViewer, profileById));
   const ids = items.map((i) => i.id);
   const [counts, checklistRows, portfolioFlagsByTxId] = await Promise.all([
     fetchComplianceDocCountsByTransactionIds(ids),
@@ -1285,14 +1306,11 @@ export async function listTransactions(
     );
     const wf = dominantStateToTableFields(dominant, readiness);
 
-    const agentDisplayName = resolveAgentLabelForListRow(tx, profileById);
-
     const wfStatus = (tx.status ?? "").trim().toLowerCase();
     const pf = portfolioFlagsByTxId.get(tx.id);
 
     return {
       ...item,
-      agentDisplayName: agentDisplayName.trim() || undefined,
       status: wf.statusLabel,
       statusLabel: wf.statusLabel,
       statusType: wf.status as WorkItemStatus,
