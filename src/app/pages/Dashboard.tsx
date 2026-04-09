@@ -1,7 +1,6 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
-import { getUserDisplayName } from "../contexts/AuthContext";
 import {
   getUserProfileRoleKey,
   getAccountInfoReadonly,
@@ -44,6 +43,11 @@ function formatUsdCompact(n: number): string {
   }).format(n);
 }
 
+/** Office switcher label: `offices.display_name` when set, else `offices.name` (see `getCurrentOffice` / list RPC). */
+function officeSwitcherLabel(o: { display_name: string | null; name: string }): string {
+  return o.display_name?.trim() || o.name;
+}
+
 async function loadDashboardOfficeOptions(): Promise<{
   options: DashboardOfficeOption[];
   roleKey: Awaited<ReturnType<typeof getUserProfileRoleKey>>;
@@ -54,7 +58,7 @@ async function loadDashboardOfficeOptions(): Promise<{
     const options = (offices ?? [])
       .map((o) => ({
         id: o.id,
-        label: o.display_name?.trim() || o.name,
+        label: officeSwitcherLabel(o),
       }))
       .sort((a, b) => a.label.localeCompare(b.label));
     return { options, roleKey };
@@ -64,7 +68,7 @@ async function loadDashboardOfficeOptions(): Promise<{
     return { options: [], roleKey };
   }
   return {
-    options: [{ id: o.id, label: o.display_name?.trim() || o.name }],
+    options: [{ id: o.id, label: officeSwitcherLabel(o) }],
     roleKey,
   };
 }
@@ -94,11 +98,22 @@ export function Dashboard() {
   );
   const [officeOptions, setOfficeOptions] = useState<DashboardOfficeOption[]>([]);
   const [selectedOfficeId, setSelectedOfficeId] = useState<string | null>(null);
+  const selectedOfficeIdRef = useRef<string | null>(null);
+  selectedOfficeIdRef.current = selectedOfficeId;
 
+  /**
+   * Primary visible name (header + welcome): `user_profiles.display_name`, then `user_profiles.email`,
+   * then Supabase session email (auth JWT only as last resort — not primary identity).
+   */
   const displayName =
     accountInfo?.display_name?.trim() ||
-    getUserDisplayName(user) ||
+    accountInfo?.email?.trim() ||
+    user?.email?.trim() ||
     "there";
+
+  /** Secondary line in header: prefer `user_profiles.email`, then session. */
+  const headerEmail =
+    accountInfo?.email?.trim() || user?.email || undefined;
 
   useEffect(() => {
     if (searchParams.get("welcome") !== "1") return;
@@ -146,6 +161,46 @@ export function Dashboard() {
     return () => {
       cancelled = true;
     };
+  }, [user?.id]);
+
+  // Refetch profile + office labels when the tab becomes visible so DB updates match the UI without a full reload.
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const onVisibility = () => {
+      if (document.visibilityState !== "visible") return;
+
+      void (async () => {
+        try {
+          const [accountRow, { options, roleKey }] = await Promise.all([
+            getAccountInfoReadonly(),
+            loadDashboardOfficeOptions(),
+          ]);
+          const safeOptions = options ?? [];
+          setAccountInfo(accountRow);
+          setOfficeOptions(safeOptions);
+          setProfileRoleKey(roleKey);
+
+          const prev = selectedOfficeIdRef.current;
+          const resolved =
+            prev && safeOptions.some((o) => o.id === prev)
+              ? prev
+              : pickInitialOfficeId(safeOptions, readDashboardOfficeSelection(user.id));
+          if (resolved != null) {
+            writeDashboardOfficeSelection(user.id, resolved);
+          }
+          setSelectedOfficeId(resolved);
+
+          const data = await fetchComplianceOverviewData({ dashboardOfficeId: resolved });
+          setComplianceOverview(data ?? null);
+        } catch {
+          /* ignore transient refresh errors */
+        }
+      })();
+    };
+
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
   }, [user?.id]);
 
   const handleDashboardOfficeChange = (officeId: string) => {
@@ -255,7 +310,7 @@ export function Dashboard() {
         profileTo={profileTo}
         settingsTo={settingsTo}
         userName={displayName}
-        userEmail={user?.email ?? undefined}
+        userEmail={headerEmail}
       />
 
       <main className="flex-1 overflow-y-auto p-6">

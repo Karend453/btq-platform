@@ -141,6 +141,28 @@ function mapOfficeMembershipToRosterMember(row: OfficeMembershipQueryRow): Offic
   };
 }
 
+/** Display order: broker → btq_admin → admin → agent; unknown roles last. */
+const ROSTER_ROLE_PRIORITY: Record<string, number> = {
+  broker: 1,
+  btq_admin: 2,
+  admin: 3,
+  agent: 4,
+};
+
+function rosterRolePriority(role: string | null | undefined): number {
+  return ROSTER_ROLE_PRIORITY[normalizeRole(role)] ?? 99;
+}
+
+function compareRosterMembersByRoleThenName(a: OfficeRosterMember, b: OfficeRosterMember): number {
+  const pr = rosterRolePriority(a.role) - rosterRolePriority(b.role);
+  if (pr !== 0) return pr;
+  return memberDisplayName(a).localeCompare(memberDisplayName(b), undefined, { sensitivity: "base" });
+}
+
+function sortOfficeRosterMembers(members: OfficeRosterMember[]): OfficeRosterMember[] {
+  return [...members].sort(compareRosterMembersByRoleThenName);
+}
+
 /**
  * Office roster from `office_memberships` (active only), joined to `user_profiles` for identity fields.
  * Same office scope as {@link getCurrentOffice} when listing the broker’s office.
@@ -177,7 +199,10 @@ export async function listOfficeRoster(officeId: string): Promise<{
   }
 
   const rows = (data ?? []) as OfficeMembershipQueryRow[];
-  return { members: rows.map(mapOfficeMembershipToRosterMember), error: null };
+  return {
+    members: sortOfficeRosterMembers(rows.map(mapOfficeMembershipToRosterMember)),
+    error: null,
+  };
 }
 
 /** Same rows as {@link listOfficeRoster}; kept for call sites that expect `{ rows }`. */

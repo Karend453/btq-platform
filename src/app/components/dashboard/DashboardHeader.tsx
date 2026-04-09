@@ -20,6 +20,37 @@ import {
 } from "../ui/select";
 import { Avatar, AvatarFallback } from "../ui/avatar";
 
+/** Avatar initials from the same string shown as the primary label (display name or email fallback). */
+function initialsFromUserLabel(label: string): string {
+  const t = label.trim();
+  if (!t) return "?";
+
+  if (t.includes("@")) {
+    const local = (t.split("@")[0] ?? "").replace(/[._-]+/g, " ").trim();
+    const parts = local.split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) {
+      const a = parts[0][0] ?? "";
+      const b = parts[parts.length - 1][0] ?? "";
+      return (a + b).toUpperCase();
+    }
+    const word = parts[0] ?? local;
+    if (word.length >= 2) return word.slice(0, 2).toUpperCase();
+    if (word.length === 1) return word.toUpperCase();
+    return "?";
+  }
+
+  const parts = t.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    const a = parts[0][0] ?? "";
+    const b = parts[parts.length - 1][0] ?? "";
+    return (a + b).toUpperCase();
+  }
+  const word = parts[0] ?? "";
+  if (word.length >= 2) return word.slice(0, 2).toUpperCase();
+  if (word.length === 1) return word.toUpperCase();
+  return "?";
+}
+
 export type DashboardOfficeOption = { id: string; label: string };
 
 interface DashboardHeaderProps {
@@ -89,11 +120,7 @@ export function DashboardHeader({
               <Button variant="ghost" className="flex items-center gap-2">
                 <Avatar className="h-8 w-8">
                   <AvatarFallback className="bg-slate-200 text-slate-700">
-                    {userName
-                      .split(" ")
-                      .map((n) => n[0])
-                      .join("")
-                      .slice(0, 2) || "?"}
+                    {initialsFromUserLabel(userName)}
                   </AvatarFallback>
                 </Avatar>
                 <div className="text-left">

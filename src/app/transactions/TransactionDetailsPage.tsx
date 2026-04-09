@@ -1083,12 +1083,12 @@ export default function TransactionDetailsPage() {
       row &&
       (row.agent_user_id == null || String(row.agent_user_id).trim() === "");
 
-    const { data: updated, error } = await updateTransaction(id, {
+    const { error } = await updateTransaction(id, {
       status: transactionStatus || null,
       closingDate: closingDate || null,
       ...(claimAgent ? { agentUserId: user.id } : {}),
     });
-    if (error || !updated) {
+    if (error) {
       console.error("[handleSaveTransactionControls]", error);
       toast.error(error?.message ?? "Could not save transaction");
       return;
@@ -1116,14 +1116,14 @@ export default function TransactionDetailsPage() {
         row &&
         (row.agent_user_id == null || String(row.agent_user_id).trim() === "");
 
-      const { data: updated, error } = await updateTransaction(id, {
+      const { error } = await updateTransaction(id, {
         closingDate: date,
         salePrice: price,
         gci: gciNum,
         status: "Closed",
         ...(claimAgent ? { agentUserId: user.id } : {}),
       });
-      if (error || !updated) {
+      if (error) {
         console.error("[handleSubmitCompleteClosingDetails]", error);
         toast.error(error?.message ?? "Could not save transaction");
         return;
