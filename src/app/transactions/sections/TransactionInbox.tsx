@@ -11,6 +11,7 @@ import {
   Eye,
   Pencil,
   Scissors,
+  Trash2,
 } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
@@ -45,6 +46,7 @@ import {
   getSignedUrl,
   attachDocumentToChecklistItem,
   renameTransactionDocumentDisplayName,
+  hardDeleteUnattachedInboxDocument,
 } from "../../../services/transactionDocuments";
 
 export interface InboxDocument {
@@ -173,6 +175,8 @@ export default function TransactionInbox({
   const [renameDocId, setRenameDocId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [renameSaving, setRenameSaving] = useState(false);
+  const [deleteConfirmDoc, setDeleteConfirmDoc] = useState<InboxDocument | null>(null);
+  const [deleteSaving, setDeleteSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isControlled = controlledAttachDrawerOpen !== undefined && onAttachDrawerOpenChange !== undefined;
@@ -387,6 +391,50 @@ export default function TransactionInbox({
     setRenameDraft(doc.filename);
   };
 
+  function openDeleteConfirm(doc: InboxDocument) {
+    if (doc.isAttached) {
+      toast.error("Detach this document from the checklist before deleting it from the inbox.");
+      return;
+    }
+    setDeleteConfirmDoc(doc);
+  }
+
+  async function handleConfirmDeleteInboxDocument() {
+    if (!transactionId || !deleteConfirmDoc) return;
+    if (deleteConfirmDoc.isAttached) {
+      toast.error("This document is attached to the checklist and cannot be deleted here.");
+      setDeleteConfirmDoc(null);
+      return;
+    }
+    setDeleteSaving(true);
+    try {
+      const result = await hardDeleteUnattachedInboxDocument(transactionId, deleteConfirmDoc.id);
+      if (!result.ok) {
+        toast.error(result.error || "Could not delete document");
+        return;
+      }
+      const removedId = deleteConfirmDoc.id;
+      onInboxDocumentsChange(inboxDocuments.filter((d) => d.id !== removedId));
+      if (selectedDocumentForAttach === removedId) {
+        setSelectedDocumentForAttach(null);
+      }
+      if (addActivityEntry) {
+        addActivityEntry({
+          actor: currentUserRole,
+          category: "docs",
+          type: "DOC_DELETED_FROM_INBOX",
+          message: `${currentUserRole} permanently removed an inbox-only copy: "${deleteConfirmDoc.filename}"`,
+          meta: { fileName: deleteConfirmDoc.filename },
+          documentId: removedId,
+        });
+      }
+      toast.success("Document permanently removed");
+      setDeleteConfirmDoc(null);
+    } finally {
+      setDeleteSaving(false);
+    }
+  }
+
   const handleConfirmRename = async () => {
     if (!transactionId || !renameDocId) return;
     const next = renameDraft.trim();
@@ -597,6 +645,19 @@ export default function TransactionInbox({
                           <Paperclip className="h-4 w-4" />
                           <span className="sr-only">Attach</span>
                         </Button>
+                        {!isReadOnly && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-slate-600 hover:text-red-700"
+                            title="Permanently delete inbox copy"
+                            onClick={() => openDeleteConfirm(doc)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            <span className="sr-only">Delete permanently</span>
+                          </Button>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -812,6 +873,22 @@ export default function TransactionInbox({
                           <Eye className="h-4 w-4" />
                           <span className="sr-only">View</span>
                         </Button>
+                        {!isReadOnly && !doc.isAttached && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-slate-600 hover:text-red-700"
+                            title="Permanently delete inbox copy"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openDeleteConfirm(doc);
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            <span className="sr-only">Delete permanently</span>
+                          </Button>
+                        )}
                       </div>
                     </div>
                   ))
@@ -886,6 +963,52 @@ export default function TransactionInbox({
             </Button>
             <Button type="button" onClick={() => void handleConfirmRename()} disabled={renameSaving}>
               {renameSaving ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={deleteConfirmDoc !== null}
+        onOpenChange={(open) => {
+          if (!open && !deleteSaving) {
+            setDeleteConfirmDoc(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Permanently delete this document?</DialogTitle>
+            <DialogDescription className="space-y-3 pt-1 text-slate-600">
+              <span className="block">
+                This permanently removes the BTQ copy of{" "}
+                <span className="font-medium text-slate-900">
+                  {deleteConfirmDoc?.filename ?? "this file"}
+                </span>{" "}
+                from this transaction. The database record and the file in storage will be deleted.
+                This cannot be undone in BTQ.
+              </span>
+              <span className="block text-sm">
+                The original may still exist outside BTQ; you can upload again if this was a mistake.
+              </span>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setDeleteConfirmDoc(null)}
+              disabled={deleteSaving}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void handleConfirmDeleteInboxDocument()}
+              disabled={deleteSaving}
+            >
+              {deleteSaving ? "Deleting…" : "Delete permanently"}
             </Button>
           </DialogFooter>
         </DialogContent>

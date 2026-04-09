@@ -1,5 +1,6 @@
 // src/services/transactionDocuments.ts
 
+import { buildSplitOutputBlobInBrowser } from "./splitOutput/buildSplitOutputBlobInBrowser";
 import { supabase } from "../lib/supabaseClient";
 
 const BUCKET = "transaction-documents";
@@ -140,6 +141,66 @@ export async function renameTransactionDocumentDisplayName(
   return true;
 }
 
+export type HardDeleteUnattachedInboxDocumentResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
+/**
+ * User-facing copy when `delete_unattached_transaction_document` rejects the caller (Postgres
+ * `RAISE` / not-authorized). Adjust tone here only; permission rules stay in the RPC.
+ */
+export const HARD_DELETE_INBOX_DOC_NOT_AUTHORIZED_MESSAGE =
+  "Only the assigned agent can delete documents from their transactions.";
+
+function userFacingDeleteInboxError(raw: string | null | undefined): string {
+  const msg = (raw ?? "").trim();
+  if (!msg) return "Could not delete document.";
+  if (msg.toLowerCase().includes("not authorized")) {
+    return HARD_DELETE_INBOX_DOC_NOT_AUTHORIZED_MESSAGE;
+  }
+  return msg;
+}
+
+/**
+ * Permanently removes an inbox-only document: database row (RPC enforces unattached) then storage object.
+ * Eligibility: no `checklist_items.document_id` points at this document; same transaction scoping as other doc APIs.
+ */
+export async function hardDeleteUnattachedInboxDocument(
+  transactionId: string,
+  documentId: string
+): Promise<HardDeleteUnattachedInboxDocumentResult> {
+  const tid = transactionId.trim();
+  const did = documentId.trim();
+  if (!tid || !did) {
+    return { ok: false, error: "Missing transaction or document." };
+  }
+
+  const { data, error } = await supabase.rpc("delete_unattached_transaction_document", {
+    p_transaction_id: tid,
+    p_document_id: did,
+  });
+
+  if (error) {
+    console.error("[hardDeleteUnattachedInboxDocument] RPC failed:", error);
+    return { ok: false, error: userFacingDeleteInboxError(error.message) };
+  }
+
+  const payload = data as { ok?: boolean; error?: string; storage_path?: string | null } | null;
+  if (!payload?.ok) {
+    return { ok: false, error: userFacingDeleteInboxError(payload?.error) };
+  }
+
+  const path = String(payload.storage_path ?? "").trim();
+  if (path) {
+    const { error: rmErr } = await supabase.storage.from(BUCKET).remove([path]);
+    if (rmErr) {
+      console.warn("[hardDeleteUnattachedInboxDocument] Storage remove failed after DB delete:", rmErr);
+    }
+  }
+
+  return { ok: true };
+}
+
 const SPLIT_SOURCE = "split";
 
 /**
@@ -187,7 +248,9 @@ function contentTypeForFileName(fileName: string): string {
 /**
  * Create a `transaction_documents` row for a split output.
  *
- * - **Storage:** duplicates the source object to a new key so each output has its own file (same bytes until true page-level splitting exists).
+ * Artifact bytes come from `buildSplitOutputBlobInBrowser` (Phase 2A). Upload + insert run only after that succeeds.
+ *
+ * - **Storage:** uploads the generated blob to a new object key.
  * - **DB:** saves display name, `source_document_id`, `split_page_indices`, and `source: split` when the schema supports it.
  */
 export async function insertSplitOutputDocument(params: InsertSplitOutputParams): Promise<InsertSplitOutputResult> {
@@ -205,7 +268,6 @@ export async function insertSplitOutputDocument(params: InsertSplitOutputParams)
   }
   const fileName = fileNameForSplitOutput(outputDisplayName, sourceFileName);
   const safeSegment = fileName.replace(/[^a-zA-Z0-9._-]/g, "_") || "split-output.pdf";
-  const sortedPages = [...pageIndices].sort((a, b) => a - b);
 
   const { data: blob, error: downloadError } = await supabase.storage.from(BUCKET).download(path);
   if (downloadError || !blob) {
@@ -218,16 +280,28 @@ export async function insertSplitOutputDocument(params: InsertSplitOutputParams)
     };
   }
 
+  const built = await buildSplitOutputBlobInBrowser({
+    sourceBlob: blob,
+    sourceFileName,
+    pageIndices,
+  });
+  if (!built.ok) {
+    return { ok: false, error: built.error };
+  }
+
+  const normalizedPageIndices = built.normalizedPageIndices;
+
   const newStoragePath = `${transactionId}/${crypto.randomUUID()}-${safeSegment}`;
-  const { error: uploadError } = await supabase.storage.from(BUCKET).upload(newStoragePath, blob, {
+
+  const { error: uploadError } = await supabase.storage.from(BUCKET).upload(newStoragePath, built.blob, {
     upsert: false,
-    contentType: contentTypeForFileName(fileName),
+    contentType: built.contentType,
   });
   if (uploadError) {
-    console.error("[insertSplitOutputDocument] storage upload failed:", uploadError);
+    console.error("[insertSplitOutputDocument][Phase2A] storage upload failed after successful split build:", uploadError);
     return {
       ok: false,
-      error: uploadError.message || "Could not save the split copy to storage.",
+      error: uploadError.message || "Could not upload the split file to storage. Try again.",
     };
   }
 
@@ -238,7 +312,7 @@ export async function insertSplitOutputDocument(params: InsertSplitOutputParams)
     source: SPLIT_SOURCE,
     attached_to_checklist_item_id: null,
     source_document_id: sourceDocumentId,
-    split_page_indices: sortedPages,
+    split_page_indices: normalizedPageIndices,
   };
 
   const { data, error } = await supabase.from("transaction_documents").insert(rowFull).select("id").single();
@@ -271,7 +345,7 @@ export async function insertSplitOutputDocument(params: InsertSplitOutputParams)
     .update({
       source: SPLIT_SOURCE,
       source_document_id: sourceDocumentId,
-      split_page_indices: sortedPages,
+      split_page_indices: normalizedPageIndices,
     })
     .eq("id", newId);
 

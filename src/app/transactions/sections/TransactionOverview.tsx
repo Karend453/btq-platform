@@ -93,6 +93,8 @@ type TransactionOverviewSectionProps = {
   finalizeInProgress?: boolean;
   onFinalizeClosingClick?: () => void;
   finalizeClosingDisabled?: boolean;
+  /** Inbox documents not linked to any checklist row — must be resolved before finalizing. */
+  unattachedInboxDocumentCount?: number;
 };
 
 type ExportPackageLockState = "ready" | "pending" | "failed" | "unknown";
@@ -127,6 +129,7 @@ export default function TransactionOverviewSection({
   finalizeInProgress = false,
   onFinalizeClosingClick,
   finalizeClosingDisabled,
+  unattachedInboxDocumentCount = 0,
 }: TransactionOverviewSectionProps) {
   const portfolioStage = portfolioSnapshot?.portfolio_stage;
   const isFinalized = portfolioStage === "final";
@@ -285,7 +288,8 @@ export default function TransactionOverviewSection({
           </div>
         </div>
 
-        <div className="flex flex-shrink-0 flex-wrap items-center gap-2 lg:ml-auto lg:justify-end">
+        <div className="flex flex-shrink-0 flex-col items-end gap-1.5 lg:ml-auto">
+          <div className="flex flex-wrap items-center justify-end gap-2">
           <DropdownMenu open={formsMenuOpen} onOpenChange={setFormsMenuOpen}>
             <DropdownMenuTrigger asChild>
               <Button
@@ -402,6 +406,11 @@ export default function TransactionOverviewSection({
               size="sm"
               onClick={onFinalizeClosingClick}
               disabled={!!finalizeClosingDisabled || portfolioLoading || isFinalized}
+              title={
+                !isFinalized && unattachedInboxDocumentCount > 0
+                  ? `Finalize is disabled: ${unattachedInboxDocumentCount} inbox-only document(s) must be attached to the checklist or permanently removed from the inbox.`
+                  : undefined
+              }
               className="min-h-9 min-w-[10.5rem] font-semibold shadow-sm transition-[box-shadow,transform] hover:shadow-md hover:brightness-[1.03] active:scale-[0.98] active:shadow-sm disabled:pointer-events-none disabled:opacity-60 disabled:active:scale-100"
             >
               {finalizeInProgress ? "Finalizing & Creating Export…" : "Finalize Closing"}
@@ -410,6 +419,17 @@ export default function TransactionOverviewSection({
           <Button variant="outline" size="sm" onClick={onEdit} className="shadow-none">
             Edit Transaction Details
           </Button>
+          </div>
+          {!isFinalized && unattachedInboxDocumentCount > 0 && !portfolioLoading ? (
+            <p
+              className="max-w-[min(100%,22rem)] text-right text-xs leading-snug text-amber-900"
+              role="status"
+            >
+              {unattachedInboxDocumentCount} inbox-only document
+              {unattachedInboxDocumentCount === 1 ? "" : "s"} must be attached to the checklist or
+              permanently removed before you can finalize closing.
+            </p>
+          ) : null}
         </div>
       </div>
 

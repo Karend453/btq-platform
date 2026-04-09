@@ -60,7 +60,7 @@ export async function createAndPersistTransactionExportPackage(
     return { ok: false, errorMessage: pendingErr.message };
   }
 
-  const docs = await fetchDocumentsByTransactionId(tid);
+  const docs = (await fetchDocumentsByTransactionId(tid)).filter((d) => d.isAttached);
   const zip = new JSZip();
   const usedNames = new Set<string>();
   const manifestDocs: { id: string; file_name: string; storage_path: string }[] = [];
@@ -92,7 +92,8 @@ export async function createAndPersistTransactionExportPackage(
         export_created_by: actor.userId,
         export_created_by_email: actor.email,
         documents: manifestDocs,
-        note: "System-generated export package (BTQ).",
+        note:
+          "System-generated export package (BTQ). Inbox-only documents (not attached to the checklist) are excluded.",
       },
       null,
       2

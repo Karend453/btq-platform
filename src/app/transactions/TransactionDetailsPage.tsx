@@ -701,6 +701,13 @@ export default function TransactionDetailsPage() {
 
   async function openFinalizeClosingModal() {
     if (!transaction) return;
+    const stray = inboxDocuments.filter((d) => !d.isAttached).length;
+    if (stray > 0) {
+      toast.error("Attach or permanently remove inbox-only documents before finalizing.", {
+        description: `${stray} document${stray === 1 ? "" : "s"} in the inbox ${stray === 1 ? "is" : "are"} not linked to the checklist.`,
+      });
+      return;
+    }
     if (id) {
       try {
         const row = await getClientPortfolioForTransaction(id);
@@ -734,6 +741,11 @@ export default function TransactionDetailsPage() {
 
   async function handleSubmitFinalizeClosing() {
     if (!id) return;
+    const stray = inboxDocuments.filter((d) => !d.isAttached).length;
+    if (stray > 0) {
+      toast.error("Cannot finalize while inbox-only documents remain.");
+      return;
+    }
     const price = Number(String(finalizeClosePrice).replace(/[^0-9.-]/g, ""));
     const revenue = Number(String(finalizeRevenue).replace(/[^0-9.-]/g, ""));
     const date = finalizeClosingDate.trim();
@@ -1037,11 +1049,17 @@ export default function TransactionDetailsPage() {
 
   const isReadOnly = transactionStatus === "Archived";
 
+  const unattachedInboxDocumentCount = useMemo(
+    () => inboxDocuments.filter((d) => !d.isAttached).length,
+    [inboxDocuments]
+  );
+
   const canOfferFinalizeClosing = useMemo(() => {
     if (!transaction) return false;
     const statusClosed = (transaction.status ?? "").trim().toLowerCase() === "closed";
     if (!statusClosed) return false;
     if (portfolioSnapshot?.portfolio_stage === "final") return false;
+    if (unattachedInboxDocumentCount > 0) return false;
     const active = checklistItems.filter((i) => !i.archivedAt);
     const docs = active.map((item) => checklistItemForControlsToEngineDocument(item));
     const r = getTransactionClosingReadiness(docs);
@@ -1050,7 +1068,7 @@ export default function TransactionDetailsPage() {
       r.submittedRequiredCount === 0 &&
       r.rejectedRequiredCount === 0
     );
-  }, [transaction, portfolioSnapshot, checklistItems]);
+  }, [transaction, portfolioSnapshot, checklistItems, unattachedInboxDocumentCount]);
 
   const completeClosingFormValid = useMemo(() => {
     const date = completeClosingDate.trim();
@@ -1314,6 +1332,7 @@ export default function TransactionDetailsPage() {
           finalizeInProgress={finalizeSubmitting}
           onFinalizeClosingClick={() => void openFinalizeClosingModal()}
           finalizeClosingDisabled={isReadOnly || finalizeSubmitting || !canOfferFinalizeClosing}
+          unattachedInboxDocumentCount={unattachedInboxDocumentCount}
         />
 
         <TransactionExportPackageSection
