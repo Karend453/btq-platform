@@ -1,4 +1,5 @@
 import { supabase } from "../lib/supabaseClient";
+import { readDashboardOfficeSelection } from "../app/pages/dashboardOfficeStorage";
 
 export type AuthResult =
   | { success: true }
@@ -385,18 +386,78 @@ export async function getCurrentUserProfileOfficeId(): Promise<string | null> {
  * `user_profiles.office_id` whenever it is set — not only when `role === "broker"`.
  * Otherwise a null/unknown role with a valid `office_id` skipped filtering and returned all rows.
  *
- * - `btq_admin`: client-side scope is omitted (rely on RLS for internal operators).
+ * - `btq_admin`: when a valid active office is selected (persisted + `office_memberships`), scope to
+ *   that office; otherwise no client-side office filter (rely on RLS for internal operators).
  * - `broker` with no `office_id`: `denyAll` — empty lists / denied access for office-bound resources.
  */
+type BtqAdminActiveOfficeSession = {
+  scopeOfficeId: string | null;
+  membershipRole: string | null;
+};
+
+async function resolveBtqAdminActiveOfficeSession(
+  userId: string | undefined
+): Promise<BtqAdminActiveOfficeSession> {
+  if (!supabase) {
+    return { scopeOfficeId: null, membershipRole: null };
+  }
+  const id = userId?.trim();
+  if (!id) return { scopeOfficeId: null, membershipRole: null };
+
+  const selected = readDashboardOfficeSelection(id);
+  const officeId = (selected ?? "").trim();
+  if (!officeId) return { scopeOfficeId: null, membershipRole: null };
+
+  const { data, error } = await supabase
+    .from("office_memberships")
+    .select("id, role")
+    .eq("user_id", id)
+    .eq("office_id", officeId)
+    .eq("status", "active")
+    .maybeSingle();
+
+  if (error) {
+    console.warn("[resolveBtqAdminActiveOfficeSession] office_memberships:", error.message);
+    return { scopeOfficeId: null, membershipRole: null };
+  }
+  if (!data) return { scopeOfficeId: null, membershipRole: null };
+
+  const membershipRole =
+    typeof (data as { role?: unknown }).role === "string"
+      ? ((data as { role: string }).role ?? null)
+      : null;
+
+  return { scopeOfficeId: officeId, membershipRole };
+}
+
+/**
+ * Validated `offices.id` for the btq_admin “active office” session (localStorage + membership), or
+ * null for tenant-wide context. Used by {@link getCurrentOffice} and {@link resolveOfficeScopedDataAccess}.
+ */
+export async function getBtqAdminActiveOfficeScopeId(): Promise<string | null> {
+  const user = await getCurrentUser();
+  const session = await resolveBtqAdminActiveOfficeSession(user?.id);
+  return session.scopeOfficeId;
+}
+
 export async function resolveOfficeScopedDataAccess(): Promise<{
   scopeOfficeId: string | null;
   denyAll: boolean;
 }> {
+  const user = await getCurrentUser();
   const roleKey = await getUserProfileRoleKey();
   const profileOfficeId = await getCurrentUserProfileOfficeId();
 
   if (roleKey === "btq_admin") {
-    return { scopeOfficeId: null, denyAll: false };
+    const session = await resolveBtqAdminActiveOfficeSession(user?.id);
+    console.log("[DEBUG btq_admin office session]", {
+      persistedSelection: readDashboardOfficeSelection(user?.id ?? "") ?? null,
+      profileRole: roleKey,
+      resolvedScopeOfficeId: session.scopeOfficeId,
+      membershipRoleForSelectedOffice: session.membershipRole,
+      effectiveDataScope: session.scopeOfficeId ?? "global (all offices)",
+    });
+    return { scopeOfficeId: session.scopeOfficeId, denyAll: false };
   }
   if (profileOfficeId) {
     return { scopeOfficeId: profileOfficeId, denyAll: false };

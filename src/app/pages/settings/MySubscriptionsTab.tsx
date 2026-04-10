@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { Layers } from "lucide-react";
-import { getOfficeById, type Office } from "../../../services/offices";
+import type { Office } from "../../../services/offices";
 import { PLAN_DETAILS, resolvePlanKeyFromOfficeFields } from "../../../lib/pricingPlans";
 import { useSettingsProfile } from "./SettingsProfileContext";
+import { useOfficeForSettingsTabs } from "./useOfficeForSettingsTabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 
 function ReadonlyField({ label, value }: { label: string; value: string }) {
@@ -106,24 +107,7 @@ function CurrentPlanFields({ office }: { office: Office }) {
  */
 export function MySubscriptionsTab() {
   const { profile } = useSettingsProfile();
-  const [office, setOffice] = useState<Office | null | undefined>(undefined);
-
-  useEffect(() => {
-    let cancelled = false;
-    const oid = profile?.office_id?.trim();
-    if (!oid) {
-      setOffice(null);
-      return () => {
-        cancelled = true;
-      };
-    }
-    getOfficeById(oid).then((row) => {
-      if (!cancelled) setOffice(row);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [profile?.office_id]);
+  const { office } = useOfficeForSettingsTabs(profile?.office_id);
 
   const loading = office === undefined;
 

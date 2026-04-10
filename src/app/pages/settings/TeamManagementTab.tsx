@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Plus, Trash2, Users } from "lucide-react";
 import { getUserProfileRoleKey } from "../../../services/auth";
 import { getCurrentOffice } from "../../../services/offices";
+import { ACTIVE_OFFICE_CHANGED_EVENT } from "../dashboardOfficeStorage";
 import {
   brokerAddOfficeMember,
   brokerDeactivateOfficeMember,
@@ -179,6 +180,14 @@ export function TeamManagementTab() {
     return () => {
       cancelled = true;
     };
+  }, [loadRoster]);
+
+  useEffect(() => {
+    const handler = () => {
+      void loadRoster();
+    };
+    window.addEventListener(ACTIVE_OFFICE_CHANGED_EVENT, handler);
+    return () => window.removeEventListener(ACTIVE_OFFICE_CHANGED_EVENT, handler);
   }, [loadRoster]);
 
   const canManageTeam = Boolean(viewerIsBroker && officeId);

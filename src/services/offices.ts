@@ -1,5 +1,5 @@
 import { supabase } from "../lib/supabaseClient";
-import { getCurrentUser } from "./auth";
+import { getBtqAdminActiveOfficeScopeId, getCurrentUser, getUserProfileRoleKey } from "./auth";
 
 /** Row from `public.offices`. Current office resolution prefers `office_memberships`, with legacy `user_profiles.office_id` fallback. */
 export type Office = {
@@ -58,6 +58,14 @@ function resolveCurrentOfficeIdFromMembershipsAndProfile(
 export async function getCurrentOffice(): Promise<Office | null> {
   const user = await getCurrentUser();
   if (!user?.id) return null;
+
+  const roleKey = await getUserProfileRoleKey();
+  if (roleKey === "btq_admin") {
+    const activeScopeId = await getBtqAdminActiveOfficeScopeId();
+    if (activeScopeId) {
+      return getOfficeById(activeScopeId);
+    }
+  }
 
   const [{ data: profile, error: profileError }, { data: membershipRows, error: membershipError }] =
     await Promise.all([
@@ -125,6 +133,21 @@ export async function getOfficeById(officeId: string): Promise<Office | null> {
   }
 
   return office;
+}
+
+/**
+ * Settings UI: office row for tabs that are office-scoped (My Office, subscriptions snapshot, etc.).
+ * Prefers {@link getCurrentOffice} (memberships + btq_admin active session), then
+ * `user_profiles.office_id` when the former is null.
+ */
+export async function getOfficeForSettingsTabs(
+  profileOfficeId: string | null | undefined
+): Promise<Office | null> {
+  const fromSession = await getCurrentOffice();
+  if (fromSession) return fromSession;
+  const oid = typeof profileOfficeId === "string" ? profileOfficeId.trim() : "";
+  if (!oid) return null;
+  return getOfficeById(oid);
 }
 
 /**

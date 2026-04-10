@@ -8,11 +8,12 @@ import { SettingsProfileProvider } from "./settings/SettingsProfileContext";
 
 function profileRoleKeyFromRow(
   p: UserProfileSnapshot | null
-): "admin" | "agent" | "broker" | null {
+): "admin" | "agent" | "broker" | "btq_admin" | null {
   const r = (p?.role ?? "").trim().toLowerCase();
   if (r === "admin") return "admin";
   if (r === "agent") return "agent";
   if (r === "broker") return "broker";
+  if (r === "btq_admin") return "btq_admin";
   return null;
 }
 
@@ -48,10 +49,10 @@ export function SettingsPage() {
 
   const roleKey = profileRoleKeyFromRow(profile);
 
-  if (roleKey === "broker") {
+  if (roleKey === "broker" || roleKey === "btq_admin") {
     return (
       <SettingsProfileProvider profile={profile}>
-        <BrokerSettingsPage />
+        <BrokerSettingsPage showReadOnlyTemplatesTab={roleKey === "btq_admin"} />
       </SettingsProfileProvider>
     );
   }

@@ -1,5 +1,7 @@
 /** Dashboard-only persistence for the office viewing context (localStorage). */
 
+export const ACTIVE_OFFICE_CHANGED_EVENT = "btq:active-office-changed";
+
 const PREFIX = "btq_dashboard_office_v1:";
 
 export function readDashboardOfficeSelection(userId: string): string | null {
@@ -25,5 +27,8 @@ export function writeDashboardOfficeSelection(userId: string, officeId: string |
     }
   } catch {
     /* ignore quota / private mode */
+  }
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(ACTIVE_OFFICE_CHANGED_EVENT, { detail: { userId } }));
   }
 }

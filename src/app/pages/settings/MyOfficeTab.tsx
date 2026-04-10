@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { Building2 } from "lucide-react";
-import { getOfficeById, type Office } from "../../../services/offices";
+import type { Office } from "../../../services/offices";
 import { useSettingsProfile } from "./SettingsProfileContext";
+import { useOfficeForSettingsTabs } from "./useOfficeForSettingsTabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 
 function formatOfficeAddress(o: Office): string | null {
@@ -22,28 +23,11 @@ function ReadonlyField({ label, value }: { label: string; value: string | null |
 }
 
 /**
- * Broker-facing office profile (read-only). Office row comes from `user_profiles.office_id` → `offices.id`.
+ * Office profile (read-only). Uses {@link getOfficeForSettingsTabs} so btq_admin active office session applies.
  */
 export function MyOfficeTab() {
   const { profile } = useSettingsProfile();
-  const [office, setOffice] = useState<Office | null | undefined>(undefined);
-
-  useEffect(() => {
-    let cancelled = false;
-    const oid = profile?.office_id?.trim();
-    if (!oid) {
-      setOffice(null);
-      return () => {
-        cancelled = true;
-      };
-    }
-    getOfficeById(oid).then((row) => {
-      if (!cancelled) setOffice(row);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [profile?.office_id]);
+  const { office } = useOfficeForSettingsTabs(profile?.office_id);
 
   const loading = office === undefined;
   const addressLine = office ? formatOfficeAddress(office) : null;

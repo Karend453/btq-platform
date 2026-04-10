@@ -16,8 +16,8 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
-import { getCurrentOffice, getOfficeById, type Office } from "../../../services/offices";
 import { useOptionalSettingsProfile } from "./SettingsProfileContext";
+import { useOfficeForSettingsTabs } from "./useOfficeForSettingsTabs";
 import {
   archiveOfficeChecklistTemplate,
   cloneBtqMasterTemplateToOffice,
@@ -101,12 +101,17 @@ function InertTransactionActionIcons() {
   );
 }
 
-export function OfficeChecklistTemplatesTab() {
-  const settingsProfile = useOptionalSettingsProfile();
-  const hasSettingsProfile = settingsProfile !== undefined;
-  const officeIdFromSettings = settingsProfile?.profile?.office_id?.trim() ?? "";
+export type OfficeChecklistTemplatesTabProps = {
+  /**
+   * When true (btq_admin Settings tab), templates are view-only. Brokers use full edit on
+   * `/office/checklist-templates`.
+   */
+  readOnly?: boolean;
+};
 
-  const [office, setOffice] = useState<Office | null | undefined>(undefined);
+export function OfficeChecklistTemplatesTab({ readOnly = false }: OfficeChecklistTemplatesTabProps) {
+  const settingsProfile = useOptionalSettingsProfile();
+  const { office } = useOfficeForSettingsTabs(settingsProfile?.profile?.office_id);
   const [templates, setTemplates] = useState<OfficeChecklistTemplateRow[]>([]);
   const [btqMasters, setBtqMasters] = useState<BtqMasterChecklistTemplateRow[]>([]);
   const [listLoading, setListLoading] = useState(true);
@@ -125,22 +130,6 @@ export function OfficeChecklistTemplatesTab() {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      let o: Office | null = null;
-      if (hasSettingsProfile) {
-        o = officeIdFromSettings ? await getOfficeById(officeIdFromSettings) : null;
-      } else {
-        o = await getCurrentOffice();
-      }
-      if (!cancelled) setOffice(o);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [hasSettingsProfile, officeIdFromSettings]);
-
-  useEffect(() => {
     if (!office?.id) {
       if (office === null) setListLoading(false);
       return;
@@ -148,23 +137,26 @@ export function OfficeChecklistTemplatesTab() {
     let cancelled = false;
     void (async () => {
       setListLoading(true);
-      const [rows, btq] = await Promise.all([
-        listOfficeChecklistTemplates(office.id),
-        listBtqMasterChecklistTemplates(),
-      ]);
+      const rows = await listOfficeChecklistTemplates(office.id);
       if (cancelled) return;
-      setBtqMasters(btq);
+      if (!readOnly) {
+        const btq = await listBtqMasterChecklistTemplates();
+        if (cancelled) return;
+        setBtqMasters(btq);
+      } else {
+        setBtqMasters([]);
+      }
       setTemplates(rows.filter((t) => !t.archived_at && isOfficeOwnedTemplate(t)));
       setListLoading(false);
     })();
     return () => {
       cancelled = true;
     };
-  }, [office?.id]);
+  }, [office?.id, readOnly]);
 
   // Add from BTQ → clone_btq_starter_to_office (not ensure_office_checklist_template_from_btq). Office comes from getCurrentOffice() on this route (no Settings profile provider).
   const handleBtqMasterSelect = async (btqTemplateId: string) => {
-    if (!office?.id) return;
+    if (readOnly || !office?.id) return;
     if (import.meta.env.DEV) {
       console.log("[OfficeChecklistTemplatesTab] Add from BTQ — office.id passed to clone RPC", {
         officeIdFromGetCurrentOfficeOrSettings: office.id,
@@ -203,7 +195,7 @@ export function OfficeChecklistTemplatesTab() {
   };
 
   const handleSaveRenameItem = async () => {
-    if (!renameItem) return;
+    if (readOnly || !renameItem) return;
     const trimmed = renameDraft.trim();
     if (!trimmed) {
       toast.error("Name cannot be empty");
@@ -250,36 +242,46 @@ export function OfficeChecklistTemplatesTab() {
           </CardTitle>
           <CardDescription>
             One checklist per transaction type (Purchase, Listing, Lease, Other). Defaults to the template marked
-            default for that type when duplicates exist. Add from BTQ only for a type you do not yet have. Templates
-            belong to <span className="font-medium text-slate-800">{office.name}</span> only (global BTQ masters are
-            not listed here).
+            default for that type when duplicates exist.
+            {readOnly ? (
+              <> View only — brokers manage templates.</>
+            ) : (
+              <>
+                {" "}
+                Add from BTQ only for a type you do not yet have.
+              </>
+            )}{" "}
+            Templates belong to <span className="font-medium text-slate-800">{office.name}</span> only (global BTQ
+            masters are not listed here).
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex flex-wrap gap-4 items-end border-b border-slate-100 pb-4">
-            <div className="grid gap-1.5 min-w-[16rem]">
-              <Label htmlFor="btq-master-select">Add from BTQ</Label>
-              {btqMasters.length > 0 ? (
-                <Select key={btqMasterSelectKey} onValueChange={(v) => void handleBtqMasterSelect(v)}>
-                  <SelectTrigger id="btq-master-select" className="w-[min(100%,22rem)]">
-                    <SelectValue placeholder="Choose a BTQ template to add…" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {btqMasters.map((s) => (
-                      <SelectItem key={s.id} value={s.id}>
-                        {s.name}
-                        <span className="text-slate-500"> — {s.checklist_type}</span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <p className="text-sm text-slate-600">
-                  No BTQ templates are available in the database. Contact support if this persists.
-                </p>
-              )}
+          {!readOnly ? (
+            <div className="flex flex-wrap gap-4 items-end border-b border-slate-100 pb-4">
+              <div className="grid gap-1.5 min-w-[16rem]">
+                <Label htmlFor="btq-master-select">Add from BTQ</Label>
+                {btqMasters.length > 0 ? (
+                  <Select key={btqMasterSelectKey} onValueChange={(v) => void handleBtqMasterSelect(v)}>
+                    <SelectTrigger id="btq-master-select" className="w-[min(100%,22rem)]">
+                      <SelectValue placeholder="Choose a BTQ template to add…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {btqMasters.map((s) => (
+                        <SelectItem key={s.id} value={s.id}>
+                          {s.name}
+                          <span className="text-slate-500"> — {s.checklist_type}</span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <p className="text-sm text-slate-600">
+                    No BTQ templates are available in the database. Contact support if this persists.
+                  </p>
+                )}
+              </div>
             </div>
-          </div>
+          ) : null}
 
           {listLoading ? (
             <div className="flex items-center gap-2 text-slate-600 text-sm py-8 justify-center">
@@ -288,13 +290,16 @@ export function OfficeChecklistTemplatesTab() {
             </div>
           ) : templates.length === 0 ? (
             <p className="text-sm text-slate-600 py-4">
-              No office checklist templates yet. Use “Add from BTQ” above to create your first one.
+              {readOnly
+                ? "No office checklist templates for this office yet."
+                : "No office checklist templates yet. Use “Add from BTQ” above to create your first one."}
             </p>
           ) : (
             <ul className="space-y-3">
               {templates.map((t) => (
                 <OfficeTemplateCard
                   key={t.id}
+                  readOnly={readOnly}
                   template={t}
                   expanded={expandedIds.has(t.id)}
                   sections={sectionsByTemplateId[t.id]}
@@ -341,37 +346,40 @@ export function OfficeChecklistTemplatesTab() {
         </CardContent>
       </Card>
 
-      <Dialog open={!!renameItem} onOpenChange={(open) => !open && setRenameItem(null)}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Rename checklist item</DialogTitle>
-          </DialogHeader>
-          <div className="grid gap-2 py-2">
-            <Label htmlFor="rename-item-name">Name</Label>
-            <Input
-              id="rename-item-name"
-              value={renameDraft}
-              onChange={(e) => setRenameDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void handleSaveRenameItem();
-              }}
-            />
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setRenameItem(null)}>
-              Cancel
-            </Button>
-            <Button type="button" onClick={() => void handleSaveRenameItem()} disabled={renameSaving}>
-              {renameSaving ? "Saving…" : "Save"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {!readOnly ? (
+        <Dialog open={!!renameItem} onOpenChange={(open) => !open && setRenameItem(null)}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Rename checklist item</DialogTitle>
+            </DialogHeader>
+            <div className="grid gap-2 py-2">
+              <Label htmlFor="rename-item-name">Name</Label>
+              <Input
+                id="rename-item-name"
+                value={renameDraft}
+                onChange={(e) => setRenameDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void handleSaveRenameItem();
+                }}
+              />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setRenameItem(null)}>
+                Cancel
+              </Button>
+              <Button type="button" onClick={() => void handleSaveRenameItem()} disabled={renameSaving}>
+                {renameSaving ? "Saving…" : "Save"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      ) : null}
     </div>
   );
 }
 
 function OfficeTemplateCard({
+  readOnly,
   template,
   expanded,
   sections,
@@ -382,6 +390,7 @@ function OfficeTemplateCard({
   onDuplicate,
   onArchive,
 }: {
+  readOnly: boolean;
   template: OfficeChecklistTemplateRow;
   expanded: boolean;
   sections: Awaited<ReturnType<typeof fetchChecklistTemplateSectionsAndItems>> | undefined;
@@ -421,59 +430,61 @@ function OfficeTemplateCard({
 
       {expanded ? (
         <div className="border-t border-slate-100 px-3 py-3 space-y-3 bg-slate-50/50">
-          <div className="flex flex-wrap gap-2 items-end justify-between gap-y-3">
-            <div className="flex flex-wrap gap-2 items-end flex-1 min-w-[12rem]">
-              <div className="grid gap-1.5 flex-1 min-w-[12rem] max-w-md">
-                <Label className="text-xs">Template name</Label>
-                <Input value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} />
+          {!readOnly ? (
+            <div className="flex flex-wrap gap-2 items-end justify-between gap-y-3">
+              <div className="flex flex-wrap gap-2 items-end flex-1 min-w-[12rem]">
+                <div className="grid gap-1.5 flex-1 min-w-[12rem] max-w-md">
+                  <Label className="text-xs">Template name</Label>
+                  <Input value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} />
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={async () => {
+                    const { error } = await renameOfficeChecklistTemplate(template.id, nameDraft);
+                    if (error) toast.error(error.message);
+                    else {
+                      toast.success("Saved");
+                      await onRefreshList();
+                    }
+                  }}
+                >
+                  Save name
+                </Button>
               </div>
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                onClick={async () => {
-                  const { error } = await renameOfficeChecklistTemplate(template.id, nameDraft);
-                  if (error) toast.error(error.message);
-                  else {
-                    toast.success("Saved");
-                    await onRefreshList();
-                  }
-                }}
-              >
-                Save name
-              </Button>
+              <div className="flex flex-wrap gap-1.5">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={async () => {
+                    const { error } = await setDefaultOfficeChecklistTemplate(template.id);
+                    if (error) toast.error(error.message);
+                    else {
+                      toast.success("Default updated");
+                      await onRefreshList();
+                    }
+                  }}
+                >
+                  Set default
+                </Button>
+                <Button type="button" variant="outline" size="sm" onClick={() => void onDuplicate()}>
+                  <Copy className="h-3.5 w-3.5 mr-1" />
+                  Duplicate
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="text-red-700 border-red-200"
+                  onClick={() => void onArchive()}
+                >
+                  Archive
+                </Button>
+              </div>
             </div>
-            <div className="flex flex-wrap gap-1.5">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={async () => {
-                  const { error } = await setDefaultOfficeChecklistTemplate(template.id);
-                  if (error) toast.error(error.message);
-                  else {
-                    toast.success("Default updated");
-                    await onRefreshList();
-                  }
-                }}
-              >
-                Set default
-              </Button>
-              <Button type="button" variant="outline" size="sm" onClick={() => void onDuplicate()}>
-                <Copy className="h-3.5 w-3.5 mr-1" />
-                Duplicate
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="text-red-700 border-red-200"
-                onClick={() => void onArchive()}
-              >
-                Archive
-              </Button>
-            </div>
-          </div>
+          ) : null}
 
           {sections === undefined ? (
             <div className="flex items-center gap-2 text-slate-600 text-sm py-6">
@@ -482,8 +493,9 @@ function OfficeTemplateCard({
             </div>
           ) : sections === null ? (
             <p className="text-sm text-slate-600">Could not load checklist structure.</p>
-          ) : (
+            ) : (
             <OfficeTemplateEditor
+              readOnly={readOnly}
               templateId={template.id}
               sections={sections}
               onRefreshStructure={onRefreshStructure}
@@ -497,11 +509,13 @@ function OfficeTemplateCard({
 }
 
 function OfficeTemplateEditor({
+  readOnly,
   templateId,
   sections,
   onRefreshStructure,
   onRenameItemClick,
 }: {
+  readOnly: boolean;
   templateId: string;
   sections: NonNullable<Awaited<ReturnType<typeof fetchChecklistTemplateSectionsAndItems>>>;
   onRefreshStructure: () => Promise<void>;
@@ -530,33 +544,41 @@ function OfficeTemplateEditor({
                 }`}
               >
                 <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 flex-1 min-w-0 flex items-center gap-2">
-                  <Input
-                    defaultValue={sec.name ?? ""}
-                    className="max-w-xl h-8 text-xs font-semibold uppercase tracking-wider border-slate-200"
-                    onBlur={async (e) => {
-                      const v = e.target.value.trim();
-                      if (!v || v === sec.name) return;
-                      const { error } = await renameChecklistTemplateSection(sec.id, v);
+                  {readOnly ? (
+                    <span className="max-w-xl text-xs font-semibold uppercase tracking-wider text-slate-700">
+                      {sec.name ?? "—"}
+                    </span>
+                  ) : (
+                    <Input
+                      defaultValue={sec.name ?? ""}
+                      className="max-w-xl h-8 text-xs font-semibold uppercase tracking-wider border-slate-200"
+                      onBlur={async (e) => {
+                        const v = e.target.value.trim();
+                        if (!v || v === sec.name) return;
+                        const { error } = await renameChecklistTemplateSection(sec.id, v);
+                        if (error) toast.error(error.message);
+                        else await onRefreshStructure();
+                      }}
+                    />
+                  )}
+                </div>
+                {!readOnly ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 shrink-0 text-xs text-red-600 hover:text-red-700"
+                    onClick={async () => {
+                      if (!confirm("Delete this section and its items?")) return;
+                      const { error } = await deleteChecklistTemplateSectionCascade(sec.id, templateId);
                       if (error) toast.error(error.message);
                       else await onRefreshStructure();
                     }}
-                  />
-                </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 shrink-0 text-xs text-red-600 hover:text-red-700"
-                  onClick={async () => {
-                    if (!confirm("Delete this section and its items?")) return;
-                    const { error } = await deleteChecklistTemplateSectionCascade(sec.id, templateId);
-                    if (error) toast.error(error.message);
-                    else await onRefreshStructure();
-                  }}
-                >
-                  <Trash2 className="h-3.5 w-3.5 mr-1" />
-                  Delete section
-                </Button>
+                  >
+                    <Trash2 className="h-3.5 w-3.5 mr-1" />
+                    Delete section
+                  </Button>
+                ) : null}
               </div>
 
               <div className="space-y-2">
@@ -573,107 +595,119 @@ function OfficeTemplateEditor({
                         <span className="min-w-0 truncate font-medium text-slate-900" title={it.name}>
                           {it.name}
                         </span>
+                        {!readOnly ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 shrink-0 text-slate-500 hover:text-slate-800"
+                            title="Rename item"
+                            onClick={() => onRenameItemClick(it)}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                            <span className="sr-only">Rename item</span>
+                          </Button>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 flex-nowrap items-center gap-1.5 flex-wrap justify-end">
+                      {readOnly ? (
+                        getRequirementBadge(it.requirement)
+                      ) : (
+                        <button
+                          type="button"
+                          className="rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+                          title="Click to toggle required / optional"
+                          onClick={async () => {
+                            const next = it.requirement === "optional" ? "required" : "optional";
+                            const { error } = await updateChecklistTemplateItem({
+                              itemId: it.id,
+                              requirement: next,
+                            });
+                            if (error) toast.error(error.message);
+                            else await onRefreshStructure();
+                          }}
+                        >
+                          {getRequirementBadge(it.requirement)}
+                        </button>
+                      )}
+                      {inertReviewBadge()}
+                      <InertTransactionActionIcons />
+                      {!readOnly ? (
                         <Button
                           type="button"
                           variant="ghost"
                           size="icon"
-                          className="h-7 w-7 shrink-0 text-slate-500 hover:text-slate-800"
-                          title="Rename item"
-                          onClick={() => onRenameItemClick(it)}
+                          className="h-8 w-8 shrink-0 text-red-600 hover:text-red-700 pointer-events-auto"
+                          title="Delete item"
+                          onClick={async () => {
+                            if (!confirm("Delete this item?")) return;
+                            const { error } = await deleteChecklistTemplateItem(it.id);
+                            if (error) toast.error(error.message);
+                            else await onRefreshStructure();
+                          }}
                         >
-                          <Pencil className="h-3.5 w-3.5" />
-                          <span className="sr-only">Rename item</span>
+                          <Trash2 className="h-4 w-4" />
+                          <span className="sr-only">Delete item</span>
                         </Button>
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 flex-nowrap items-center gap-1.5 flex-wrap justify-end">
-                      <button
-                        type="button"
-                        className="rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
-                        title="Click to toggle required / optional"
-                        onClick={async () => {
-                          const next = it.requirement === "optional" ? "required" : "optional";
-                          const { error } = await updateChecklistTemplateItem({
-                            itemId: it.id,
-                            requirement: next,
-                          });
-                          if (error) toast.error(error.message);
-                          else await onRefreshStructure();
-                        }}
-                      >
-                        {getRequirementBadge(it.requirement)}
-                      </button>
-                      {inertReviewBadge()}
-                      <InertTransactionActionIcons />
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 shrink-0 text-red-600 hover:text-red-700 pointer-events-auto"
-                        title="Delete item"
-                        onClick={async () => {
-                          if (!confirm("Delete this item?")) return;
-                          const { error } = await deleteChecklistTemplateItem(it.id);
-                          if (error) toast.error(error.message);
-                          else await onRefreshStructure();
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                        <span className="sr-only">Delete item</span>
-                      </Button>
+                      ) : null}
                     </div>
                   </div>
                 ))}
               </div>
 
-              <div className="pt-2">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 text-slate-600"
-                  onClick={async () => {
-                    const nextSort =
-                      items.length > 0 ? Math.max(...items.map((i) => i.sort_order ?? 0)) + 1 : 0;
-                    const { id: newId, error } = await insertChecklistTemplateItem({
-                      templateId,
-                      sectionId: sec.id,
-                      name: "New item",
-                      requirement: "required",
-                      sortOrder: nextSort,
-                    });
-                    if (error || !newId) toast.error(error?.message ?? "Could not add item");
-                    else await onRefreshStructure();
-                  }}
-                >
-                  <Plus className="h-3.5 w-3.5 mr-1" />
-                  Add item
-                </Button>
-              </div>
+              {!readOnly ? (
+                <div className="pt-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 text-slate-600"
+                    onClick={async () => {
+                      const nextSort =
+                        items.length > 0 ? Math.max(...items.map((i) => i.sort_order ?? 0)) + 1 : 0;
+                      const { id: newId, error } = await insertChecklistTemplateItem({
+                        templateId,
+                        sectionId: sec.id,
+                        name: "New item",
+                        requirement: "required",
+                        sortOrder: nextSort,
+                      });
+                      if (error || !newId) toast.error(error?.message ?? "Could not add item");
+                      else await onRefreshStructure();
+                    }}
+                  >
+                    <Plus className="h-3.5 w-3.5 mr-1" />
+                    Add item
+                  </Button>
+                </div>
+              ) : null}
             </div>
           );
         })}
 
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          className="mt-2"
-          onClick={async () => {
-            const nextSort =
-              secs.length > 0 ? Math.max(...secs.map((s) => s.sort_order ?? 0)) + 1 : 0;
-            const { id, error } = await insertChecklistTemplateSection({
-              templateId,
-              name: "New section",
-              sortOrder: nextSort,
-            });
-            if (error || !id) toast.error(error?.message ?? "Could not add section");
-            else await onRefreshStructure();
-          }}
-        >
-          <Plus className="h-4 w-4 mr-1" />
-          Add section
-        </Button>
+        {!readOnly ? (
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            className="mt-2"
+            onClick={async () => {
+              const nextSort =
+                secs.length > 0 ? Math.max(...secs.map((s) => s.sort_order ?? 0)) + 1 : 0;
+              const { id, error } = await insertChecklistTemplateSection({
+                templateId,
+                name: "New section",
+                sortOrder: nextSort,
+              });
+              if (error || !id) toast.error(error?.message ?? "Could not add section");
+              else await onRefreshStructure();
+            }}
+          >
+            <Plus className="h-4 w-4 mr-1" />
+            Add section
+          </Button>
+        ) : null}
       </CardContent>
     </Card>
   );

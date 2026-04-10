@@ -5,9 +5,10 @@ import {
   getWalletBillingSummary,
 } from "../../../services/officeAgentsBilling";
 import type { WalletBillingSummary } from "../../../types/billing";
-import { getOfficeById, type Office } from "../../../services/offices";
+import type { Office } from "../../../services/offices";
 import { getUserDisplayName, useAuth } from "../../contexts/AuthContext";
 import { useSettingsProfile } from "./SettingsProfileContext";
+import { useOfficeForSettingsTabs } from "./useOfficeForSettingsTabs";
 import { Alert, AlertDescription, AlertTitle } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
@@ -92,30 +93,12 @@ function formatSubscriptionStatus(raw: string): string {
 export function MyWalletTab() {
   const { user, loading: authLoading } = useAuth();
   const { profile } = useSettingsProfile();
-  const [office, setOffice] = useState<Office | null | undefined>(undefined);
+  const { office } = useOfficeForSettingsTabs(profile?.office_id);
   const [wallet, setWallet] = useState<WalletBillingSummary | null>(null);
   const [walletLoading, setWalletLoading] = useState(true);
   const [walletError, setWalletError] = useState<string | null>(null);
   const [portalBusy, setPortalBusy] = useState(false);
   const [portalNotice, setPortalNotice] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (authLoading) return;
-    let cancelled = false;
-    const oid = profile?.office_id?.trim();
-    if (!oid) {
-      setOffice(null);
-      return () => {
-        cancelled = true;
-      };
-    }
-    getOfficeById(oid).then((o) => {
-      if (!cancelled) setOffice(o);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [authLoading, profile?.office_id]);
 
   useEffect(() => {
     if (authLoading) return;
@@ -136,7 +119,7 @@ export function MyWalletTab() {
     return () => {
       cancelled = true;
     };
-  }, [authLoading]);
+  }, [authLoading, office?.id]);
 
   const loading = authLoading || office === undefined;
   const profileDisplayName = profile?.display_name?.trim();

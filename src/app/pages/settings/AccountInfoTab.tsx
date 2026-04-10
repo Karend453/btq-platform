@@ -25,6 +25,7 @@ function roleLabelForDisplay(raw: string | null | undefined): string {
   if (r === "admin") return "Admin";
   if (r === "agent") return "Agent";
   if (r === "broker") return "Broker";
+  if (r === "btq_admin") return "BTQ Admin";
   return "—";
 }
 

@@ -1,13 +1,18 @@
 import React, { useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Building2, Layers, Settings, User, Users, Wallet } from "lucide-react";
+import { Building2, ClipboardList, Layers, Settings, User, Users, Wallet } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { AccountInfoTab } from "./AccountInfoTab";
+import {
+  OfficeChecklistTemplatesTab,
+  type OfficeChecklistTemplatesTabProps,
+} from "./OfficeChecklistTemplatesTab";
 import { TeamManagementTab } from "./TeamManagementTab";
 import { MyOfficeTab } from "./MyOfficeTab";
 import { MySubscriptionsTab } from "./MySubscriptionsTab";
 import { MyWalletTab } from "./MyWalletTab";
-const TAB_CONFIG = [
+
+const BASE_TAB_CONFIG = [
   { value: "office", label: "My Office", icon: Building2 },
   { value: "subscriptions", label: "My Subscriptions", icon: Layers },
   { value: "wallet", label: "My Wallet", icon: Wallet },
@@ -15,17 +20,37 @@ const TAB_CONFIG = [
   { value: "subagents", label: "Team Management", icon: Users },
 ] as const;
 
-const DEFAULT_TAB = "office";
-const TAB_VALUE_SET = new Set<string>(TAB_CONFIG.map((t) => t.value));
+const TEMPLATES_TAB = {
+  value: "templates",
+  label: "Office Templates",
+  icon: ClipboardList,
+} as const;
 
-/** Broker-only settings shell (v1). Route layout may evolve; tabs are the product contract. */
-export function BrokerSettingsPage() {
+const DEFAULT_TAB = "office";
+
+const BTQ_ADMIN_TEMPLATES_TAB_PROPS = { readOnly: true } satisfies OfficeChecklistTemplatesTabProps;
+
+export type BrokerSettingsPageProps = {
+  /** btq_admin: show Office Templates (read-only); brokers use `/office/checklist-templates` for full edit. */
+  showReadOnlyTemplatesTab?: boolean;
+};
+
+/** Broker settings shell; optional read-only Templates tab for btq_admin. */
+export function BrokerSettingsPage({ showReadOnlyTemplatesTab = false }: BrokerSettingsPageProps) {
   const [searchParams, setSearchParams] = useSearchParams();
+
+  const tabConfig = useMemo(
+    () =>
+      showReadOnlyTemplatesTab ? ([...BASE_TAB_CONFIG, TEMPLATES_TAB] as const) : BASE_TAB_CONFIG,
+    [showReadOnlyTemplatesTab]
+  );
+
+  const tabValueSet = useMemo(() => new Set(tabConfig.map((t) => t.value)), [tabConfig]);
 
   const activeTab = useMemo(() => {
     const raw = searchParams.get("tab")?.trim() ?? "";
-    return TAB_VALUE_SET.has(raw) ? raw : DEFAULT_TAB;
-  }, [searchParams]);
+    return tabValueSet.has(raw) ? raw : DEFAULT_TAB;
+  }, [searchParams, tabValueSet]);
 
   const setTab = (value: string) => {
     setSearchParams(
@@ -60,7 +85,7 @@ export function BrokerSettingsPage() {
         <Tabs value={activeTab} onValueChange={setTab} className="w-full gap-4">
           <div className="overflow-x-auto pb-1 -mx-1 px-1">
             <TabsList className="inline-flex h-auto min-h-9 w-max max-w-full flex-wrap justify-start gap-1 p-1">
-              {TAB_CONFIG.map(({ value, label, icon: Icon }) => (
+              {tabConfig.map(({ value, label, icon: Icon }) => (
                 <TabsTrigger key={value} value={value} className="gap-1.5 px-3 py-2">
                   <Icon className="h-4 w-4 shrink-0 opacity-70" />
                   {label}
@@ -84,6 +109,11 @@ export function BrokerSettingsPage() {
           <TabsContent value="subagents" className="mt-4">
             <TeamManagementTab />
           </TabsContent>
+          {showReadOnlyTemplatesTab ? (
+            <TabsContent value="templates" className="mt-4">
+              <OfficeChecklistTemplatesTab {...BTQ_ADMIN_TEMPLATES_TAB_PROPS} />
+            </TabsContent>
+          ) : null}
         </Tabs>
       </div>
     </div>
