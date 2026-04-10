@@ -32,7 +32,7 @@ export const PLAN_DETAILS: Record<
   },
   growth: {
     label: "Growth",
-    pricePerMonth: 399,
+    pricePerMonth: 350,
     tagline: "For brokerages ready to scale lead generation and support.",
   },
   pro: {

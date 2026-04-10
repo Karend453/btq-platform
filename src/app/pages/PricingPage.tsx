@@ -40,7 +40,7 @@ const PLANS: Plan[] = [
   {
     id: "growth",
     name: "Growth",
-    price: 399,
+    price: 350,
     positioning: "For brokerages ready to scale lead generation and support.",
     bullets: [
       "Everything in Core",
