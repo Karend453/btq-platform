@@ -146,10 +146,21 @@ export function RootLayout() {
 
     if (!canAccessBtqBackOffice(profileRoleKey ?? null)) return navSectionsDefault;
 
+    const management = navSectionsDefault[1];
     const system = navSectionsDefault[3];
     return [
       navSectionsDefault[0],
-      navSectionsDefault[1],
+      {
+        ...management,
+        items: [
+          ...management.items,
+          {
+            label: "Office Templates",
+            href: "/office/checklist-templates",
+            icon: ClipboardList,
+          },
+        ],
+      },
       navSectionsDefault[2],
       {
         ...system,
