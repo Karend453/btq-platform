@@ -1,5 +1,10 @@
 import { supabase } from "../lib/supabaseClient";
 import { getCurrentUser } from "./auth";
+import {
+  normalizeOfficeIdKey,
+  pickActiveOfficeFromMembershipRows,
+  type MembershipPickRow,
+} from "./officeMembershipOfficePick";
 
 /** Canonical keys for office membership role (lowercase); stored on `office_memberships.role`. */
 export type OfficeRole = "agent" | "admin" | "broker" | "btq_admin";
@@ -218,20 +223,21 @@ export async function getOfficeRosterForOfficeId(officeId: string): Promise<{
 
 /**
  * Profiles in the same office as the signed-in user when their profile role is `broker`.
- * Requires RLS allowing brokers to read same-office `user_profiles`.
- *
- * TODO: Resolve office from `office_memberships` (same rules as `getCurrentOffice`); do not rely on
- * `user_profiles.office_id` alone.
+ * Office scope: active `office_memberships` first (same pick as billing/offices), then legacy
+ * `user_profiles.office_id` with a warning. Requires RLS allowing brokers to read same-office data.
  */
 export async function getOfficeRosterForCurrentBroker(): Promise<OfficeRosterMember[]> {
   const user = await getCurrentUser();
   if (!user?.id) return [];
 
-  const { data: viewer, error: viewerError } = await supabase
-    .from("user_profiles")
-    .select("office_id, role")
-    .eq("id", user.id)
-    .maybeSingle();
+  const [{ data: viewer, error: viewerError }, { data: memRows, error: memError }] = await Promise.all([
+    supabase.from("user_profiles").select("office_id, role").eq("id", user.id).maybeSingle(),
+    supabase
+      .from("office_memberships")
+      .select("office_id, role, created_at")
+      .eq("user_id", user.id)
+      .eq("status", "active"),
+  ]);
 
   if (viewerError) {
     console.warn("[getOfficeRosterForCurrentBroker] user_profiles:", viewerError.message);
@@ -241,7 +247,33 @@ export async function getOfficeRosterForCurrentBroker(): Promise<OfficeRosterMem
   const role = normalizeRole(viewer?.role as string | undefined);
   if (role !== "broker") return [];
 
-  const officeId = viewer?.office_id as string | null | undefined;
+  if (memError) {
+    console.warn("[getOfficeRosterForCurrentBroker] office_memberships:", memError.message);
+  }
+
+  let officeId: string | null = null;
+  if (!memError && memRows) {
+    officeId = pickActiveOfficeFromMembershipRows((memRows ?? []) as MembershipPickRow[]);
+  }
+
+  const profileOidRaw = viewer?.office_id;
+  const profileOfficeId =
+    profileOidRaw == null || profileOidRaw === "" ? null : String(profileOidRaw).trim();
+
+  if (officeId) {
+    if (
+      profileOfficeId &&
+      normalizeOfficeIdKey(profileOfficeId) !== normalizeOfficeIdKey(officeId)
+    ) {
+      console.warn("⚠️ profile.office_id mismatch with membership — ignoring profile fallback");
+    }
+  } else if (profileOfficeId) {
+    console.warn(
+      "[getOfficeRosterForCurrentBroker] Legacy fallback: user_profiles.office_id (no active office_memberships)"
+    );
+    officeId = profileOfficeId;
+  }
+
   if (officeId == null || officeId === "") return [];
 
   const { members, error } = await listOfficeRoster(officeId);

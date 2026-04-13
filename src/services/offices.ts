@@ -1,5 +1,10 @@
 import { supabase } from "../lib/supabaseClient";
-import { getBtqAdminActiveOfficeScopeId, getCurrentUser, getUserProfileRoleKey } from "./auth";
+import {
+  getBtqAdminActiveOfficeScopeId,
+  getCurrentUser,
+  getCurrentUserProfileOfficeId,
+  getUserProfileRoleKey,
+} from "./auth";
 import {
   normalizeOfficeIdKey,
   pickActiveOfficeFromMembershipRows,
@@ -150,18 +155,28 @@ export async function getOfficeById(officeId: string): Promise<Office | null> {
 
 /**
  * Settings UI: office row for tabs that are office-scoped (My Office, subscriptions snapshot, etc.).
- * Prefers {@link getCurrentOffice} (membership-primary + btq_admin active session), then legacy
- * `profileOfficeId` from context only when that resolution yields no office.
+ * Order: {@link getCurrentOffice} (membership-primary + btq_admin session) → legacy profile column
+ * via {@link getCurrentUserProfileOfficeId} (logged) → optional `profileOfficeId` from settings context (logged).
  */
 export async function getOfficeForSettingsTabs(
   profileOfficeId: string | null | undefined
 ): Promise<Office | null> {
   const fromSession = await getCurrentOffice();
   if (fromSession) return fromSession;
+
+  const fromProfileColumn = await getCurrentUserProfileOfficeId();
+  if (fromProfileColumn) {
+    console.warn(
+      "[getOfficeForSettingsTabs] Legacy fallback: user_profiles.office_id (after getCurrentOffice returned null)"
+    );
+    const fromProfile = await getOfficeById(fromProfileColumn);
+    if (fromProfile) return fromProfile;
+  }
+
   const oid = typeof profileOfficeId === "string" ? profileOfficeId.trim() : "";
   if (!oid) return null;
   console.warn(
-    "[getOfficeForSettingsTabs] Legacy fallback: user_profiles.office_id (no office from membership/session)"
+    "[getOfficeForSettingsTabs] Last-resort fallback: settings context office id (membership/session/profile resolution unavailable or offices row missing)"
   );
   return getOfficeById(oid);
 }

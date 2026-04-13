@@ -1,10 +1,84 @@
 // src/services/checklistTemplates.ts
 
-// TODO: Migrate checklist RPC office resolution off `getCurrentUserProfileOfficeId` / `user_profiles.office_id`
-// to membership-primary helpers (aligned with `resolveOfficeScopedDataAccess`).
-
 import { getCurrentUser, getCurrentUserProfileOfficeId } from "./auth";
+import {
+  normalizeOfficeIdKey,
+  pickActiveOfficeFromMembershipRows,
+  type MembershipPickRow,
+} from "./officeMembershipOfficePick";
 import { supabase } from "../lib/supabaseClient";
+
+/**
+ * `office_memberships` first (same pick rule as billing/offices); then `user_profiles.office_id`;
+ * then the UI-provided office id — each downgrade is logged.
+ */
+async function resolveOfficeIdForChecklistRpc(uiOfficeIdArg: string): Promise<{
+  resolvedOfficeId: string;
+  authUserId: string | null;
+}> {
+  const oid = uiOfficeIdArg.trim();
+  const user = await getCurrentUser();
+  const authUserId = user?.id ?? null;
+  if (!authUserId) {
+    console.warn(
+      "[checklistTemplates] resolveOfficeIdForChecklistRpc: no auth user; using UI office id only"
+    );
+    return { resolvedOfficeId: oid, authUserId: null };
+  }
+
+  const [{ data: rows, error: mErr }, profileOfficeId] = await Promise.all([
+    supabase
+      .from("office_memberships")
+      .select("office_id, role, created_at")
+      .eq("user_id", authUserId)
+      .eq("status", "active"),
+    getCurrentUserProfileOfficeId(),
+  ]);
+
+  if (mErr) {
+    console.warn("[checklistTemplates] office_memberships:", mErr.message);
+  }
+
+  const membershipOfficeId =
+    !mErr && rows
+      ? pickActiveOfficeFromMembershipRows((rows ?? []) as MembershipPickRow[])
+      : null;
+
+  if (membershipOfficeId) {
+    if (
+      profileOfficeId &&
+      normalizeOfficeIdKey(profileOfficeId) !== normalizeOfficeIdKey(membershipOfficeId)
+    ) {
+      console.warn("⚠️ profile.office_id mismatch with membership — ignoring profile fallback");
+    }
+    if (normalizeOfficeIdKey(oid) !== normalizeOfficeIdKey(membershipOfficeId)) {
+      console.warn(
+        "[checklistTemplates] UI office id differs from membership-resolved office; using membership for RPC",
+        { uiOfficeId: oid, membershipOfficeId }
+      );
+    }
+    return { resolvedOfficeId: membershipOfficeId, authUserId };
+  }
+
+  const fromProfile = profileOfficeId?.trim() ?? "";
+  if (fromProfile) {
+    console.warn(
+      "[checklistTemplates] Legacy fallback: user_profiles.office_id (no active office_memberships) for checklist RPC"
+    );
+    if (normalizeOfficeIdKey(fromProfile) !== normalizeOfficeIdKey(oid)) {
+      console.warn("[checklistTemplates] UI office id differs from profile office_id; using profile for RPC", {
+        uiOfficeId: oid,
+        profileOfficeId: fromProfile,
+      });
+    }
+    return { resolvedOfficeId: fromProfile, authUserId };
+  }
+
+  console.warn(
+    "[checklistTemplates] Last-resort fallback: UI-provided office id (no membership or profile office)"
+  );
+  return { resolvedOfficeId: oid, authUserId };
+}
 
 /** ChecklistItem shape used by the Checklist UI. */
 export interface ChecklistItemFromTemplate {
@@ -291,24 +365,14 @@ export async function ensureOfficeChecklistTemplateForType(
     return { templateId: null, error: new Error("Office and checklist type are required") };
   }
 
-  const [user, profileOfficeId] = await Promise.all([getCurrentUser(), getCurrentUserProfileOfficeId()]);
-  const resolvedOfficeId = (profileOfficeId?.trim() || oid).trim();
+  const { resolvedOfficeId, authUserId } = await resolveOfficeIdForChecklistRpc(oid);
 
   if (import.meta.env.DEV) {
     console.log("[checklist RPC] ensure_office_checklist_template_from_btq (client)", {
-      authUserId: user?.id ?? null,
+      authUserId,
       p_office_id_arg: oid,
-      p_office_id_profile: profileOfficeId,
       p_office_id_resolved: resolvedOfficeId,
-      mismatch: Boolean(profileOfficeId?.trim() && profileOfficeId.trim() !== oid),
     });
-  }
-
-  if (profileOfficeId?.trim() && profileOfficeId.trim() !== oid) {
-    console.warn(
-      "[ensureOfficeChecklistTemplateForType] office id argument differs from profile office_id; using profile",
-      { arg: oid, profile: profileOfficeId.trim() }
-    );
   }
 
   const { data, error } = await supabase.rpc("ensure_office_checklist_template_from_btq", {
@@ -374,24 +438,14 @@ export async function cloneBtqMasterTemplateToOffice(
     return { templateId: null, error: new Error("Office and BTQ template id are required") };
   }
 
-  const [user, profileOfficeId] = await Promise.all([getCurrentUser(), getCurrentUserProfileOfficeId()]);
-  const resolvedOfficeId = (profileOfficeId?.trim() || oid).trim();
+  const { resolvedOfficeId, authUserId } = await resolveOfficeIdForChecklistRpc(oid);
 
   if (import.meta.env.DEV) {
     console.log("[checklist RPC] clone_btq_starter_to_office (client)", {
-      authUserId: user?.id ?? null,
+      authUserId,
       p_office_id_ui: oid,
-      p_office_id_profile: profileOfficeId,
       p_office_id_resolved: resolvedOfficeId,
-      mismatch: Boolean(profileOfficeId?.trim() && profileOfficeId.trim() !== oid),
     });
-  }
-
-  if (profileOfficeId?.trim() && profileOfficeId.trim() !== oid) {
-    console.warn(
-      "[cloneBtqMasterTemplateToOffice] UI office id differs from profile office_id; using profile for RPC",
-      { ui: oid, profile: profileOfficeId.trim() }
-    );
   }
 
   const { data, error } = await supabase.rpc("clone_btq_starter_to_office", {
