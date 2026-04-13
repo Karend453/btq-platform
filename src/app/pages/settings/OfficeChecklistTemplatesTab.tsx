@@ -241,18 +241,7 @@ export function OfficeChecklistTemplatesTab({ readOnly = false }: OfficeChecklis
             Office checklist templates
           </CardTitle>
           <CardDescription>
-            One checklist per transaction type (Purchase, Listing, Lease, Other). Defaults to the template marked
-            default for that type when duplicates exist.
-            {readOnly ? (
-              <> View only — brokers manage templates.</>
-            ) : (
-              <>
-                {" "}
-                Add from BTQ only for a type you do not yet have.
-              </>
-            )}{" "}
-            Templates belong to <span className="font-medium text-slate-800">{office.name}</span> only (global BTQ
-            masters are not listed here).
+          
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
