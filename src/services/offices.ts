@@ -1,5 +1,10 @@
 import { supabase } from "../lib/supabaseClient";
 import { getBtqAdminActiveOfficeScopeId, getCurrentUser, getUserProfileRoleKey } from "./auth";
+import {
+  normalizeOfficeIdKey,
+  pickActiveOfficeFromMembershipRows,
+  type MembershipPickRow,
+} from "./officeMembershipOfficePick";
 
 /** Row from `public.offices`. Current office resolution prefers `office_memberships`, with legacy `user_profiles.office_id` fallback. */
 export type Office = {
@@ -28,26 +33,35 @@ export type Office = {
 };
 
 /**
- * Picks which `offices.id` to treat as the signed-in user's current office.
- * Prefers active `office_memberships`; uses `user_profiles.office_id` when there are no memberships
- * or (if multiple memberships) when the legacy field matches one of them; otherwise oldest membership wins.
+ * Picks `offices.id` for the signed-in user: active `office_memberships` first (broker first, else
+ * newest). `user_profiles.office_id` only when there is no usable membership row — never overrides membership.
  */
 function resolveCurrentOfficeIdFromMembershipsAndProfile(
-  membershipRows: { office_id: string }[],
+  membershipRows: MembershipPickRow[],
   profileOfficeId: string | null,
-  membershipError: Error | null,
+  membershipError: Error | null
 ): string | null {
-  if (membershipError) {
+  if (!membershipError) {
+    const picked = pickActiveOfficeFromMembershipRows(membershipRows);
+    if (picked) {
+      if (
+        profileOfficeId &&
+        normalizeOfficeIdKey(profileOfficeId) !== normalizeOfficeIdKey(picked)
+      ) {
+        console.warn("⚠️ profile.office_id mismatch with membership — ignoring profile fallback");
+      }
+      return picked;
+    }
+  } else {
     console.warn("[getCurrentOffice] office_memberships:", membershipError.message);
-    return profileOfficeId;
   }
 
-  const ids = membershipRows.map((r) => r.office_id).filter((id) => id != null && String(id).trim() !== "");
-  if (ids.length === 0) return profileOfficeId;
-  if (ids.length === 1) return ids[0] ?? null;
-
-  if (profileOfficeId && ids.includes(profileOfficeId)) return profileOfficeId;
-  return ids[0] ?? null;
+  if (profileOfficeId) {
+    console.warn(
+      "[getCurrentOffice] Legacy fallback: user_profiles.office_id (no active office_memberships)"
+    );
+  }
+  return profileOfficeId;
 }
 
 /**
@@ -72,10 +86,9 @@ export async function getCurrentOffice(): Promise<Office | null> {
       supabase.from("user_profiles").select("office_id").eq("id", user.id).maybeSingle(),
       supabase
         .from("office_memberships")
-        .select("office_id")
+        .select("office_id, role, created_at")
         .eq("user_id", user.id)
-        .eq("status", "active")
-        .order("created_at", { ascending: true }),
+        .eq("status", "active"),
     ]);
 
   if (profileError) {
@@ -88,9 +101,9 @@ export async function getCurrentOffice(): Promise<Office | null> {
 
   const memErr = membershipError ? new Error(membershipError.message) : null;
   const officeId = resolveCurrentOfficeIdFromMembershipsAndProfile(
-    (membershipRows ?? []) as { office_id: string }[],
+    (membershipRows ?? []) as MembershipPickRow[],
     profileOfficeId,
-    memErr,
+    memErr
   );
 
   if (officeId == null || officeId === "") return null;
@@ -137,8 +150,8 @@ export async function getOfficeById(officeId: string): Promise<Office | null> {
 
 /**
  * Settings UI: office row for tabs that are office-scoped (My Office, subscriptions snapshot, etc.).
- * Prefers {@link getCurrentOffice} (memberships + btq_admin active session), then
- * `user_profiles.office_id` when the former is null.
+ * Prefers {@link getCurrentOffice} (membership-primary + btq_admin active session), then legacy
+ * `profileOfficeId` from context only when that resolution yields no office.
  */
 export async function getOfficeForSettingsTabs(
   profileOfficeId: string | null | undefined
@@ -147,6 +160,9 @@ export async function getOfficeForSettingsTabs(
   if (fromSession) return fromSession;
   const oid = typeof profileOfficeId === "string" ? profileOfficeId.trim() : "";
   if (!oid) return null;
+  console.warn(
+    "[getOfficeForSettingsTabs] Legacy fallback: user_profiles.office_id (no office from membership/session)"
+  );
   return getOfficeById(oid);
 }
 

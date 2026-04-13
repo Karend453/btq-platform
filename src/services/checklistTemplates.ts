@@ -1,5 +1,8 @@
 // src/services/checklistTemplates.ts
 
+// TODO: Migrate checklist RPC office resolution off `getCurrentUserProfileOfficeId` / `user_profiles.office_id`
+// to membership-primary helpers (aligned with `resolveOfficeScopedDataAccess`).
+
 import { getCurrentUser, getCurrentUserProfileOfficeId } from "./auth";
 import { supabase } from "../lib/supabaseClient";
 

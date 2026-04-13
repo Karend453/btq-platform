@@ -4,8 +4,9 @@ import { ACTIVE_OFFICE_CHANGED_EVENT } from "../dashboardOfficeStorage";
 import { useAuth } from "../../contexts/AuthContext";
 
 /**
- * Office row for Settings tabs that should follow {@link getCurrentOffice} (including btq_admin
- * active office session), with fallback to `user_profiles.office_id`.
+ * Office row for Settings tabs that follow {@link getCurrentOffice} (membership-primary, plus btq_admin
+ * active office session). Passes through legacy `profile?.office_id` for last-resort loading only
+ * (see {@link getOfficeForSettingsTabs}).
  * Subscribes to {@link writeDashboardOfficeSelection} via a window event so tabs update after
  * dashboard office changes without a full reload.
  */

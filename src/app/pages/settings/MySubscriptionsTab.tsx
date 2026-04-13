@@ -94,7 +94,7 @@ function CurrentPlanFields({ office }: { office: Office }) {
       <ReadonlyField label="Plan" value={planName} />
       <ReadonlyField label="Base price" value={basePrice} />
       <ReadonlyField label="Status" value={statusLabel} />
-      <ReadonlyField label="Billing model" value="Monthly, no proration" />
+      <ReadonlyField label="Billing model" value="Monthly" />
       <ReadonlyField label="Billable seats" value={billableSeatsValue} />
       <ReadonlyField label="Seat rate" value="$20 / user / month" />
     </dl>

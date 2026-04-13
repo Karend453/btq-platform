@@ -439,11 +439,11 @@ export async function createTransaction(input: CreateTransactionInput): Promise<
 
   const { scopeOfficeId, denyAll } = await resolveOfficeScopedDataAccess();
   if (denyAll) {
-    console.error("[createTransaction] broker has no office_id on profile");
+    console.error("[createTransaction] broker has no office scope (no active membership or legacy profile office)");
     return null;
   }
   if (scopeOfficeId && input.officeId.trim() !== scopeOfficeId) {
-    console.error("[createTransaction] office_id must match user_profiles.office_id");
+    console.error("[createTransaction] office_id must match resolved office scope (membership-primary)");
     return null;
   }
 
@@ -579,7 +579,7 @@ export async function updateTransaction(
     brokerSession:
       roleKey === "broker"
         ? {
-            note: "Broker with profile office_id uses scopeOfficeId for client pre-check; RLS SELECT allows same-office rows but UPDATE required separate broker policy.",
+            note: "Broker scope uses membership-primary office (legacy profile fallback when no membership); RLS SELECT allows same-office rows but UPDATE required separate broker policy.",
             hasScopeOfficeId: scopeOfficeId != null && String(scopeOfficeId).trim() !== "",
           }
         : null,
@@ -590,7 +590,7 @@ export async function updateTransaction(
     return {
       data: null,
       error: {
-        message: "No office linked to your profile.",
+        message: "No office linked to your account.",
         details: "",
         hint: "",
         code: "42501",

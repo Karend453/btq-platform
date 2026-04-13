@@ -311,7 +311,7 @@ export function TeamManagementTab() {
         />
         <RosterSection
           title="Agents"
-          description="Agent seats count toward billable seats when billing is live."
+          description="Agent seats count toward billable seats."
           rows={agents}
           canManageTeam={canManageTeam}
           addRoleForSection="agent"

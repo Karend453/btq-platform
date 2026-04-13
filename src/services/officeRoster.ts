@@ -219,6 +219,9 @@ export async function getOfficeRosterForOfficeId(officeId: string): Promise<{
 /**
  * Profiles in the same office as the signed-in user when their profile role is `broker`.
  * Requires RLS allowing brokers to read same-office `user_profiles`.
+ *
+ * TODO: Resolve office from `office_memberships` (same rules as `getCurrentOffice`); do not rely on
+ * `user_profiles.office_id` alone.
  */
 export async function getOfficeRosterForCurrentBroker(): Promise<OfficeRosterMember[]> {
   const user = await getCurrentUser();

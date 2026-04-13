@@ -1,5 +1,10 @@
 import { supabase } from "../lib/supabaseClient";
 import { readDashboardOfficeSelection } from "../app/pages/dashboardOfficeStorage";
+import {
+  normalizeOfficeIdKey,
+  pickActiveOfficeFromMembershipRows,
+  type MembershipPickRow,
+} from "./officeMembershipOfficePick";
 
 export type AuthResult =
   | { success: true }
@@ -358,8 +363,8 @@ export async function setPersonalGciGoal(
 }
 
 /**
- * `user_profiles.office_id` for the signed-in user — use as canonical `p_office_id` for broker-only
- * RPCs that compare against the profile (e.g. `clone_btq_starter_to_office`).
+ * Reads legacy `user_profiles.office_id` only. App-wide office scope prefers `office_memberships`
+ * via {@link resolveOfficeScopedDataAccess}; some RPCs still accept this column for compatibility.
  */
 export async function getCurrentUserProfileOfficeId(): Promise<string | null> {
   const user = await getCurrentUser();
@@ -382,13 +387,13 @@ export async function getCurrentUserProfileOfficeId(): Promise<string | null> {
 }
 
 /**
- * Office-scoped reads/writes (transactions, client_portfolio, analytics): filter by
- * `user_profiles.office_id` whenever it is set — not only when `role === "broker"`.
- * Otherwise a null/unknown role with a valid `office_id` skipped filtering and returned all rows.
+ * Office-scoped reads/writes (transactions, client_portfolio, analytics): primary office is resolved
+ * from active `office_memberships` (broker role first, else newest). Legacy `user_profiles.office_id`
+ * applies only when the user has no active membership — it never overrides membership.
  *
  * - `btq_admin`: when a valid active office is selected (persisted + `office_memberships`), scope to
  *   that office; otherwise no client-side office filter (rely on RLS for internal operators).
- * - `broker` with no `office_id`: `denyAll` — empty lists / denied access for office-bound resources.
+ * - `broker` with no membership and no legacy profile office: `denyAll` for office-bound resources.
  */
 type BtqAdminActiveOfficeSession = {
   scopeOfficeId: string | null;
@@ -446,7 +451,6 @@ export async function resolveOfficeScopedDataAccess(): Promise<{
 }> {
   const user = await getCurrentUser();
   const roleKey = await getUserProfileRoleKey();
-  const profileOfficeId = await getCurrentUserProfileOfficeId();
 
   if (roleKey === "btq_admin") {
     const session = await resolveBtqAdminActiveOfficeSession(user?.id);
@@ -459,9 +463,58 @@ export async function resolveOfficeScopedDataAccess(): Promise<{
     });
     return { scopeOfficeId: session.scopeOfficeId, denyAll: false };
   }
+
+  if (!supabase || !user?.id) {
+    return { scopeOfficeId: null, denyAll: false };
+  }
+
+  const [{ data: profile, error: pErr }, { data: rows, error: mErr }] = await Promise.all([
+    supabase.from("user_profiles").select("office_id").eq("id", user.id).maybeSingle(),
+    supabase
+      .from("office_memberships")
+      .select("office_id, role, created_at")
+      .eq("user_id", user.id)
+      .eq("status", "active"),
+  ]);
+
+  if (mErr) {
+    console.warn("[resolveOfficeScopedDataAccess] office_memberships:", mErr.message);
+  }
+
+  const rawProfileOid = profile?.office_id;
+  const profileOfficeId =
+    pErr || rawProfileOid == null || rawProfileOid === ""
+      ? null
+      : typeof rawProfileOid === "string"
+        ? rawProfileOid
+        : String(rawProfileOid);
+
+  if (pErr) {
+    console.warn("[resolveOfficeScopedDataAccess] user_profiles:", pErr.message);
+  }
+
+  if (!mErr && rows) {
+    const membershipOfficeId = pickActiveOfficeFromMembershipRows(
+      rows as MembershipPickRow[]
+    );
+    if (membershipOfficeId) {
+      if (
+        profileOfficeId &&
+        normalizeOfficeIdKey(profileOfficeId) !== normalizeOfficeIdKey(membershipOfficeId)
+      ) {
+        console.warn("⚠️ profile.office_id mismatch with membership — ignoring profile fallback");
+      }
+      return { scopeOfficeId: membershipOfficeId, denyAll: false };
+    }
+  }
+
   if (profileOfficeId) {
+    console.warn(
+      "[resolveOfficeScopedDataAccess] Legacy fallback: user_profiles.office_id (no active office_memberships)"
+    );
     return { scopeOfficeId: profileOfficeId, denyAll: false };
   }
+
   if (roleKey === "broker") {
     return { scopeOfficeId: null, denyAll: true };
   }
