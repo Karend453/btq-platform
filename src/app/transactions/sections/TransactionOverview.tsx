@@ -268,9 +268,6 @@ export default function TransactionOverviewSection({
             {(agentDisplayName ?? "").trim() ? (
               <p className="text-sm text-slate-600">Agent: {agentDisplayName}</p>
             ) : null}
-            <p className="text-sm text-slate-500">
-              Summary — edit details to complete reporting & financial data
-            </p>
             {isFinalized ? (
               <p
                 className={
@@ -420,16 +417,6 @@ export default function TransactionOverviewSection({
             Edit Transaction Details
           </Button>
           </div>
-          {!isFinalized && unattachedInboxDocumentCount > 0 && !portfolioLoading ? (
-            <p
-              className="max-w-[min(100%,22rem)] text-right text-xs leading-snug text-amber-900"
-              role="status"
-            >
-              {unattachedInboxDocumentCount} inbox-only document
-              {unattachedInboxDocumentCount === 1 ? "" : "s"} must be attached to the checklist or
-              permanently removed before you can finalize closing.
-            </p>
-          ) : null}
         </div>
       </div>
 
