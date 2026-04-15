@@ -1,6 +1,11 @@
 // src/services/checklistTemplates.ts
 
-import { getCurrentUser, getCurrentUserProfileOfficeId } from "./auth";
+import {
+  getBtqAdminActiveOfficeScopeId,
+  getCurrentUser,
+  getCurrentUserProfileOfficeId,
+  getUserProfileRoleKey,
+} from "./auth";
 import {
   normalizeOfficeIdKey,
   pickActiveOfficeFromMembershipRows,
@@ -9,8 +14,11 @@ import {
 import { supabase } from "../lib/supabaseClient";
 
 /**
- * `office_memberships` first (same pick rule as billing/offices); then `user_profiles.office_id`;
- * then the UI-provided office id — each downgrade is logged.
+ * Non–`btq_admin`: `office_memberships` first (same pick rule as billing/offices); then
+ * `user_profiles.office_id`; then the UI-provided office id — each downgrade is logged.
+ *
+ * `btq_admin`: same validation idea as {@link getBtqAdminActiveOfficeScopeId} — UI/passed office id
+ * when it matches session scope or a readable `public.offices` row; never replaced by membership/profile.
  */
 async function resolveOfficeIdForChecklistRpc(uiOfficeIdArg: string): Promise<{
   resolvedOfficeId: string;
@@ -24,6 +32,52 @@ async function resolveOfficeIdForChecklistRpc(uiOfficeIdArg: string): Promise<{
       "[checklistTemplates] resolveOfficeIdForChecklistRpc: no auth user; using UI office id only"
     );
     return { resolvedOfficeId: oid, authUserId: null };
+  }
+
+  const roleKey = await getUserProfileRoleKey();
+  if (roleKey === "btq_admin") {
+    if (oid) {
+      const sessionScopeId = await getBtqAdminActiveOfficeScopeId();
+      if (
+        sessionScopeId &&
+        normalizeOfficeIdKey(sessionScopeId) === normalizeOfficeIdKey(oid)
+      ) {
+        return { resolvedOfficeId: oid, authUserId };
+      }
+
+      if (supabase) {
+        const { data: officeRow, error: officeErr } = await supabase
+          .from("offices")
+          .select("id")
+          .eq("id", oid)
+          .maybeSingle();
+
+        if (officeErr) {
+          console.warn(
+            "[checklistTemplates] resolveOfficeIdForChecklistRpc btq_admin offices:",
+            officeErr.message
+          );
+        } else if (officeRow) {
+          return { resolvedOfficeId: oid, authUserId };
+        }
+      }
+
+      console.warn(
+        "[checklistTemplates] resolveOfficeIdForChecklistRpc btq_admin: office id not session-scoped and not readable on public.offices; passing UI id through (RPC may fail)",
+        { uiOfficeId: oid }
+      );
+      return { resolvedOfficeId: oid, authUserId };
+    }
+
+    const sessionOnly = await getBtqAdminActiveOfficeScopeId();
+    if (sessionOnly) {
+      return { resolvedOfficeId: sessionOnly, authUserId };
+    }
+
+    console.warn(
+      "[checklistTemplates] resolveOfficeIdForChecklistRpc btq_admin: missing office id and no active session scope"
+    );
+    return { resolvedOfficeId: "", authUserId };
   }
 
   const [{ data: rows, error: mErr }, profileOfficeId] = await Promise.all([
