@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { supabase, supabaseInitError } from "../../lib/supabaseClient";
+import { activatePendingOfficeMembershipsForSession } from "../../services/officeRoster";
 
 type AuthContextValue = {
   user: User | null;
@@ -54,11 +55,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
       if (!isMounted) return;
       setUser(session?.user ?? null);
       setError(null);
       setLoading(false);
+      if (session?.user && (event === "SIGNED_IN" || event === "INITIAL_SESSION")) {
+        void activatePendingOfficeMembershipsForSession();
+      }
     });
 
     return () => {

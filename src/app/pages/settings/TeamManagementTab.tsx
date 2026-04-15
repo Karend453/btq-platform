@@ -1,12 +1,15 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Plus, Trash2, Users } from "lucide-react";
+import { Mail, Plus, Trash2, UserMinus, Users } from "lucide-react";
 import { getUserProfileRoleKey } from "../../../services/auth";
 import { getCurrentOffice } from "../../../services/offices";
 import { ACTIVE_OFFICE_CHANGED_EVENT } from "../dashboardOfficeStorage";
 import {
   brokerAddOfficeMember,
   brokerDeactivateOfficeMember,
+  brokerRemoveTeamInvite,
+  brokerResendTeamInvite,
   formatOfficeRoleLabel,
+  listOfficePendingRoster,
   listOfficeRoster,
   memberDisplayName,
   partitionCustomerRosterByRole,
@@ -126,6 +129,104 @@ function RosterSection({
   );
 }
 
+function PendingSection({
+  rows,
+  canManageTeam,
+  onResend,
+  onRemoveInvite,
+  resendBusyUserId,
+  removeBusyUserId,
+}: {
+  rows: OfficeRosterMember[];
+  canManageTeam?: boolean;
+  onResend?: (member: OfficeRosterMember) => void;
+  onRemoveInvite?: (member: OfficeRosterMember) => void;
+  resendBusyUserId?: string | null;
+  removeBusyUserId?: string | null;
+}) {
+  const showActions = Boolean(canManageTeam && onResend && onRemoveInvite);
+  if (rows.length === 0 && !showActions) return null;
+  const colSpan = showActions ? 4 : 3;
+  return (
+    <div className="space-y-2">
+      <div className="space-y-1 min-w-0">
+        <h3 className="text-sm font-semibold text-slate-900">Pending Acceptance</h3>
+        <p className="text-xs text-slate-500 leading-relaxed">
+          Invitations sent but not yet accepted. Resend sends the email again (membership stays pending). Remove deletes
+          this invite row. Team members you remove from the active roster are marked inactive and do not appear here.
+        </p>
+      </div>
+      <div className="overflow-x-auto rounded-md border border-slate-200 border-dashed">
+        <table className="w-full min-w-[20rem] text-left text-sm">
+          <thead className="border-b border-slate-200 bg-slate-50/80 text-slate-700">
+            <tr>
+              <th scope="col" className="px-3 py-2 font-medium">
+                Name
+              </th>
+              <th scope="col" className="px-3 py-2 font-medium">
+                Email
+              </th>
+              <th scope="col" className="px-3 py-2 font-medium whitespace-nowrap">
+                Role
+              </th>
+              {showActions ? (
+                <th scope="col" className="px-3 py-2 font-medium text-right whitespace-nowrap">
+                  Actions
+                </th>
+              ) : null}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {rows.length === 0 ? (
+              <tr>
+                <td className="px-3 py-4 text-slate-500 align-top" colSpan={colSpan}>
+                  No pending invites for this office.
+                </td>
+              </tr>
+            ) : (
+              rows.map((row) => (
+                <tr key={row.id}>
+                  <td className="px-3 py-2.5 text-slate-900 align-top">{memberDisplayName(row)}</td>
+                  <td className="px-3 py-2.5 text-slate-900 align-top break-words">
+                    {row.email?.trim() || "—"}
+                  </td>
+                  <td className="px-3 py-2.5 text-slate-900 align-top whitespace-nowrap">
+                    {formatOfficeRoleLabel(row.role)}
+                  </td>
+                  {showActions ? (
+                    <td className="px-3 py-2 align-top">
+                      <div className="flex flex-wrap justify-end gap-1.5">
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400 disabled:opacity-50"
+                          disabled={resendBusyUserId === row.id || removeBusyUserId === row.id}
+                          onClick={() => onResend?.(row)}
+                        >
+                          <Mail className="h-3.5 w-3.5 shrink-0" aria-hidden strokeWidth={1.75} />
+                          Resend
+                        </button>
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400 disabled:opacity-50"
+                          disabled={resendBusyUserId === row.id || removeBusyUserId === row.id}
+                          onClick={() => onRemoveInvite?.(row)}
+                        >
+                          <UserMinus className="h-3.5 w-3.5 shrink-0" aria-hidden strokeWidth={1.75} />
+                          Remove
+                        </button>
+                      </div>
+                    </td>
+                  ) : null}
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 /**
  * Active roster from `office_memberships` for the current office. Brokers add admins/agents (invite new users or
  * attach existing accounts) and may deactivate seats.
@@ -134,6 +235,7 @@ export function TeamManagementTab() {
   const [rosterLoading, setRosterLoading] = useState(true);
   const [rosterError, setRosterError] = useState<string | null>(null);
   const [members, setMembers] = useState<OfficeRosterMember[]>([]);
+  const [pendingMembers, setPendingMembers] = useState<OfficeRosterMember[]>([]);
   const [hasOffice, setHasOffice] = useState(false);
   const [officeId, setOfficeId] = useState<string | null>(null);
   const [viewerIsBroker, setViewerIsBroker] = useState(false);
@@ -144,7 +246,10 @@ export function TeamManagementTab() {
   const [addEmail, setAddEmail] = useState("");
   const [addSaving, setAddSaving] = useState(false);
   const [addFormError, setAddFormError] = useState<string | null>(null);
+  const [addDuplicateTargetId, setAddDuplicateTargetId] = useState<string | null>(null);
   const [removeBusyUserId, setRemoveBusyUserId] = useState<string | null>(null);
+  const [pendingResendBusyUserId, setPendingResendBusyUserId] = useState<string | null>(null);
+  const [pendingRemoveBusyUserId, setPendingRemoveBusyUserId] = useState<string | null>(null);
   const [billingSyncWarning, setBillingSyncWarning] = useState<string | null>(null);
 
   const loadRoster = useCallback(async () => {
@@ -156,19 +261,32 @@ export function TeamManagementTab() {
       setHasOffice(false);
       setOfficeId(null);
       setMembers([]);
+      setPendingMembers([]);
       setRosterLoading(false);
       return;
     }
     setHasOffice(true);
     setOfficeId(office.id);
-    const { members: list, error } = await listOfficeRoster(office.id);
-    if (error) {
-      setRosterError(error);
+    const [active, pending] = await Promise.all([
+      listOfficeRoster(office.id),
+      listOfficePendingRoster(office.id),
+    ]);
+    if (active.error) {
+      setRosterError(active.error);
       setMembers([]);
+      setPendingMembers([]);
       setRosterLoading(false);
       return;
     }
-    setMembers(list);
+    if (pending.error) {
+      setRosterError(pending.error);
+      setMembers([]);
+      setPendingMembers([]);
+      setRosterLoading(false);
+      return;
+    }
+    setMembers(active.members);
+    setPendingMembers(pending.members);
     setRosterLoading(false);
   }, []);
 
@@ -194,6 +312,7 @@ export function TeamManagementTab() {
 
   const handleRequestAdd = useCallback((role: TeamAddableOfficeRole) => {
     setAddFormError(null);
+    setAddDuplicateTargetId(null);
     setAddFirstName("");
     setAddLastName("");
     setAddEmail("");
@@ -207,6 +326,7 @@ export function TeamManagementTab() {
       setAddLastName("");
       setAddEmail("");
       setAddFormError(null);
+      setAddDuplicateTargetId(null);
       setAddSaving(false);
     }
   }, []);
@@ -217,7 +337,8 @@ export function TeamManagementTab() {
       if (!officeId || !pendingAddRole) return;
       setAddSaving(true);
       setAddFormError(null);
-      const { error } = await brokerAddOfficeMember({
+      setAddDuplicateTargetId(null);
+      const { error, code, targetUserId } = await brokerAddOfficeMember({
         officeId,
         firstName: addFirstName,
         lastName: addLastName,
@@ -227,6 +348,9 @@ export function TeamManagementTab() {
       setAddSaving(false);
       if (error) {
         setAddFormError(error.trim());
+        if (code === "PENDING_MEMBERSHIP" && targetUserId) {
+          setAddDuplicateTargetId(targetUserId);
+        }
         return;
       }
       setPendingAddRole(null);
@@ -269,9 +393,85 @@ export function TeamManagementTab() {
     [loadRoster, officeId],
   );
 
+  const handlePendingResend = useCallback(
+    async (member: OfficeRosterMember) => {
+      if (!officeId) return;
+      setPendingResendBusyUserId(member.id);
+      setRosterError(null);
+      setBillingSyncWarning(null);
+      const { error } = await brokerResendTeamInvite({
+        officeId,
+        userId: member.id,
+      });
+      setPendingResendBusyUserId(null);
+      if (error) {
+        setRosterError(error);
+        return;
+      }
+      await loadRoster();
+    },
+    [loadRoster, officeId],
+  );
+
+  const handlePendingRemove = useCallback(
+    async (member: OfficeRosterMember) => {
+      if (!officeId) return;
+      const label = memberDisplayName(member);
+      if (
+        !confirm(
+          `Remove the pending invite for ${label}? They will be removed from this list; you can add them again with a new invite.`,
+        )
+      ) {
+        return;
+      }
+      setPendingRemoveBusyUserId(member.id);
+      setRosterError(null);
+      const { error } = await brokerRemoveTeamInvite({ officeId, userId: member.id });
+      setPendingRemoveBusyUserId(null);
+      if (error) {
+        setRosterError(error);
+        return;
+      }
+      await loadRoster();
+    },
+    [loadRoster, officeId],
+  );
+
+  const handleDuplicateQuickResend = useCallback(async () => {
+    if (!officeId || !addDuplicateTargetId) return;
+    const stub: OfficeRosterMember = {
+      id: addDuplicateTargetId,
+      office_id: officeId,
+      email: null,
+      role: null,
+      display_name: null,
+      created_at: "",
+    };
+    await handlePendingResend(stub);
+    setAddDuplicateTargetId(null);
+    setAddFormError(null);
+    setPendingAddRole(null);
+  }, [addDuplicateTargetId, handlePendingResend, officeId]);
+
+  const handleDuplicateQuickRemove = useCallback(async () => {
+    if (!officeId || !addDuplicateTargetId) return;
+    setPendingRemoveBusyUserId(addDuplicateTargetId);
+    setRosterError(null);
+    const { error } = await brokerRemoveTeamInvite({ officeId, userId: addDuplicateTargetId });
+    setPendingRemoveBusyUserId(null);
+    if (error) {
+      setRosterError(error);
+      return;
+    }
+    setAddDuplicateTargetId(null);
+    setAddFormError(null);
+    setPendingAddRole(null);
+    await loadRoster();
+  }, [addDuplicateTargetId, loadRoster, officeId]);
+
   const { brokers, admins, agents } = partitionCustomerRosterByRole(members);
   const hasAnyRows = brokers.length + admins.length + agents.length > 0;
-  const showRosterLayout = hasAnyRows || canManageTeam;
+  const showRosterLayout = hasAnyRows || canManageTeam || pendingMembers.length > 0;
 
   let rosterPanel: React.ReactNode;
   if (rosterLoading) {
@@ -318,6 +518,14 @@ export function TeamManagementTab() {
           onRequestAdd={handleRequestAdd}
           onRemoveMember={handleRemoveMember}
           removeBusyUserId={removeBusyUserId}
+        />
+        <PendingSection
+          rows={pendingMembers}
+          canManageTeam={canManageTeam}
+          onResend={handlePendingResend}
+          onRemoveInvite={handlePendingRemove}
+          resendBusyUserId={pendingResendBusyUserId}
+          removeBusyUserId={pendingRemoveBusyUserId}
         />
       </>
     );
@@ -392,9 +600,31 @@ export function TeamManagementTab() {
                 />
               </div>
               {addFormError ? (
-                <p className="text-destructive text-sm leading-relaxed" role="alert">
-                  {addFormError}
-                </p>
+                <div className="space-y-2" role="alert">
+                  <p className="text-destructive text-sm leading-relaxed">{addFormError}</p>
+                  {addDuplicateTargetId ? (
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="border-slate-200"
+                        disabled={addSaving}
+                        onClick={() => void handleDuplicateQuickResend()}
+                      >
+                        Resend invite
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="border-slate-200"
+                        disabled={addSaving}
+                        onClick={() => void handleDuplicateQuickRemove()}
+                      >
+                        Remove invite
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
               ) : null}
             </div>
             <DialogFooter className="gap-2 sm:gap-0">
@@ -424,7 +654,7 @@ export function TeamManagementTab() {
             <div className="min-w-0 space-y-1">
               <CardTitle className="text-lg">Team Management</CardTitle>
               <CardDescription className="text-slate-700 text-base leading-relaxed">
-                Roster rows reflect active office memberships.
+                Active roster below uses active memberships only; pending invites appear in the separate section.
               </CardDescription>
             </div>
           </div>

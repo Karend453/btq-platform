@@ -210,6 +210,49 @@ export async function listOfficeRoster(officeId: string): Promise<{
   };
 }
 
+/**
+ * Pending admin/agent invites (`status = pending`): invitation sent, not yet accepted.
+ * Removed/deactivated members use `inactive` and do not appear here.
+ */
+export async function listOfficePendingRoster(officeId: string): Promise<{
+  members: OfficeRosterMember[];
+  error: string | null;
+}> {
+  const id = officeId.trim();
+  if (!id) return { members: [], error: null };
+
+  const { data, error } = await supabase
+    .from("office_memberships")
+    .select(
+      `
+      id,
+      office_id,
+      user_id,
+      role,
+      status,
+      created_at,
+      user_profiles (
+        display_name,
+        email
+      )
+    `,
+    )
+    .eq("office_id", id)
+    .eq("status", "pending")
+    .in("role", ["admin", "agent"])
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    return { members: [], error: error.message };
+  }
+
+  const rows = (data ?? []) as OfficeMembershipQueryRow[];
+  return {
+    members: sortOfficeRosterMembers(rows.map(mapOfficeMembershipToRosterMember)),
+    error: null,
+  };
+}
+
 /** Same rows as {@link listOfficeRoster}; kept for call sites that expect `{ rows }`. */
 export type OfficeRosterRow = OfficeRosterMember;
 
@@ -318,6 +361,15 @@ function parseApiErrorJson(body: unknown): string | null {
   return null;
 }
 
+function parseApiErrorMeta(body: unknown): { code?: string; targetUserId?: string } {
+  if (!body || typeof body !== "object" || body === null) return {};
+  const o = body as { code?: unknown; targetUserId?: unknown };
+  return {
+    code: typeof o.code === "string" ? o.code : undefined,
+    targetUserId: typeof o.targetUserId === "string" ? o.targetUserId : undefined,
+  };
+}
+
 /**
  * Adds or reactivates a team member: validates, updates Stripe when seat count increases, then invites new
  * users or attaches existing users via `office_memberships` (service role on the server).
@@ -328,7 +380,7 @@ export async function brokerAddOfficeMember(params: {
   lastName: string;
   email: string;
   role: TeamAddableOfficeRole;
-}): Promise<{ error: string | null }> {
+}): Promise<{ error: string | null; code?: string; targetUserId?: string }> {
   const officeId = params.officeId.trim();
   const firstName = params.firstName.trim();
   const lastName = params.lastName.trim();
@@ -350,6 +402,107 @@ export async function brokerAddOfficeMember(params: {
       email,
       role: params.role,
     }),
+  });
+
+  let body: unknown = null;
+  try {
+    body = await res.json();
+  } catch {
+    body = null;
+  }
+
+  if (!res.ok) {
+    const meta = parseApiErrorMeta(body);
+    return {
+      error: parseApiErrorJson(body) || `Request failed (${res.status})`,
+      code: meta.code,
+      targetUserId: meta.targetUserId,
+    };
+  }
+  return { error: null };
+}
+
+export async function brokerResendTeamInvite(params: {
+  officeId: string;
+  userId: string;
+}): Promise<{ error: string | null }> {
+  const officeId = params.officeId.trim();
+  const userId = params.userId.trim();
+  if (!officeId || !userId) return { error: "Office and member are required." };
+
+  const h = await billingApiHeaders();
+  if (!h.ok) return { error: h.error };
+
+  const res = await fetch("/api/billing/resend-team-invite", {
+    method: "POST",
+    headers: h.headers,
+    body: JSON.stringify({ officeId, userId }),
+  });
+
+  let body: unknown = null;
+  try {
+    body = await res.json();
+  } catch {
+    body = null;
+  }
+
+  if (!res.ok) {
+    return { error: parseApiErrorJson(body) || `Request failed (${res.status})` };
+  }
+
+  return { error: null };
+}
+
+/**
+ * After login: promote own `pending` admin/agent memberships to `active`, then sync Stripe seats per office.
+ */
+export async function activatePendingOfficeMembershipsForSession(): Promise<void> {
+  if (!supabase) return;
+  const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+  if (sessionErr || !sessionData.session?.access_token) return;
+
+  const { data: rows, error: rpcErr } = await supabase.rpc("activate_pending_office_memberships_for_user");
+  if (rpcErr) {
+    console.warn("[officeRoster] activate_pending_office_memberships_for_user:", rpcErr.message);
+    return;
+  }
+
+  const raw = rows as unknown;
+  const officeIds: string[] = Array.isArray(raw)
+    ? raw.filter((x): x is string => typeof x === "string")
+    : [];
+
+  const token = sessionData.session.access_token;
+  for (const officeId of officeIds) {
+    const res = await fetch("/api/billing/sync-subscription-seats", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ officeId }),
+    });
+    if (!res.ok) {
+      console.warn("[officeRoster] sync-subscription-seats after pending activation", officeId, res.status);
+    }
+  }
+}
+
+export async function brokerRemoveTeamInvite(params: {
+  officeId: string;
+  userId: string;
+}): Promise<{ error: string | null }> {
+  const officeId = params.officeId.trim();
+  const userId = params.userId.trim();
+  if (!officeId || !userId) return { error: "Office and member are required." };
+
+  const h = await billingApiHeaders();
+  if (!h.ok) return { error: h.error };
+
+  const res = await fetch("/api/billing/remove-team-invite", {
+    method: "POST",
+    headers: h.headers,
+    body: JSON.stringify({ officeId, userId }),
   });
 
   let body: unknown = null;

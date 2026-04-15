@@ -73,6 +73,27 @@ async function findProfileIdByEmail(
   return data?.id?.trim() ?? null;
 }
 
+/** True when this user already has a non-accepted invite for the office (duplicate add blocked). */
+async function hasPendingAdminAgentMembership(
+  admin: SupabaseClient,
+  officeId: string,
+  userId: string
+): Promise<boolean> {
+  const { data, error } = await admin
+    .from("office_memberships")
+    .select("status, role")
+    .eq("office_id", officeId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) {
+    throw new Error(error.message);
+  }
+  if (!data) return false;
+  const st = (data.status ?? "").trim().toLowerCase();
+  const r = (data.role ?? "").trim().toLowerCase();
+  return st === "pending" && (r === "admin" || r === "agent");
+}
+
 function isInviteDuplicateError(err: { message?: string }): boolean {
   const m = (err.message ?? "").toLowerCase();
   return (
@@ -143,9 +164,43 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: "Could not count paid seats" });
   }
 
+  let existingProfileId: string | null = null;
+  try {
+    existingProfileId = await findProfileIdByEmail(admin, email);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[add-team-member] profile lookup", msg);
+    return res.status(500).json({ error: "Could not look up user" });
+  }
+
+  if (existingProfileId === brokerUserId) {
+    return res.status(400).json({ error: "You cannot add yourself." });
+  }
+
+  if (existingProfileId) {
+    try {
+      if (await hasPendingAdminAgentMembership(admin, officeId, existingProfileId)) {
+        return res.status(409).json({
+          error: "This person already has a pending invite.",
+          code: "PENDING_MEMBERSHIP",
+          targetUserId: existingProfileId,
+        });
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[add-team-member] pending membership check", msg);
+      return res.status(500).json({ error: "Could not verify existing membership" });
+    }
+  }
+
   let nextCount: number;
   try {
-    nextCount = await resolveNextPaidSeatCountForAdd(admin, officeId, email, prevCount);
+    if (existingProfileId) {
+      nextCount = await resolveNextPaidSeatCountForAdd(admin, officeId, email, prevCount);
+    } else {
+      // New email: invite flow inserts `pending` until the user accepts (no paid seat until active).
+      nextCount = prevCount;
+    }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[add-team-member] resolveNextPaidSeatCountForAdd", msg);
@@ -159,19 +214,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       error:
         "No Stripe subscription is linked to this office. Complete billing setup before adding team members.",
     });
-  }
-
-  let existingProfileId: string | null = null;
-  try {
-    existingProfileId = await findProfileIdByEmail(admin, email);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error("[add-team-member] profile lookup", msg);
-    return res.status(500).json({ error: "Could not look up user" });
-  }
-
-  if (existingProfileId === brokerUserId) {
-    return res.status(400).json({ error: "You cannot add yourself." });
   }
 
   let seatPriceId: string | undefined;
@@ -255,6 +297,45 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
             targetUserId = retryId;
             createdNewAuthUser = false;
+            if (await hasPendingAdminAgentMembership(admin, officeId, retryId)) {
+              await rollbackStripeIfNeeded();
+              return res.status(409).json({
+                error: "This person already has a pending invite.",
+                code: "PENDING_MEMBERSHIP",
+                targetUserId: retryId,
+              });
+            }
+
+            const retryNextCount = await resolveNextPaidSeatCountForAdd(
+              admin,
+              officeId,
+              email,
+              prevCount
+            );
+            if (retryNextCount !== prevCount) {
+              if (!subscriptionId) {
+                throw new Error(
+                  "No Stripe subscription is linked to this office. Complete billing setup before adding team members."
+                );
+              }
+              let dupSeatPriceId: string;
+              try {
+                dupSeatPriceId = getSeatPriceId();
+              } catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                throw new Error(
+                  msg.includes("STRIPE") ? msg : "Billing seat price is not configured (STRIPE_PRICE_SEAT)."
+                );
+              }
+              const dupStripe = getStripeServer();
+              try {
+                await syncStripeSeatQuantity(dupStripe, subscriptionId, dupSeatPriceId, retryNextCount);
+              } catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                throw new Error(`Billing update failed: ${msg}`);
+              }
+            }
+
             const { error: memErr2 } = await admin.from("office_memberships").upsert(
               {
                 office_id: officeId,
@@ -266,6 +347,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               { onConflict: "office_id,user_id" }
             );
             if (memErr2) {
+              if (retryNextCount !== prevCount) {
+                try {
+                  const dupSeatPriceId = getSeatPriceId();
+                  const dupStripe = getStripeServer();
+                  await syncStripeSeatQuantity(dupStripe, subscriptionId, dupSeatPriceId, prevCount);
+                } catch {
+                  /* best-effort rollback */
+                }
+              }
               throw new Error(memErr2.message);
             }
           } else {
@@ -290,7 +380,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             office_id: officeId,
             user_id: targetUserId,
             role,
-            status: "active",
+            status: "pending",
             updated_at: new Date().toISOString(),
           },
           { onConflict: "office_id,user_id" }

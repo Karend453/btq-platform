@@ -25,8 +25,9 @@ export async function countPaidSeats(
  * Target Stripe paid-seat quantity after `broker_add_office_member` adds or upserts an admin/agent.
  *
  * - **Already active** `admin` or `agent`: do **not** increase seats (same billable seat; upsert only).
+ * - **Pending** `admin` or `agent`: do **not** increase seats (invite not accepted; no bill until active).
  * - **Inactive** `admin` or `agent`: **do** increase seats (reactivation restores a paid seat).
- * - **No membership row** (new member) or **no matching profile**: increase by one.
+ * - **No membership row** (new member) or **no matching profile**: increase by one (caller may override for brand-new email invites that insert `pending` without billing).
  *
  * This RPC only assigns `admin` or `agent` (not `broker`), so a separate “non-billable → billable” role-change
  * path is out of scope here.
@@ -63,6 +64,10 @@ export async function resolveNextPaidSeatCountForAdd(
   const r = (om.role ?? "").trim().toLowerCase();
 
   if (st === "active" && (r === "admin" || r === "agent")) {
+    return prevPaidCount;
+  }
+
+  if (st === "pending" && (r === "admin" || r === "agent")) {
     return prevPaidCount;
   }
 
