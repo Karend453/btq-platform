@@ -52,8 +52,13 @@ function parseApiErrorJson(body: unknown): string | null {
 /**
  * Live wallet summary: server resolves the user’s office from profile + memberships, then reads
  * `offices.stripe_subscription_id` and Stripe (no browser Stripe calls).
+ *
+ * For `btq_admin` ghost mode, pass the dashboard-selected office id so the API scopes reads to that
+ * office (header is ignored for other roles).
  */
-export async function getWalletBillingSummary(): Promise<ServiceResult<WalletBillingSummary>> {
+export async function getWalletBillingSummary(
+  billingReadOfficeId?: string | null
+): Promise<ServiceResult<WalletBillingSummary>> {
   if (!supabase) return { ok: false, error: "Supabase client unavailable." };
 
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
@@ -61,11 +66,21 @@ export async function getWalletBillingSummary(): Promise<ServiceResult<WalletBil
     return { ok: false, error: "Not signed in." };
   }
 
+  const trimmedReadOffice =
+    typeof billingReadOfficeId === "string" && billingReadOfficeId.trim() !== ""
+      ? billingReadOfficeId.trim()
+      : null;
+
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${sessionData.session.access_token}`,
+  };
+  if (trimmedReadOffice) {
+    headers["X-BTQ-Billing-Office-Id"] = trimmedReadOffice;
+  }
+
   const res = await fetch("/api/billing/wallet-summary", {
     method: "GET",
-    headers: {
-      Authorization: `Bearer ${sessionData.session.access_token}`,
-    },
+    headers,
   });
 
   let body: unknown = null;

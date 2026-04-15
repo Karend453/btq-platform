@@ -152,8 +152,7 @@ function PendingSection({
       <div className="space-y-1 min-w-0">
         <h3 className="text-sm font-semibold text-slate-900">Pending Acceptance</h3>
         <p className="text-xs text-slate-500 leading-relaxed">
-          Invitations sent but not yet accepted. Resend sends the email again (membership stays pending). Remove deletes
-          this invite row. Team members you remove from the active roster are marked inactive and do not appear here.
+          Invitations sent but not yet accepted.
         </p>
       </div>
       <div className="overflow-x-auto rounded-md border border-slate-200 border-dashed">

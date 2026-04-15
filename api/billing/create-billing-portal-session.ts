@@ -3,7 +3,7 @@ import Stripe from "stripe";
 import { getStripeServer } from "../../src/lib/stripeServer.js";
 import { getSupabaseServiceRole } from "../../src/lib/supabaseServer.js";
 import { getUserIdFromAuthHeader } from "./billingAuth.js";
-import { resolveWalletOfficeId } from "./billingOfficeContext.js";
+import { getUserProfileRoleKeyForBilling, resolveWalletOfficeId } from "./billingOfficeContext.js";
 
 function getReturnBaseUrl(req: VercelRequest): string {
   const explicit = process.env.APP_URL?.trim() || process.env.VITE_APP_URL?.trim();
@@ -29,6 +29,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const admin = getSupabaseServiceRole();
+
+  const roleGate = await getUserProfileRoleKeyForBilling(admin, userId);
+  if (!roleGate.ok) {
+    return res.status(500).json({ error: "Could not verify account" });
+  }
+  if (roleGate.role === "btq_admin") {
+    return res.status(403).json({
+      error: "Billing portal is not available for BTQ Admin. Use a broker account to change payment methods.",
+    });
+  }
+
   const resolved = await resolveWalletOfficeId(admin, userId);
   if (!resolved.ok) {
     if (resolved.reason === "db_error") {

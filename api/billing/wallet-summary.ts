@@ -5,7 +5,7 @@ import { getStripeServer } from "../../src/lib/stripeServer.js";
 import { getPlanPriceId, getSeatPriceId } from "../../src/lib/stripePrices.js";
 import { getSupabaseServiceRole } from "../../src/lib/supabaseServer.js";
 import { getUserIdFromAuthHeader } from "./billingAuth.js";
-import { resolveWalletOfficeId } from "./billingOfficeContext.js";
+import { resolveWalletReadOfficeId } from "./billingOfficeContext.js";
 
 /** Stripe minor-unit amounts use 100 per major unit except zero-decimal currencies. */
 const ZERO_DECIMAL_CURRENCIES = new Set([
@@ -106,10 +106,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const admin = getSupabaseServiceRole();
 
-  const resolved = await resolveWalletOfficeId(admin, userId);
+  const headerRaw = req.headers["x-btq-billing-office-id"];
+  const billingOfficeHint =
+    typeof headerRaw === "string"
+      ? headerRaw
+      : Array.isArray(headerRaw) && typeof headerRaw[0] === "string"
+        ? headerRaw[0]
+        : null;
+
+  const resolved = await resolveWalletReadOfficeId(admin, userId, billingOfficeHint);
   if (!resolved.ok) {
     if (resolved.reason === "db_error") {
       return res.status(500).json({ error: "Could not resolve office" });
+    }
+    if ("btqAdminReadPath" in resolved && resolved.btqAdminReadPath) {
+      return res.status(404).json({
+        error:
+          "No office selected. Choose an office in the dashboard (top bar) to view that office’s billing.",
+      });
     }
     return res.status(404).json({ error: "No active office for this account" });
   }

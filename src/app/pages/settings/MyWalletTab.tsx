@@ -94,6 +94,7 @@ export function MyWalletTab() {
   const { user, loading: authLoading } = useAuth();
   const { profile } = useSettingsProfile();
   const { office } = useOfficeForSettingsTabs(profile?.office_id);
+  const isBtqAdmin = (profile?.role ?? "").trim().toLowerCase() === "btq_admin";
   const [wallet, setWallet] = useState<WalletBillingSummary | null>(null);
   const [walletLoading, setWalletLoading] = useState(true);
   const [walletError, setWalletError] = useState<string | null>(null);
@@ -102,10 +103,12 @@ export function MyWalletTab() {
 
   useEffect(() => {
     if (authLoading) return;
+    if (isBtqAdmin && office === undefined) return;
     let cancelled = false;
     setWalletLoading(true);
     setWalletError(null);
-    getWalletBillingSummary().then((result) => {
+    const readOfficeId = isBtqAdmin ? office?.id ?? null : undefined;
+    getWalletBillingSummary(readOfficeId).then((result) => {
       if (cancelled) return;
       if (!result.ok) {
         setWallet(null);
@@ -119,7 +122,7 @@ export function MyWalletTab() {
     return () => {
       cancelled = true;
     };
-  }, [authLoading, office?.id]);
+  }, [authLoading, isBtqAdmin, office]);
 
   const loading = authLoading || office === undefined;
   const profileDisplayName = profile?.display_name?.trim();
@@ -209,7 +212,9 @@ export function MyWalletTab() {
               <div className="min-w-0 space-y-1">
                 <CardTitle className="text-lg font-semibold leading-snug">Billing</CardTitle>
                 <CardDescription className="text-slate-600 text-sm leading-relaxed">
-                  Subscription details from Stripe. Update your payment method in the secure Stripe portal.
+                  {isBtqAdmin
+                    ? "Subscription details from Stripe for the office selected in the dashboard (read-only)."
+                    : "Subscription details from Stripe. Update your payment method in the secure Stripe portal."}
                 </CardDescription>
               </div>
             </div>
@@ -243,16 +248,23 @@ export function MyWalletTab() {
                 <p className="text-xs text-slate-500 leading-relaxed">
                   Seat changes apply to your next billing cycle.
                 </p>
-                <div className="pt-1">
-                  <Button
-                    type="button"
-                    onClick={() => void handleUpdatePaymentMethod()}
-                    disabled={portalBusy}
-                    aria-busy={portalBusy}
-                  >
-                    {portalBusy ? "Opening…" : "Update payment method"}
-                  </Button>
-                </div>
+                {!isBtqAdmin ? (
+                  <div className="pt-1">
+                    <Button
+                      type="button"
+                      onClick={() => void handleUpdatePaymentMethod()}
+                      disabled={portalBusy}
+                      aria-busy={portalBusy}
+                    >
+                      {portalBusy ? "Opening…" : "Update payment method"}
+                    </Button>
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500 leading-relaxed pt-1">
+                    Payment method and plan changes use the broker&apos;s Stripe billing portal and are
+                    not available in BTQ Admin view.
+                  </p>
+                )}
               </>
             ) : (
               <p className="text-slate-600">No billing data available.</p>
