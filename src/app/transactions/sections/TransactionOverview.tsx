@@ -402,7 +402,7 @@ export default function TransactionOverviewSection({
               variant="default"
               size="sm"
               onClick={onFinalizeClosingClick}
-              disabled={!!finalizeClosingDisabled || portfolioLoading || isFinalized}
+              disabled={!!finalizeClosingDisabled || isFinalized}
               title={
                 !isFinalized && unattachedInboxDocumentCount > 0
                   ? `Finalize is disabled: ${unattachedInboxDocumentCount} inbox-only document(s) must be attached to the checklist or permanently removed from the inbox.`
