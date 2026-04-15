@@ -35,6 +35,8 @@ export type Office = {
   billing_cancel_at_period_end?: boolean | null;
   billing_email?: string | null;
   app_access_status?: string | null;
+  /** When set, My Subscriptions shows this as the plan name and hides list-price lines (display-only). */
+  display_plan_label?: string | null;
 };
 
 /**
@@ -116,7 +118,7 @@ export async function getCurrentOffice(): Promise<Office | null> {
   const { data: office, error: officeError } = await supabase
     .from("offices")
     .select(
-      "id, name, display_name, state, address_line1, city, postal_code, broker_name, broker_email, mls_name, plan_tier, stripe_customer_id, stripe_subscription_id, billing_plan_tier, billing_status, billing_seat_quantity, billing_current_period_end, billing_cancel_at_period_end, billing_email, app_access_status"
+      "id, name, display_name, state, address_line1, city, postal_code, broker_name, broker_email, mls_name, plan_tier, stripe_customer_id, stripe_subscription_id, billing_plan_tier, billing_status, billing_seat_quantity, billing_current_period_end, billing_cancel_at_period_end, billing_email, app_access_status, display_plan_label"
     )
     .eq("id", officeId)
     .maybeSingle();
@@ -140,7 +142,7 @@ export async function getOfficeById(officeId: string): Promise<Office | null> {
   const { data: office, error: officeError } = await supabase
     .from("offices")
     .select(
-      "id, name, display_name, state, address_line1, city, postal_code, broker_name, broker_email, mls_name, plan_tier, stripe_customer_id, stripe_subscription_id, billing_plan_tier, billing_status, billing_seat_quantity, billing_current_period_end, billing_cancel_at_period_end, billing_email, app_access_status"
+      "id, name, display_name, state, address_line1, city, postal_code, broker_name, broker_email, mls_name, plan_tier, stripe_customer_id, stripe_subscription_id, billing_plan_tier, billing_status, billing_seat_quantity, billing_current_period_end, billing_cancel_at_period_end, billing_email, app_access_status, display_plan_label"
     )
     .eq("id", id)
     .maybeSingle();

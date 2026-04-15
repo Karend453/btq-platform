@@ -70,6 +70,9 @@ function CurrentPlanFields({ office }: { office: Office }) {
   const planKey = resolvePlanKeyFromOfficeFields(tierSource);
   const details = planKey ? PLAN_DETAILS[planKey] : null;
 
+  const displayOverride = office.display_plan_label?.trim() ?? "";
+  const useCustomPlanDisplay = displayOverride.length > 0;
+
   const hasStripeSub =
     typeof office.stripe_subscription_id === "string" && office.stripe_subscription_id.trim() !== "";
 
@@ -81,7 +84,9 @@ function CurrentPlanFields({ office }: { office: Office }) {
       ? "Pending billing connection"
       : "Not connected";
 
-  const planName = details?.label ?? (tierSource ? tierSource : "—");
+  const planName = useCustomPlanDisplay
+    ? displayOverride
+    : details?.label ?? (tierSource ? tierSource : "—");
   const basePrice = details != null ? formatUsdPerMonth(details.pricePerMonth) : "—";
 
   const billableSeatsValue =
@@ -90,14 +95,30 @@ function CurrentPlanFields({ office }: { office: Office }) {
       : "—";
 
   return (
-    <dl className="grid gap-3 sm:grid-cols-2 sm:gap-x-6 sm:gap-y-3">
-      <ReadonlyField label="Plan" value={planName} />
-      <ReadonlyField label="Base price" value={basePrice} />
-      <ReadonlyField label="Status" value={statusLabel} />
-      <ReadonlyField label="Billing model" value="Monthly" />
-      <ReadonlyField label="Billable seats" value={billableSeatsValue} />
-      <ReadonlyField label="Seat rate" value="$20 / user / month" />
-    </dl>
+    <div className="space-y-3">
+      <dl className="grid gap-3 sm:grid-cols-2 sm:gap-x-6 sm:gap-y-3">
+        <ReadonlyField label="Plan" value={planName} />
+        {!useCustomPlanDisplay ? (
+          <>
+            <ReadonlyField label="Base price" value={basePrice} />
+            <ReadonlyField label="Status" value={statusLabel} />
+            <ReadonlyField label="Billing model" value="Monthly" />
+            <ReadonlyField label="Billable seats" value={billableSeatsValue} />
+            <ReadonlyField label="Seat rate" value="$20 / user / month" />
+          </>
+        ) : (
+          <>
+            <ReadonlyField label="Status" value={statusLabel} />
+            <ReadonlyField label="Billable seats" value={billableSeatsValue} />
+          </>
+        )}
+      </dl>
+      {useCustomPlanDisplay ? (
+        <p className="text-xs text-slate-500 leading-relaxed">
+          Legacy/custom billing arrangement. See Wallet for current billing details.
+        </p>
+      ) : null}
+    </div>
   );
 }
 
