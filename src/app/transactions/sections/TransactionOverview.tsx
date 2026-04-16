@@ -92,8 +92,6 @@ type TransactionOverviewSectionProps = {
   portfolioSnapshot?: ClientPortfolioForTransactionSnapshot | null;
   /** Newest `transaction_exports` row; `undefined` while loading. */
   latestExport?: TransactionExportSnapshot | null;
-  /** True while finalize RPC is running (spinner on export lock). */
-  exportGenerationBusy?: boolean;
   /** True while Finalize modal submit is running (primary button loading label). */
   finalizeInProgress?: boolean;
   onFinalizeClosingClick?: () => void;
@@ -102,7 +100,8 @@ type TransactionOverviewSectionProps = {
   unattachedInboxDocumentCount?: number;
 };
 
-type ExportPackageLockState = "ready" | "pending" | "failed" | "unknown";
+/** `pending` = spinner (processing only, or legacy client “pending” ZIP build). `queued` = static lock. */
+type ExportPackageLockState = "ready" | "pending" | "queued" | "failed" | "unknown";
 
 function SummaryField({
   label,
@@ -131,7 +130,6 @@ export default function TransactionOverviewSection({
   onEdit,
   portfolioSnapshot,
   latestExport,
-  exportGenerationBusy = false,
   finalizeInProgress = false,
   onFinalizeClosingClick,
   finalizeClosingDisabled,
@@ -151,7 +149,7 @@ export default function TransactionOverviewSection({
     if (latestExport === undefined) {
       if (legacySt === "failed") return "failed";
       if (legacySt === "ready" && legacyPath) return "ready";
-      if (exportGenerationBusy || legacySt === "pending") return "pending";
+      if (legacySt === "pending") return "pending";
       return "unknown";
     }
 
@@ -160,23 +158,24 @@ export default function TransactionOverviewSection({
       const path = (latestExport.zip_storage_path ?? "").trim();
       if (st === "failed") return "failed";
       if (st === "ready" && path) return "ready";
-      if (st === "queued" || st === "processing" || exportGenerationBusy) return "pending";
+      if (st === "processing") return "pending";
+      if (st === "queued") return "queued";
       return "unknown";
     }
 
     if (legacySt === "failed") return "failed";
     if (legacySt === "ready" && legacyPath) return "ready";
-    if (exportGenerationBusy || legacySt === "pending") return "pending";
+    if (legacySt === "pending") return "pending";
     return "unknown";
-  }, [isFinalized, portfolioLoading, portfolioSnapshot, exportGenerationBusy, latestExport]);
+  }, [isFinalized, portfolioLoading, portfolioSnapshot, latestExport]);
 
   const exportPackageFullyReady = exportPackageLockState === "ready";
 
   const exportLockTooltip = useMemo(() => {
     if (exportPackageLockState === "ready") return "Export package ready";
     if (exportPackageLockState === "failed") return "Export package failed";
+    if (exportPackageLockState === "queued") return "Export package queued";
     if (exportPackageLockState === "pending") {
-      if (latestExport?.status === "queued") return "Export package queued";
       if (latestExport?.status === "processing") return "Export package creating";
       return "Export package is being created";
     }
@@ -184,8 +183,8 @@ export default function TransactionOverviewSection({
   }, [exportPackageLockState, latestExport?.status]);
 
   const finalizedBadgeTooltip = useMemo(() => {
+    if (exportPackageLockState === "queued") return "Export package queued";
     if (exportPackageLockState === "pending") {
-      if (latestExport?.status === "queued") return "Export package queued";
       if (latestExport?.status === "processing") return "Export package creating";
       return "Export package is being created";
     }
@@ -273,6 +272,8 @@ export default function TransactionOverviewSection({
                             strokeWidth={2.25}
                             aria-hidden
                           />
+                        ) : exportPackageLockState === "queued" ? (
+                          <Lock className="h-4 w-4 text-amber-500" strokeWidth={2.25} aria-hidden />
                         ) : (
                           <Lock
                             className={`h-4 w-4 ${exportPackageLockState === "failed" ? "text-amber-700" : "text-amber-500"}`}

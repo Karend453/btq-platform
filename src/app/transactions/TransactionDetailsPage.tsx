@@ -1335,7 +1335,6 @@ export default function TransactionDetailsPage() {
           onEdit={handleEdit}
           portfolioSnapshot={portfolioSnapshot}
           latestExport={latestExportSnapshot}
-          exportGenerationBusy={finalizeSubmitting}
           finalizeInProgress={finalizeSubmitting}
           onFinalizeClosingClick={() => void openFinalizeClosingModal()}
           finalizeClosingDisabled={isReadOnly || finalizeSubmitting || !canOfferFinalizeClosing}
