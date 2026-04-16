@@ -42,7 +42,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const resolved = await resolveWalletOfficeId(admin, userId);
   if (!resolved.ok) {
-    if (resolved.reason === "db_error") {
+    const r = resolved as { ok: false; reason: "no_office" | "db_error" };
+    if (r.reason === "db_error") {
       return res.status(500).json({ error: "Could not resolve office" });
     }
     return res.status(404).json({ error: "No active office for this account" });

@@ -116,7 +116,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const resolved = await resolveWalletReadOfficeId(admin, userId, billingOfficeHint);
   if (!resolved.ok) {
-    if (resolved.reason === "db_error") {
+    const r = resolved as {
+      ok: false;
+      reason: "no_office" | "db_error";
+      btqAdminReadPath?: boolean;
+    };
+    if (r.reason === "db_error") {
       return res.status(500).json({ error: "Could not resolve office" });
     }
     if ("btqAdminReadPath" in resolved && resolved.btqAdminReadPath) {
@@ -187,13 +192,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const seatCount = seatQuantityFromSubscription(sub, seatPriceId);
 
+    const subWithLegacyPeriod = sub as Stripe.Subscription & { current_period_end?: number };
     const body: WalletBillingSummary = {
       connected: true,
       planName,
       subscriptionStatus: sub.status,
       nextBillingDate:
-        sub.current_period_end != null
-          ? new Date(sub.current_period_end * 1000).toISOString()
+        subWithLegacyPeriod.current_period_end != null
+          ? new Date(subWithLegacyPeriod.current_period_end * 1000).toISOString()
           : null,
       monthlyTotal,
       seatCount,

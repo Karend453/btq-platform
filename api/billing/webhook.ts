@@ -4,6 +4,12 @@ import type Stripe from "stripe";
 import { getStripeServer } from "../../src/lib/stripeServer.js";
 import { getSupabaseServiceRole } from "../../src/lib/supabaseServer.js";
 
+/** Stripe v21 typings omit fields still present on subscription/invoice objects from the API. */
+type StripeSubscriptionWithLegacyPeriod = Stripe.Subscription & { current_period_end?: number };
+type StripeInvoiceWithLegacySubscription = Stripe.Invoice & {
+  subscription?: string | Stripe.Subscription | null;
+};
+
 const HANDLED_EVENT_TYPES = new Set<string>([
   "checkout.session.completed",
   "customer.subscription.created",
@@ -174,8 +180,9 @@ async function handleCheckoutSessionCompleted(
     null;
 
   const nowIso = new Date().toISOString();
-  const periodEnd = subscription.current_period_end
-    ? new Date(subscription.current_period_end * 1000).toISOString()
+  const subPeriod = subscription as StripeSubscriptionWithLegacyPeriod;
+  const periodEnd = subPeriod.current_period_end
+    ? new Date(subPeriod.current_period_end * 1000).toISOString()
     : null;
 
   const { error: officeErr } = await supabase
@@ -270,8 +277,9 @@ async function handleSubscriptionEvent(
   });
 
   const nowIso = new Date().toISOString();
-  const periodEnd = subscription.current_period_end
-    ? new Date(subscription.current_period_end * 1000).toISOString()
+  const subPeriod = subscription as StripeSubscriptionWithLegacyPeriod;
+  const periodEnd = subPeriod.current_period_end
+    ? new Date(subPeriod.current_period_end * 1000).toISOString()
     : null;
 
   const planTier =
@@ -318,7 +326,7 @@ async function handleInvoicePaymentFailed(
     invoice.customer as string | { id: string } | null
   );
   const subscriptionId = idFromExpandable(
-    invoice.subscription as string | { id: string } | null
+    (invoice as StripeInvoiceWithLegacySubscription).subscription as string | { id: string } | null
   );
 
   const { officeId, matchedBy } = await resolveOfficeId(
@@ -363,8 +371,9 @@ async function handleInvoicePaymentFailed(
       null;
     patch.billing_price_id = primaryPriceId(sub);
     patch.billing_seat_quantity = extractSeatQuantity(sub);
-    patch.billing_current_period_end = sub.current_period_end
-      ? new Date(sub.current_period_end * 1000).toISOString()
+    const subPeriod = sub as StripeSubscriptionWithLegacyPeriod;
+    patch.billing_current_period_end = subPeriod.current_period_end
+      ? new Date(subPeriod.current_period_end * 1000).toISOString()
       : null;
     patch.billing_cancel_at_period_end = sub.cancel_at_period_end ?? false;
     patch.stripe_customer_id = idFromExpandable(
