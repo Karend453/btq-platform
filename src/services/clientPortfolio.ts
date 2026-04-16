@@ -158,6 +158,16 @@ export type ClientPortfolioFilters = {
   transactionType?: string;
 };
 
+/** Latest durable export row for transaction details (server-driven lifecycle). */
+export type TransactionExportSnapshot = {
+  id: string;
+  transaction_id: string;
+  status: "queued" | "processing" | "ready" | "failed";
+  requested_at: string;
+  zip_storage_path: string | null;
+  error_message: string | null;
+};
+
 /** Snapshot fields for transaction details overview (stage + locked financials when finalized). */
 export type ClientPortfolioForTransactionSnapshot = Pick<
   ClientPortfolioRow,
@@ -205,6 +215,36 @@ export async function getClientPortfolioForTransaction(
   }
 
   return data as ClientPortfolioForTransactionSnapshot | null;
+}
+
+/** Newest export request for a transaction (`requested_at` desc). */
+export async function getLatestTransactionExportForTransaction(
+  transactionId: string,
+): Promise<TransactionExportSnapshot | null> {
+  if (!supabase) {
+    throw new Error(supabaseInitError ?? "Supabase is not configured.");
+  }
+
+  const { denyAll } = await resolveOfficeScopedDataAccess();
+  if (denyAll) {
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from("transaction_exports")
+    .select("id, transaction_id, status, requested_at, zip_storage_path, error_message")
+    .eq("transaction_id", transactionId)
+    .order("requested_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message || "Failed to load transaction export.");
+  }
+
+  if (!data) return null;
+
+  return data as TransactionExportSnapshot;
 }
 
 export async function finalizeTransactionClosing(input: {

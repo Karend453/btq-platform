@@ -71,9 +71,10 @@ import { countChecklistItemsForTransaction } from "../../services/checklistItems
 import {
   finalizeTransactionClosing,
   getClientPortfolioForTransaction,
+  getLatestTransactionExportForTransaction,
   type ClientPortfolioForTransactionSnapshot,
+  type TransactionExportSnapshot,
 } from "../../services/clientPortfolio";
-import { createAndPersistTransactionExportPackage } from "../../services/transactionExportPackage";
 import TransactionOverview from "./sections/TransactionOverview";
 import TransactionExportPackageSection from "./sections/TransactionExportPackageSection";
 import TransactionInbox from "./sections/TransactionInbox";
@@ -250,6 +251,10 @@ export default function TransactionDetailsPage() {
   /** `undefined` while loading; `null` if no client_portfolio row yet */
   const [portfolioSnapshot, setPortfolioSnapshot] = useState<
     ClientPortfolioForTransactionSnapshot | null | undefined
+  >(undefined);
+  /** `undefined` while loading; `null` if no `transaction_exports` row */
+  const [latestExportSnapshot, setLatestExportSnapshot] = useState<
+    TransactionExportSnapshot | null | undefined
   >(undefined);
   const [finalizeClosingOpen, setFinalizeClosingOpen] = useState(false);
   const [finalizeClosePrice, setFinalizeClosePrice] = useState("");
@@ -710,8 +715,12 @@ export default function TransactionDetailsPage() {
     }
     if (id) {
       try {
-        const row = await getClientPortfolioForTransaction(id);
+        const [row, exp] = await Promise.all([
+          getClientPortfolioForTransaction(id),
+          getLatestTransactionExportForTransaction(id),
+        ]);
         setPortfolioSnapshot(row);
+        setLatestExportSnapshot(exp);
         if (row?.portfolio_stage === "final") {
           toast.info("Closing is already finalized — portfolio numbers are locked.");
           return;
@@ -762,37 +771,24 @@ export default function TransactionDetailsPage() {
         revenueAmount: revenue,
       });
       setFinalizeClosingOpen(false);
-      let row = await getClientPortfolioForTransaction(id);
+      const [row, exp] = await Promise.all([
+        getClientPortfolioForTransaction(id),
+        getLatestTransactionExportForTransaction(id),
+      ]);
       setPortfolioSnapshot(row);
-
-      const user = await getCurrentUser();
-      if (user?.id) {
-        const exportResult = await createAndPersistTransactionExportPackage(id, {
-          userId: user.id,
-          email: user.email ?? null,
-        });
-        row = await getClientPortfolioForTransaction(id);
-        setPortfolioSnapshot(row);
-        if (exportResult.ok) {
-          toast.success(
-            "Closing finalized — portfolio values are locked. Export package is ready below."
-          );
-        } else {
-          toast.success("Closing finalized — portfolio values are locked.");
-          toast.warning("Export package could not be created.", {
-            description: exportResult.errorMessage,
-          });
-        }
-      } else {
-        toast.success("Closing finalized — portfolio values are locked.");
-      }
+      setLatestExportSnapshot(exp);
+      toast.success("Closing finalized — portfolio values are locked.");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast.error(msg || "Could not finalize closing");
       if (id && msg.toLowerCase().includes("already finalized")) {
         try {
-          const row = await getClientPortfolioForTransaction(id);
+          const [row, exp] = await Promise.all([
+            getClientPortfolioForTransaction(id),
+            getLatestTransactionExportForTransaction(id),
+          ]);
           setPortfolioSnapshot(row);
+          setLatestExportSnapshot(exp);
         } catch {
           /* ignore */
         }
@@ -842,11 +838,21 @@ export default function TransactionDetailsPage() {
     let cancelled = false;
     async function loadPortfolioSnapshot() {
       setPortfolioSnapshot(undefined);
+      setLatestExportSnapshot(undefined);
       try {
-        const row = await getClientPortfolioForTransaction(id);
-        if (!cancelled) setPortfolioSnapshot(row);
+        const [row, exp] = await Promise.all([
+          getClientPortfolioForTransaction(id),
+          getLatestTransactionExportForTransaction(id),
+        ]);
+        if (!cancelled) {
+          setPortfolioSnapshot(row);
+          setLatestExportSnapshot(exp);
+        }
       } catch {
-        if (!cancelled) setPortfolioSnapshot(null);
+        if (!cancelled) {
+          setPortfolioSnapshot(null);
+          setLatestExportSnapshot(null);
+        }
       }
     }
     void loadPortfolioSnapshot();
@@ -1328,6 +1334,7 @@ export default function TransactionDetailsPage() {
           }}
           onEdit={handleEdit}
           portfolioSnapshot={portfolioSnapshot}
+          latestExport={latestExportSnapshot}
           exportGenerationBusy={finalizeSubmitting}
           finalizeInProgress={finalizeSubmitting}
           onFinalizeClosingClick={() => void openFinalizeClosingModal()}
@@ -1337,6 +1344,7 @@ export default function TransactionDetailsPage() {
 
         <TransactionExportPackageSection
           portfolioSnapshot={portfolioSnapshot}
+          latestExport={latestExportSnapshot}
           exportBusy={finalizeSubmitting}
         />
 

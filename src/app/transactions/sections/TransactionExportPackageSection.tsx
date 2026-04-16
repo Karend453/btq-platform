@@ -9,11 +9,16 @@ import {
   CollapsibleTrigger,
 } from "../../components/ui/collapsible";
 import { cn } from "../../components/ui/utils";
-import type { ClientPortfolioForTransactionSnapshot } from "../../../services/clientPortfolio";
+import type {
+  ClientPortfolioForTransactionSnapshot,
+  TransactionExportSnapshot,
+} from "../../../services/clientPortfolio";
 import { getSignedUrl } from "../../../services/transactionDocuments";
 
 type TransactionExportPackageSectionProps = {
   portfolioSnapshot: ClientPortfolioForTransactionSnapshot | null | undefined;
+  /** Newest row from `transaction_exports`; undefined = loading. */
+  latestExport: TransactionExportSnapshot | null | undefined;
   exportBusy?: boolean;
 };
 
@@ -27,49 +32,124 @@ function formatExportTimestamp(iso: string | null | undefined): string {
   });
 }
 
+function filenameFromStoragePath(path: string): string {
+  const seg = path.trim().split("/").filter(Boolean).pop();
+  return seg && seg.length > 0 ? seg : "btq-transaction-export.zip";
+}
+
 function statusStripLabel(
   loading: boolean,
   isFinal: boolean,
   exportReady: boolean,
-  exportPending: boolean,
-  exportFailed: boolean
+  status: TransactionExportSnapshot["status"] | null,
+  exportBusy: boolean,
+  legacyPending: boolean
 ): string {
   if (loading) return "Loading…";
-  if (!isFinal) return "Not created";
-  if (exportFailed) return "Failed";
-  if (exportPending) return "Creating…";
+  if (!isFinal) return "Not requested";
+  if (exportBusy) return "Working…";
   if (exportReady) return "Ready";
-  return "Pending";
+  if (status === "failed") return "Failed";
+  if (status === "processing") return "Creating…";
+  if (status === "queued") return "Queued";
+  if (legacyPending) return "Creating…";
+  if (status === "ready") return "Ready";
+  return "Not requested";
 }
 
 export default function TransactionExportPackageSection({
   portfolioSnapshot,
+  latestExport,
   exportBusy = false,
 }: TransactionExportPackageSectionProps) {
   const [downloading, setDownloading] = useState(false);
   const [open, setOpen] = useState(false);
 
-  const loading = portfolioSnapshot === undefined;
-  const isFinal = portfolioSnapshot?.portfolio_stage === "final";
-  const exportReady =
-    isFinal &&
-    portfolioSnapshot?.export_status === "ready" &&
-    (portfolioSnapshot?.export_storage_path ?? "").trim() !== "";
-  const exportFailed = isFinal && portfolioSnapshot?.export_status === "failed";
-  const exportPending =
-    exportBusy || (isFinal && portfolioSnapshot?.export_status === "pending");
+  const portfolioLoading = portfolioSnapshot === undefined;
+  const exportLoading = latestExport === undefined;
+  const loading = portfolioLoading || exportLoading;
 
-  const exportAmberHold =
-    isFinal && !exportReady && !exportPending && !exportFailed && !loading;
+  const isFinal = portfolioSnapshot?.portfolio_stage === "final";
+
+  const legacyPath = (portfolioSnapshot?.export_storage_path ?? "").trim();
+  const legacyReady =
+    isFinal &&
+    (portfolioSnapshot?.export_status ?? "").trim().toLowerCase() === "ready" &&
+    legacyPath !== "";
+  const legacyPending =
+    isFinal &&
+    (portfolioSnapshot?.export_status ?? "").trim().toLowerCase() === "pending";
+
+  const durablePath = (latestExport?.zip_storage_path ?? "").trim();
+  const durableReady =
+    isFinal && latestExport?.status === "ready" && durablePath !== "";
+
+  const exportReady = durableReady || (latestExport === null && legacyReady);
+
+  const downloadStoragePath = durableReady
+    ? durablePath
+    : latestExport === null && legacyReady
+      ? legacyPath
+      : "";
+  const downloadFileName = durableReady
+    ? filenameFromStoragePath(durablePath)
+    : (portfolioSnapshot?.export_file_name ?? "").trim() || "btq-transaction-export.zip";
+
+  const exportFailed =
+    isFinal &&
+    (latestExport?.status === "failed" ||
+      (latestExport === null &&
+        (portfolioSnapshot?.export_status ?? "").trim().toLowerCase() === "failed"));
+
+  const exportPending =
+    exportBusy ||
+    (isFinal &&
+      latestExport != null &&
+      (latestExport.status === "queued" || latestExport.status === "processing")) ||
+    (latestExport === null && legacyPending);
 
   const shortStatus = useMemo(
-    () => statusStripLabel(loading, isFinal, exportReady, exportPending, exportFailed),
-    [loading, isFinal, exportReady, exportPending, exportFailed]
+    () =>
+      statusStripLabel(
+        loading,
+        isFinal,
+        exportReady,
+        latestExport?.status ?? null,
+        exportBusy,
+        legacyPending
+      ),
+    [loading, isFinal, exportReady, latestExport?.status, exportBusy, legacyPending]
   );
 
+  const primaryMessage = useMemo(() => {
+    if (loading || !isFinal) return null;
+    if (latestExport) {
+      switch (latestExport.status) {
+        case "queued":
+          return "Export package queued";
+        case "processing":
+          return "Export package creating";
+        case "ready":
+          return "Export package ready";
+        case "failed":
+          return "Export package failed";
+        default:
+          return null;
+      }
+    }
+    if (legacyReady) return "Export package ready";
+    if (legacyPending) return "Export package creating";
+    if ((portfolioSnapshot?.export_status ?? "").trim().toLowerCase() === "failed") {
+      return "Export package failed";
+    }
+    return null;
+  }, [loading, isFinal, latestExport, legacyReady, legacyPending, portfolioSnapshot]);
+
+  const showRetentionHelper = isFinal && !loading && !exportReady;
+
   async function handleDownload() {
-    const path = portfolioSnapshot?.export_storage_path?.trim();
-    const name = portfolioSnapshot?.export_file_name?.trim() || "btq-transaction-export.zip";
+    const path = downloadStoragePath;
+    const name = downloadFileName;
     if (!path) {
       toast.error("No export file is available.");
       return;
@@ -129,7 +209,6 @@ export default function TransactionExportPackageSection({
     exportFailed && "font-medium text-amber-950",
     exportReady && "text-emerald-800",
     exportPending && "text-amber-900",
-    exportAmberHold && "text-amber-900",
     !isFinal && !exportFailed && !exportReady && !exportPending && !loading && "text-slate-600",
     loading && "text-slate-500"
   );
@@ -169,26 +248,27 @@ export default function TransactionExportPackageSection({
           <CardHeader className="space-y-1.5 px-4 pb-2 pt-4">
             {!loading && !isFinal ? (
               <p className="text-xs leading-relaxed text-slate-600">
-                No export package has been created yet.{" "}
+                No export package has been requested yet.{" "}
                 <span className="text-slate-500">
-                  An export package is created when the transaction is finalized.
+                  After you finalize closing, BTQ records an export request for this transaction.
                 </span>
               </p>
             ) : null}
-            {isFinal && exportReady ? (
-              <p className="text-xs leading-relaxed text-emerald-900/90">
-                BTQ creates a downloadable ZIP of this transaction’s files for your records (separate
-                from the Documents list below).
+            {isFinal && primaryMessage ? (
+              <p
+                className={cn(
+                  "text-xs leading-relaxed",
+                  exportReady && "text-emerald-900/90",
+                  exportFailed && "font-medium text-amber-950",
+                  !exportReady && !exportFailed && "text-amber-800/90"
+                )}
+              >
+                {primaryMessage}
               </p>
-            ) : isFinal && exportPending ? (
-              <p className="text-xs text-amber-800/90">Export package is being created…</p>
-            ) : isFinal && exportFailed ? (
-              <p className="text-xs font-medium text-amber-950">
-                Export failed — transaction is still finalized. Details below.
-              </p>
-            ) : exportAmberHold ? (
+            ) : null}
+            {isFinal && !primaryMessage && !loading ? (
               <p className="text-xs text-amber-800/90">
-                Transaction is finalized, but the export package is not ready yet.
+                Transaction is finalized; export status will appear here once recorded.
               </p>
             ) : null}
           </CardHeader>
@@ -197,45 +277,56 @@ export default function TransactionExportPackageSection({
               <p className="text-sm text-slate-600">Loading…</p>
             ) : !isFinal ? (
               <p className="text-sm text-slate-600">
-                After you finalize closing, a ZIP download will appear here.
+                Finalize closing to queue an export package. A ZIP download will appear here when the
+                package is ready.
               </p>
             ) : exportPending ? (
-              <p className="text-sm text-slate-700">Creating export package…</p>
-            ) : exportFailed ? (
               <div className="space-y-2 text-sm text-slate-700">
                 <p>
-                  Export status: <span className="font-medium text-amber-900">failed</span>
+                  {latestExport?.status === "queued"
+                    ? "Your export request is queued."
+                    : latestExport?.status === "processing"
+                      ? "Your export package is being generated."
+                      : "Export package is being prepared…"}
                 </p>
-                <p className="text-slate-600">
-                  Closing was finalized, but the ZIP export could not be generated. Use the documents
-                  below if you need files immediately.
-                </p>
+                {showRetentionHelper ? (
+                  <p className="text-xs text-slate-500">Source file retention not started</p>
+                ) : null}
+              </div>
+            ) : exportFailed ? (
+              <div className="space-y-2 text-sm text-slate-700">
+                <p className="font-medium text-amber-900">Export package failed</p>
+                {(latestExport?.error_message ?? "").trim() ? (
+                  <p className="text-slate-600">{latestExport?.error_message}</p>
+                ) : (
+                  <p className="text-slate-600">
+                    Closing is still finalized. Use the documents below if you need files
+                    immediately.
+                  </p>
+                )}
+                {showRetentionHelper ? (
+                  <p className="text-xs text-slate-500">Source file retention not started</p>
+                ) : null}
               </div>
             ) : exportReady ? (
               <div className="space-y-3 text-sm">
                 <div className="grid gap-1.5 sm:grid-cols-2">
                   <div>
-                    <span className="text-slate-500">Created</span>
+                    <span className="text-slate-500">Requested</span>
                     <p className="font-medium text-slate-900">
-                      {formatExportTimestamp(portfolioSnapshot?.export_created_at)}
+                      {formatExportTimestamp(
+                        latestExport?.requested_at ?? portfolioSnapshot?.export_created_at
+                      )}
                     </p>
                   </div>
                   <div>
                     <span className="text-slate-500">File name</span>
-                    <p className="break-all font-medium text-slate-900">
-                      {portfolioSnapshot?.export_file_name ?? "—"}
-                    </p>
+                    <p className="break-all font-medium text-slate-900">{downloadFileName}</p>
                   </div>
                   <div>
-                    <span className="text-slate-500">Export status</span>
+                    <span className="text-slate-500">Status</span>
                     <p className="font-medium text-slate-900 capitalize">
-                      {portfolioSnapshot?.export_status ?? "—"}
-                    </p>
-                  </div>
-                  <div>
-                    <span className="text-slate-500">Created by</span>
-                    <p className="break-all font-medium text-slate-900">
-                      {(portfolioSnapshot?.export_created_by_email ?? "").trim() || "—"}
+                      {latestExport?.status ?? portfolioSnapshot?.export_status ?? "—"}
                     </p>
                   </div>
                   {(portfolioSnapshot?.finalized_at ?? "").trim() ? (
@@ -243,14 +334,6 @@ export default function TransactionExportPackageSection({
                       <span className="text-slate-500">Finalized at</span>
                       <p className="font-medium text-slate-900">
                         {formatExportTimestamp(portfolioSnapshot?.finalized_at)}
-                      </p>
-                    </div>
-                  ) : null}
-                  {(portfolioSnapshot?.retention_delete_at ?? "").trim() ? (
-                    <div className="sm:col-span-2">
-                      <span className="text-slate-500">Retention delete after</span>
-                      <p className="font-medium text-slate-900">
-                        {formatExportTimestamp(portfolioSnapshot?.retention_delete_at)}
                       </p>
                     </div>
                   ) : null}
@@ -267,12 +350,15 @@ export default function TransactionExportPackageSection({
                   {downloading ? "Preparing…" : "Download Export Package"}
                 </Button>
               </div>
-            ) : exportAmberHold ? (
-              <p className="text-sm text-amber-900/90">
-                Transaction is finalized, but the export package is not ready yet.
-              </p>
             ) : (
-              <p className="text-sm text-slate-600">No export package created yet.</p>
+              <div className="space-y-2 text-sm text-slate-700">
+                <p className="text-amber-900/90">
+                  Transaction is finalized; no export request is on file for this closing yet.
+                </p>
+                {showRetentionHelper ? (
+                  <p className="text-xs text-slate-500">Source file retention not started</p>
+                ) : null}
+              </div>
             )}
           </CardContent>
         </Card>

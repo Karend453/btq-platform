@@ -34,7 +34,10 @@ import {
   formatUnifiedCommissionPercentDisplay,
   type TransactionRow,
 } from "../../../services/transactions";
-import type { ClientPortfolioForTransactionSnapshot } from "../../../services/clientPortfolio";
+import type {
+  ClientPortfolioForTransactionSnapshot,
+  TransactionExportSnapshot,
+} from "../../../services/clientPortfolio";
 import { ExternalToolPanelContent } from "./ExternalToolPanel";
 
 export type ActiveExternalTool = "zipforms" | "dotloop" | "skyslope" | "lofty";
@@ -87,7 +90,9 @@ type TransactionOverviewSectionProps = {
   onEdit: () => void;
   /** `undefined` = loading; `null` = no client_portfolio row */
   portfolioSnapshot?: ClientPortfolioForTransactionSnapshot | null;
-  /** True while finalize RPC + export ZIP pipeline is running (spinner on export lock). */
+  /** Newest `transaction_exports` row; `undefined` while loading. */
+  latestExport?: TransactionExportSnapshot | null;
+  /** True while finalize RPC is running (spinner on export lock). */
   exportGenerationBusy?: boolean;
   /** True while Finalize modal submit is running (primary button loading label). */
   finalizeInProgress?: boolean;
@@ -125,6 +130,7 @@ export default function TransactionOverviewSection({
   onSave,
   onEdit,
   portfolioSnapshot,
+  latestExport,
   exportGenerationBusy = false,
   finalizeInProgress = false,
   onFinalizeClosingClick,
@@ -138,27 +144,51 @@ export default function TransactionOverviewSection({
 
   const exportPackageLockState = useMemo((): ExportPackageLockState | null => {
     if (!isFinalized || portfolioLoading) return null;
-    const st = portfolioSnapshot?.export_status?.trim().toLowerCase();
-    const path = (portfolioSnapshot?.export_storage_path ?? "").trim();
-    if (st === "failed") return "failed";
-    if (st === "ready" && path) return "ready";
-    if (exportGenerationBusy || st === "pending") return "pending";
+
+    const legacySt = portfolioSnapshot?.export_status?.trim().toLowerCase();
+    const legacyPath = (portfolioSnapshot?.export_storage_path ?? "").trim();
+
+    if (latestExport === undefined) {
+      if (legacySt === "failed") return "failed";
+      if (legacySt === "ready" && legacyPath) return "ready";
+      if (exportGenerationBusy || legacySt === "pending") return "pending";
+      return "unknown";
+    }
+
+    if (latestExport !== null) {
+      const st = latestExport.status;
+      const path = (latestExport.zip_storage_path ?? "").trim();
+      if (st === "failed") return "failed";
+      if (st === "ready" && path) return "ready";
+      if (st === "queued" || st === "processing" || exportGenerationBusy) return "pending";
+      return "unknown";
+    }
+
+    if (legacySt === "failed") return "failed";
+    if (legacySt === "ready" && legacyPath) return "ready";
+    if (exportGenerationBusy || legacySt === "pending") return "pending";
     return "unknown";
-  }, [isFinalized, portfolioLoading, portfolioSnapshot, exportGenerationBusy]);
+  }, [isFinalized, portfolioLoading, portfolioSnapshot, exportGenerationBusy, latestExport]);
 
   const exportPackageFullyReady = exportPackageLockState === "ready";
 
-  const exportLockTooltip =
-    exportPackageLockState === "ready"
-      ? "Export package ready"
-      : exportPackageLockState === "pending"
-        ? "Export package is being created"
-        : exportPackageLockState === "failed"
-          ? "Export package failed"
-          : "Transaction is finalized, but the export package is not ready yet.";
+  const exportLockTooltip = useMemo(() => {
+    if (exportPackageLockState === "ready") return "Export package ready";
+    if (exportPackageLockState === "failed") return "Export package failed";
+    if (exportPackageLockState === "pending") {
+      if (latestExport?.status === "queued") return "Export package queued";
+      if (latestExport?.status === "processing") return "Export package creating";
+      return "Export package is being created";
+    }
+    return "Transaction is finalized, but the export package is not ready yet.";
+  }, [exportPackageLockState, latestExport?.status]);
 
   const finalizedBadgeTooltip = useMemo(() => {
-    if (exportPackageLockState === "pending") return "Export package is being created";
+    if (exportPackageLockState === "pending") {
+      if (latestExport?.status === "queued") return "Export package queued";
+      if (latestExport?.status === "processing") return "Export package creating";
+      return "Export package is being created";
+    }
     if (exportPackageLockState === "failed") return "Export package failed";
     if (exportPackageLockState === "unknown") {
       const st = (portfolioSnapshot?.export_status ?? "").trim();
@@ -166,7 +196,7 @@ export default function TransactionOverviewSection({
       return "Transaction is finalized, but the export package is not ready yet.";
     }
     return "Export package not created yet";
-  }, [exportPackageLockState, portfolioSnapshot]);
+  }, [exportPackageLockState, latestExport?.status, portfolioSnapshot]);
 
   const [activeTool, setActiveTool] = useState<ActiveExternalTool | null>(null);
   const [formsMenuOpen, setFormsMenuOpen] = useState(false);
