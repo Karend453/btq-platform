@@ -1,6 +1,7 @@
 /**
- * Post-finalize: build a ZIP of all transaction_documents in storage, upload to the same bucket
- * under `{transactionId}/exports/`, and persist metadata on client_portfolio.
+ * Legacy client-side export (Phase 1): writes `client_portfolio.export_*`.
+ * Phase 2+ closing exports run server-side via `/api/exports/process` and `transaction_exports`
+ * — this module is kept for reference or older flows only; do not wire it to finalize.
  */
 import JSZip from "jszip";
 import { supabase } from "../lib/supabaseClient";

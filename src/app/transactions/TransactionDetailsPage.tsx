@@ -75,6 +75,7 @@ import {
   type ClientPortfolioForTransactionSnapshot,
   type TransactionExportSnapshot,
 } from "../../services/clientPortfolio";
+import { requestQueuedExportProcessing } from "../../services/transactionExportProcessApi";
 import TransactionOverview from "./sections/TransactionOverview";
 import TransactionExportPackageSection from "./sections/TransactionExportPackageSection";
 import TransactionInbox from "./sections/TransactionInbox";
@@ -211,6 +212,8 @@ export default function TransactionDetailsPage() {
   const { user: authUser, loading: authLoading } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const finalizeDeepLinkConsumed = useRef(false);
+  /** Dedupe Phase 2 server export processing (one attempt per transaction + export id). */
+  const queuedExportProcessAttemptedRef = useRef<string | null>(null);
   /** When true, closing the "Complete Closing Details" dialog must not revert the status dropdown (successful save). */
   const skipCompleteClosingStatusRevertRef = useRef(false);
   const id = useMemo(() => {
@@ -777,6 +780,28 @@ export default function TransactionDetailsPage() {
       ]);
       setPortfolioSnapshot(row);
       setLatestExportSnapshot(exp);
+      if (exp?.status === "queued" && exp?.id) {
+        const key = `${id}:${exp.id}`;
+        queuedExportProcessAttemptedRef.current = key;
+        void requestQueuedExportProcessing(exp.id).then((result) => {
+          if (result.ok === false) {
+            queuedExportProcessAttemptedRef.current = null;
+            console.warn("[export process after finalize]", result.error);
+            return;
+          }
+          void Promise.all([
+            getClientPortfolioForTransaction(id),
+            getLatestTransactionExportForTransaction(id),
+          ])
+            .then(([rowFresh, expFresh]) => {
+              setPortfolioSnapshot(rowFresh);
+              setLatestExportSnapshot(expFresh);
+            })
+            .catch(() => {
+              /* ignore refresh errors */
+            });
+        });
+      }
       toast.success("Closing finalized — portfolio values are locked.");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -860,6 +885,41 @@ export default function TransactionDetailsPage() {
       cancelled = true;
     };
   }, [id]);
+
+  useEffect(() => {
+    if (!id?.trim()) return;
+    if (latestExportSnapshot?.status !== "queued" || !latestExportSnapshot?.id) return;
+    const key = `${id}:${latestExportSnapshot.id}`;
+    if (queuedExportProcessAttemptedRef.current === key) return;
+    queuedExportProcessAttemptedRef.current = key;
+
+    let cancelled = false;
+    void (async () => {
+      const result = await requestQueuedExportProcessing(latestExportSnapshot.id);
+      if (cancelled) return;
+      if (result.ok === false) {
+        queuedExportProcessAttemptedRef.current = null;
+        console.warn("[transaction export process]", result.error);
+        return;
+      }
+      try {
+        const [row, exp] = await Promise.all([
+          getClientPortfolioForTransaction(id),
+          getLatestTransactionExportForTransaction(id),
+        ]);
+        if (!cancelled) {
+          setPortfolioSnapshot(row);
+          setLatestExportSnapshot(exp);
+        }
+      } catch {
+        /* ignore refresh errors */
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id, latestExportSnapshot?.id, latestExportSnapshot?.status]);
 
   useEffect(() => {
     finalizeDeepLinkConsumed.current = false;
