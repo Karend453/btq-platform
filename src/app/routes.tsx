@@ -25,6 +25,7 @@ import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
 import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { BillingCheckoutCancelledPage } from "./pages/settings/BillingCheckoutCancelledPage";
 import { BillingCheckoutSuccessPage } from "./pages/settings/BillingCheckoutSuccessPage";
+import { BillingRequiredPage } from "./pages/BillingRequiredPage";
 
 export const router = createBrowserRouter([
   {
@@ -69,6 +70,7 @@ export const router = createBrowserRouter([
       { path: "settings/billing/success", element: <BillingCheckoutSuccessPage /> },
       { path: "settings/billing/cancelled", element: <BillingCheckoutCancelledPage /> },
       { path: "settings/billing/cancel", element: <BillingCheckoutCancelledPage /> },
+      { path: "billing-required", element: <BillingRequiredPage /> },
       { path: "settings", element: <SettingsPage /> },
       {
         path: "back-office",

@@ -500,7 +500,7 @@ export function TeamManagementTab() {
         />
         <RosterSection
           title="Admins"
-          description="Admin seats count toward billable seats when billing is live."
+          description="Admin seats count toward billable seats."
           rows={admins}
           canManageTeam={canManageTeam}
           addRoleForSection="admin"
@@ -597,6 +597,11 @@ export function TeamManagementTab() {
                   disabled={addSaving}
                   className="border-slate-200"
                 />
+                {pendingAddRole === "agent" || pendingAddRole === "admin" ? (
+                  <p className="text-sm text-slate-600">
+                    Seats are billed at $20/month per user.
+                  </p>
+                ) : null}
               </div>
               {addFormError ? (
                 <div className="space-y-2" role="alert">

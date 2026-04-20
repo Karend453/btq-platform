@@ -1,10 +1,12 @@
-import type { BrokerPlanKey } from "../lib/stripePrices";
+import type { BillingCycle, BrokerPlanKey } from "../lib/stripePrices";
 
 export type CreateBrokerCheckoutInput = {
   officeId: string;
   officeName: string;
   brokerEmail: string;
   plan: BrokerPlanKey;
+  /** Base-plan cadence. Omit → API defaults to `"monthly"`. Seats remain monthly regardless. */
+  billing?: BillingCycle;
   /** Optional per-seat add-on quantity; omit or 0 = no seat line item (Stripe rejects quantity 0). */
   seatQuantity?: number;
 };

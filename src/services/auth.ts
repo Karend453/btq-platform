@@ -64,20 +64,24 @@ export type SignUpWithPasswordResult =
 export async function signUpWithPassword(
   email: string,
   password: string,
-  options?: { displayName?: string }
+  options?: { displayName?: string; signupSource?: string }
 ): Promise<SignUpWithPasswordResult> {
   if (!supabase) {
     return { success: false, message: "Supabase client unavailable" };
   }
 
   console.log("about to call supabase.auth.signUp", email);
+  // Tag broker signups in auth user_metadata so downstream code (RootLayout, support tooling)
+  // can recognize the intent even if the pending_broker_signups row is missing.
+  const meta: Record<string, string> = {};
+  if (options?.displayName) meta.display_name = options.displayName;
+  if (options?.signupSource) meta.signup_source = options.signupSource;
+
   const { error, data } = await supabase.auth.signUp({
     email,
     password,
     options: {
-      data: options?.displayName
-        ? { display_name: options.displayName }
-        : undefined,
+      data: Object.keys(meta).length ? meta : undefined,
     },
   });
 
@@ -86,6 +90,85 @@ export async function signUpWithPassword(
   }
 
   return { success: true, sessionEstablished: !!data.session };
+}
+
+export type SavePendingBrokerSignupInput = {
+  email: string;
+  fullName: string;
+  phone: string;
+  firmName: string;
+  teamName?: string | null;
+  firmAddress?: string | null;
+  licensedStates?: string | null;
+  mlsName?: string | null;
+  mlsUrl?: string | null;
+  landvoiceLeads?: string | null;
+  referral?: string | null;
+  planTier?: string | null;
+  billingCycle?: string | null;
+};
+
+/**
+ * Persists the broker signup form to `pending_broker_signups` before `supabase.auth.signUp` runs.
+ * Upserts by email, so the user can resubmit the form and the latest values win. Callable from
+ * the anon client because the user is not yet authenticated.
+ */
+export async function savePendingBrokerSignup(
+  input: SavePendingBrokerSignupInput
+): Promise<AuthResult> {
+  if (!supabase) {
+    return { success: false, message: "Supabase client unavailable" };
+  }
+
+  const { error } = await supabase.rpc("save_pending_broker_signup", {
+    p_email: input.email,
+    p_full_name: input.fullName,
+    p_phone: input.phone,
+    p_firm_name: input.firmName,
+    p_team_name: input.teamName?.trim() || null,
+    p_firm_address: input.firmAddress?.trim() || null,
+    p_licensed_states: input.licensedStates?.trim() || null,
+    p_mls_name: input.mlsName?.trim() || null,
+    p_mls_url: input.mlsUrl?.trim() || null,
+    p_landvoice_leads: input.landvoiceLeads?.trim() || null,
+    p_referral: input.referral?.trim() || null,
+    p_plan_tier: input.planTier?.trim().toLowerCase() || null,
+    p_billing_cycle: input.billingCycle?.trim().toLowerCase() || null,
+  });
+
+  if (error) {
+    return { success: false, message: error.message };
+  }
+
+  return { success: true };
+}
+
+export type ResumePendingBrokerSignupResult =
+  | { success: true; officeId: string | null }
+  | { success: false; message: string };
+
+/**
+ * Post-login resume: idempotent call that finishes broker provisioning if this user has a
+ * `pending_broker_signups` row or is already provisioned. Returns `officeId=null` when there is
+ * nothing to do (non-broker accounts, legacy users). Never throws on the happy path — errors
+ * surface via `success: false` so callers can decide whether to fail open.
+ */
+export async function resumePendingBrokerSignup(): Promise<ResumePendingBrokerSignupResult> {
+  if (!supabase) {
+    return { success: false, message: "Supabase client unavailable" };
+  }
+
+  const { data, error } = await supabase.rpc("resume_pending_broker_signup");
+
+  if (error) {
+    return { success: false, message: error.message };
+  }
+
+  const raw = data as unknown;
+  const officeId =
+    typeof raw === "string" && raw.trim().length > 0 ? raw.trim() : null;
+
+  return { success: true, officeId };
 }
 
 export type CompleteBrokerSignupResult =
@@ -99,12 +182,16 @@ export type CompleteBrokerSignupResult =
 export async function completeBrokerSignup(input: {
   displayName: string;
   officeName: string;
-  teamName: string;
+  /** Optional; empty omitted in RPC as null. */
+  teamName?: string | null;
   firmAddress: string;
   state: string;
-  mlsName: string;
-  mlsUrl: string;
-  landvoiceLeads: string;
+  /** Optional; empty omitted in RPC as null. */
+  mlsName?: string | null;
+  /** Optional; empty omitted in RPC as null. */
+  mlsUrl?: string | null;
+  /** Optional; empty omitted in RPC as null. */
+  landvoiceLeads?: string | null;
   /** Optional; empty omitted in RPC as null. */
   referral: string | null;
   brokerPhone?: string | null;
@@ -117,12 +204,12 @@ export async function completeBrokerSignup(input: {
   const { data, error } = await supabase.rpc("complete_broker_signup", {
     p_display_name: input.displayName,
     p_office_name: input.officeName,
-    p_team_name: input.teamName,
+    p_team_name: input.teamName?.trim() || null,
     p_firm_address: input.firmAddress,
     p_state: input.state,
-    p_mls_name: input.mlsName,
-    p_mls_url: input.mlsUrl,
-    p_landvoice_leads: input.landvoiceLeads,
+    p_mls_name: input.mlsName?.trim() || null,
+    p_mls_url: input.mlsUrl?.trim() || null,
+    p_landvoice_leads: input.landvoiceLeads?.trim() || null,
     p_referral: input.referral?.trim() || null,
     p_broker_phone: input.brokerPhone?.trim() || null,
     p_plan_key: input.planKey?.trim().toLowerCase() || null,

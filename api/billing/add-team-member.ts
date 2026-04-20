@@ -9,6 +9,7 @@ import {
   resolveNextPaidSeatCountForAdd,
   syncStripeSeatQuantity,
 } from "./seatSyncShared.js";
+import { resolveAppBaseUrl } from "./appBaseUrl.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 function parseJsonBody(req: VercelRequest): Record<string, unknown> {
@@ -43,14 +44,6 @@ function parseJsonBody(req: VercelRequest): Record<string, unknown> {
     return raw as Record<string, unknown>;
   }
   return {};
-}
-
-function getAppBaseUrl(): string {
-  const explicit = process.env.APP_URL?.trim() || process.env.VITE_APP_URL?.trim();
-  if (explicit) {
-    return explicit.replace(/\/$/, "");
-  }
-  return "http://localhost:3000";
 }
 
 function basicEmailValid(email: string): boolean {
@@ -276,7 +269,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         throw new Error(memErr.message);
       }
     } else {
-      const redirectTo = `${getAppBaseUrl()}/login`;
+      const redirectTo = `${resolveAppBaseUrl(req)}/login`;
       const { data: invited, error: inviteErr } = await admin.auth.admin.inviteUserByEmail(
         email,
         {

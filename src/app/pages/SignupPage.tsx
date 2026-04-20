@@ -13,7 +13,8 @@ import {
 } from "../components/ui/card";
 import { useAuth } from "../contexts/AuthContext";
 import {
-  completeBrokerSignup,
+  resumePendingBrokerSignup,
+  savePendingBrokerSignup,
   signOut,
   signUpWithPassword,
 } from "../../services/auth";
@@ -23,7 +24,19 @@ import {
   planKeyToBrokerPlanKey,
   type PlanKey,
 } from "../../lib/pricingPlans";
+import type { BillingCycle } from "../../lib/stripePrices";
 import { createBrokerCheckout } from "../../services/billing";
+
+function parseBillingParam(raw: string | null): BillingCycle {
+  return (raw ?? "").trim().toLowerCase() === "annual" ? "annual" : "monthly";
+}
+
+/** Display-only annual prices for the selected-plan summary; checkout pricing is server-side. */
+const PLAN_ANNUAL_PRICE: Record<PlanKey, number> = {
+  core: 2999,
+  growth: 3500,
+  pro: 4999,
+};
 import { Textarea } from "../components/ui/textarea";
 
 /** Set when broker checkout fails after signup; blocks `<Navigate to="/">` until retry or successful payment. */
@@ -38,6 +51,11 @@ export function SignupPage() {
   const [params] = useSearchParams();
   const planParam = params.get("plan");
   const planKey = useMemo(() => parsePlanKey(planParam), [planParam]);
+  const billingParam = params.get("billing");
+  const billingCycle = useMemo<BillingCycle>(
+    () => parseBillingParam(billingParam),
+    [billingParam]
+  );
 
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -161,20 +179,8 @@ export function SignupPage() {
     if (!firmAddress.trim()) {
       next.firmAddress = "Enter your firm’s street address.";
     }
-    if (!teamName.trim()) {
-      next.teamName = "Enter your team name.";
-    }
     if (!licensedStates.trim()) {
       next.licensedStates = "Enter the state(s) where you’re licensed.";
-    }
-    if (!mlsName.trim()) {
-      next.mlsName = "Enter your MLS name.";
-    }
-    if (!mlsUrl.trim()) {
-      next.mlsUrl = "Enter your MLS website or member portal URL.";
-    }
-    if (!landvoiceLeads.trim()) {
-      next.landvoiceLeads = "Describe your Landvoice lead needs or territory.";
     }
     console.log("fieldErrors", next);
     setFieldErrors(next);
@@ -197,18 +203,48 @@ export function SignupPage() {
     brokerCheckoutPendingRef.current = true;
     setSubmitting(true);
 
-    console.log("[signup] step 1/3 signUpWithPassword: start");
+    // Persist the form to `pending_broker_signups` BEFORE `supabase.auth.signUp`. This is what
+    // survives email confirmation: on the next login, RootLayout calls `resume_pending_broker_signup`
+    // which provisions the office + broker role + membership from this row. Without this, a user
+    // who confirms email in a new browser/device never gets provisioned.
+    console.log("[signup] step 1/4 savePendingBrokerSignup: start");
+    const saved = await savePendingBrokerSignup({
+      email: email.trim(),
+      fullName: fullName.trim(),
+      phone: phone.trim(),
+      firmName: firmName.trim(),
+      teamName: teamName.trim() || null,
+      firmAddress: firmAddress.trim(),
+      licensedStates: licensedStates.trim(),
+      mlsName: mlsName.trim() || null,
+      mlsUrl: mlsUrl.trim() || null,
+      landvoiceLeads: landvoiceLeads.trim() || null,
+      referral: referral.trim() || null,
+      planTier: effectivePlan,
+      billingCycle,
+    });
+    console.log("[signup] step 1/4 savePendingBrokerSignup: result", { success: saved.success });
+    if (!saved.success) {
+      console.warn("[signup] step 1/4 savePendingBrokerSignup: failed", saved.message);
+      brokerCheckoutPendingRef.current = false;
+      setSubmitting(false);
+      setSubmitError(saved.message);
+      return;
+    }
+
+    console.log("[signup] step 2/4 signUpWithPassword: start");
     const signUpResult = await signUpWithPassword(email.trim(), password, {
       displayName: fullName.trim(),
+      signupSource: "broker_signup",
     });
-    console.log("[signup] step 1/3 signUpWithPassword: result", {
+    console.log("[signup] step 2/4 signUpWithPassword: result", {
       success: signUpResult.success,
       sessionEstablished:
         signUpResult.success ? signUpResult.sessionEstablished : undefined,
     });
 
     if (!signUpResult.success) {
-      console.warn("[signup] step 1/3 signUpWithPassword: failed", signUpResult.message);
+      console.warn("[signup] step 2/4 signUpWithPassword: failed", signUpResult.message);
       brokerCheckoutPendingRef.current = false;
       setSubmitting(false);
       setSubmitError(signUpResult.message);
@@ -216,60 +252,53 @@ export function SignupPage() {
     }
 
     if (!signUpResult.sessionEstablished) {
-      console.log("[signup] step 1/3: email confirmation required, skipping RPC + checkout");
+      // Email confirmation branch. Nothing else to do from this tab: the pending row waits for
+      // the user to confirm the email + sign in, at which point RootLayout resumes provisioning
+      // and the billing gate routes them into checkout.
+      console.log("[signup] step 2/4: email confirmation required — pending row will resume on login");
       brokerCheckoutPendingRef.current = false;
       setSubmitting(false);
       setNeedsEmailConfirm(true);
       return;
     }
 
-    console.log("[signup] step 2/3 completeBrokerSignup (RPC): start");
-    const provision = await completeBrokerSignup({
-      displayName: fullName.trim(),
-      officeName: firmName.trim(),
-      teamName: teamName.trim(),
-      firmAddress: firmAddress.trim(),
-      state: licensedStates.trim(),
-      mlsName: mlsName.trim(),
-      mlsUrl: mlsUrl.trim(),
-      landvoiceLeads: landvoiceLeads.trim(),
-      referral: referral.trim() || null,
-      brokerPhone: phone.trim(),
-      planKey: effectivePlan,
-    });
-    console.log("[signup] step 2/3 completeBrokerSignup (RPC): result", {
-      success: provision.success,
-      officeId: provision.success ? provision.officeId : undefined,
-    });
+    console.log("[signup] step 3/4 resumePendingBrokerSignup (RPC): start");
+    const provision = await resumePendingBrokerSignup();
+    console.log("[signup] step 3/4 resumePendingBrokerSignup (RPC): result", provision);
 
-    if (!provision.success) {
-      console.warn("[signup] step 2/3 completeBrokerSignup (RPC): failed", provision.message);
+    if (!provision.success || !provision.officeId) {
+      const message = provision.success
+        ? "Signup did not return an office id."
+        : provision.message;
+      console.warn("[signup] step 3/4 resumePendingBrokerSignup (RPC): failed", message);
       await signOut();
       brokerCheckoutPendingRef.current = false;
       setSubmitting(false);
-      setSubmitError(provision.message);
+      setSubmitError(message);
       return;
     }
 
     try {
-      console.log("[signup] step 3/3 createBrokerCheckout: start", {
+      console.log("[signup] step 4/4 createBrokerCheckout: start", {
         officeId: provision.officeId,
         plan: planKeyToBrokerPlanKey(effectivePlan),
+        billing: billingCycle,
       });
       const checkout = await createBrokerCheckout({
         officeId: provision.officeId,
         officeName: firmName.trim(),
         brokerEmail: email.trim(),
         plan: planKeyToBrokerPlanKey(effectivePlan),
+        billing: billingCycle,
       });
       const url = checkout.url?.trim();
       if (!url) {
         throw new Error("Checkout did not return a payment link. Try again or contact support.");
       }
-      console.log("[signup] step 3/3 createBrokerCheckout: redirecting to Stripe");
+      console.log("[signup] step 4/4 createBrokerCheckout: redirecting to Stripe");
       window.location.href = url;
     } catch (err) {
-      console.error("[signup] step 3/3 createBrokerCheckout: failed", err);
+      console.error("[signup] step 4/4 createBrokerCheckout: failed", err);
       brokerCheckoutPendingRef.current = false;
       sessionStorage.setItem(SIGNUP_CHECKOUT_FAILED_KEY, "1");
       setCheckoutFailedBlocksHome(true);
@@ -322,7 +351,10 @@ export function SignupPage() {
                   {planSummary.label}
                   <span className="font-normal text-muted-foreground">
                     {" "}
-                    · ${planSummary.pricePerMonth}/mo
+                    ·{" "}
+                    {billingCycle === "annual"
+                      ? `$${PLAN_ANNUAL_PRICE[effectivePlan].toLocaleString("en-US")}/yr`
+                      : `$${planSummary.pricePerMonth}/mo`}
                   </span>
                 </p>
                 <p className="mt-2 text-xs leading-snug text-muted-foreground">{planSummary.tagline}</p>

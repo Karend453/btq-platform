@@ -4,8 +4,10 @@ import { getStripeServer } from "../../src/lib/stripeServer.js";
 import {
   getBrokerPlanPriceId,
   getSeatPriceId,
+  type BillingCycle,
   type BrokerPlanKey,
 } from "../../src/lib/stripePrices.js";
+import { resolveAppBaseUrl } from "./appBaseUrl.js";
 
 const BROKER_PLAN_KEYS: readonly BrokerPlanKey[] = [
   "broker_core_monthly",
@@ -13,8 +15,20 @@ const BROKER_PLAN_KEYS: readonly BrokerPlanKey[] = [
   "broker_pro_monthly",
 ];
 
+const BILLING_CYCLES: readonly BillingCycle[] = ["monthly", "annual"];
+
 function isBrokerPlanKey(value: unknown): value is BrokerPlanKey {
   return typeof value === "string" && BROKER_PLAN_KEYS.includes(value as BrokerPlanKey);
+}
+
+/** Accepts `"monthly"` / `"annual"` (any casing). Missing or unrecognized → `"monthly"`. */
+function parseBillingCycle(value: unknown): BillingCycle {
+  if (typeof value === "string") {
+    const v = value.trim().toLowerCase();
+    if (v === "annual" || v === "yearly" || v === "yr") return "annual";
+    if (v === "monthly" || v === "month" || v === "mo") return "monthly";
+  }
+  return "monthly";
 }
 
 /** Vercel may leave `body` unparsed, a string, or a Buffer depending on runtime. */
@@ -51,21 +65,6 @@ function parseJsonBody(req: VercelRequest): Record<string, unknown> {
     return raw as Record<string, unknown>;
   }
   return {};
-}
-
-function getBaseUrl(req: VercelRequest): string {
-  const explicit =
-    process.env.APP_URL?.trim() || process.env.VITE_APP_URL?.trim();
-  if (explicit) {
-    return explicit.replace(/\/$/, "");
-  }
-
-  const host = req.headers.host;
-  if (!host) {
-    return "http://localhost:3000";
-  }
-  const protocol = host.includes("localhost") ? "http" : "https";
-  return `${protocol}://${host}`;
 }
 
 function logCheckoutError(error: unknown, context?: string): void {
@@ -109,6 +108,7 @@ export default async function handler(
     const officeName = raw.officeName;
     const brokerEmail = raw.brokerEmail;
     const plan = raw.plan;
+    const billing: BillingCycle = parseBillingCycle(raw.billing);
     const seatQtyRaw = raw.seatQuantity;
 
     const seatQuantity =
@@ -141,9 +141,20 @@ export default async function handler(
       });
     }
 
+    if (!BILLING_CYCLES.includes(billing)) {
+      console.warn("[create-checkout-session] validation failed: invalid billing cycle", {
+        billing,
+        expected: BILLING_CYCLES,
+      });
+      return res.status(400).json({
+        error: "Invalid billing cycle",
+        expected: BILLING_CYCLES,
+      });
+    }
+
     const explicitAppUrl = process.env.APP_URL?.trim() || null;
     const explicitViteAppUrl = process.env.VITE_APP_URL?.trim() || null;
-    const baseUrl = getBaseUrl(req);
+    const baseUrl = resolveAppBaseUrl(req);
     console.log("[create-checkout-session] base URL resolved", {
       baseUrl,
       usedExplicitAppUrl: !!explicitAppUrl,
@@ -172,16 +183,18 @@ export default async function handler(
 
     console.log("[create-checkout-session] parsed request", {
       plan,
+      billing,
       seatQuantity,
       officeIdLength: officeIdTrimmed.length,
     });
 
     let brokerPriceId: string;
     try {
-      console.log("[create-checkout-session] resolving broker plan price id", { plan });
-      brokerPriceId = getBrokerPlanPriceId(plan);
+      console.log("[create-checkout-session] resolving broker plan price id", { plan, billing });
+      brokerPriceId = getBrokerPlanPriceId(plan, billing);
       console.log("[create-checkout-session] broker plan price id ok", {
         priceId: brokerPriceId,
+        billing,
       });
     } catch (error) {
       logCheckoutError(error, "throw at getBrokerPlanPriceId()");
@@ -219,6 +232,7 @@ export default async function handler(
         metadata: {
           office_id: officeIdTrimmed,
           plan_tier: plan,
+          billing_cycle: billing,
           signup_email: brokerEmailTrimmed,
           office_name: officeNameTrimmed,
           broker_email: brokerEmailTrimmed,
@@ -229,6 +243,7 @@ export default async function handler(
           metadata: {
             office_id: officeIdTrimmed,
             plan_tier: plan,
+            billing_cycle: billing,
             signup_email: brokerEmailTrimmed,
             office_name: officeNameTrimmed,
             broker_email: brokerEmailTrimmed,

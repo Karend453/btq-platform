@@ -4,19 +4,7 @@ import { getStripeServer } from "../../src/lib/stripeServer.js";
 import { getSupabaseServiceRole } from "../../src/lib/supabaseServer.js";
 import { getUserIdFromAuthHeader } from "./billingAuth.js";
 import { getUserProfileRoleKeyForBilling, resolveWalletOfficeId } from "./billingOfficeContext.js";
-
-function getReturnBaseUrl(req: VercelRequest): string {
-  const explicit = process.env.APP_URL?.trim() || process.env.VITE_APP_URL?.trim();
-  if (explicit) {
-    return explicit.replace(/\/$/, "");
-  }
-  const host = req.headers.host;
-  if (!host) {
-    return "http://localhost:3000";
-  }
-  const protocol = host.includes("localhost") ? "http" : "https";
-  return `${protocol}://${host}`;
-}
+import { resolveAppBaseUrl } from "./appBaseUrl.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") {
@@ -88,7 +76,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    const base = getReturnBaseUrl(req);
+    const base = resolveAppBaseUrl(req);
     const session = await stripe.billingPortal.sessions.create({
       customer: customerId,
       return_url: `${base}/settings?tab=wallet`,
