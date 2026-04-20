@@ -25,6 +25,12 @@ export type Office = {
   mls_name: string | null;
   /** Signup / marketing tier (`complete_broker_signup`). */
   plan_tier?: string | null;
+  /**
+   * Broker's originally-selected billing cadence at signup (`"monthly"` | `"annual"`). Written
+   * once by `resume_pending_broker_signup`; never touched by the Stripe webhook. Used by the
+   * `/billing-required` retry screen so an annual pick stays annual through checkout.
+   */
+  signup_billing_cycle?: string | null;
   stripe_customer_id?: string | null;
   stripe_subscription_id?: string | null;
   /** Last tier from Stripe metadata / webhook; overrides display when set. */
@@ -118,7 +124,7 @@ export async function getCurrentOffice(): Promise<Office | null> {
   const { data: office, error: officeError } = await supabase
     .from("offices")
     .select(
-      "id, name, display_name, state, address_line1, city, postal_code, broker_name, broker_email, mls_name, plan_tier, stripe_customer_id, stripe_subscription_id, billing_plan_tier, billing_status, billing_seat_quantity, billing_current_period_end, billing_cancel_at_period_end, billing_email, app_access_status, display_plan_label"
+      "id, name, display_name, state, address_line1, city, postal_code, broker_name, broker_email, mls_name, plan_tier, signup_billing_cycle, stripe_customer_id, stripe_subscription_id, billing_plan_tier, billing_status, billing_seat_quantity, billing_current_period_end, billing_cancel_at_period_end, billing_email, app_access_status, display_plan_label"
     )
     .eq("id", officeId)
     .maybeSingle();
@@ -142,7 +148,7 @@ export async function getOfficeById(officeId: string): Promise<Office | null> {
   const { data: office, error: officeError } = await supabase
     .from("offices")
     .select(
-      "id, name, display_name, state, address_line1, city, postal_code, broker_name, broker_email, mls_name, plan_tier, stripe_customer_id, stripe_subscription_id, billing_plan_tier, billing_status, billing_seat_quantity, billing_current_period_end, billing_cancel_at_period_end, billing_email, app_access_status, display_plan_label"
+      "id, name, display_name, state, address_line1, city, postal_code, broker_name, broker_email, mls_name, plan_tier, signup_billing_cycle, stripe_customer_id, stripe_subscription_id, billing_plan_tier, billing_status, billing_seat_quantity, billing_current_period_end, billing_cancel_at_period_end, billing_email, app_access_status, display_plan_label"
     )
     .eq("id", id)
     .maybeSingle();

@@ -18,13 +18,18 @@ import {
   resolvePlanKeyFromOfficeFields,
   type PlanKey,
 } from "../../lib/pricingPlans";
+import type { BillingCycle } from "../../lib/stripePrices";
+
+/** Coerces the text column `offices.signup_billing_cycle` into a `BillingCycle`. Unknown / empty → monthly. */
+function resolveSignupBillingCycle(raw: string | null | undefined): BillingCycle {
+  return (raw ?? "").trim().toLowerCase() === "annual" ? "annual" : "monthly";
+}
 
 /**
  * Post-login billing gate: shown when a broker signed in without an active Stripe subscription
- * (e.g. confirmed email but never completed checkout on signup). Offers a single CTA back into
- * checkout using the plan captured on `offices.plan_tier`. Defaults to monthly cadence — the
- * signup page only captures cadence in a query param and we don't persist it, so users wanting
- * annual can switch from the Stripe page or return to `/pricing`.
+ * (e.g. confirmed email but never completed checkout on signup). Offers a single CTA that
+ * re-opens Stripe Checkout for the plan + cadence the broker originally picked at signup,
+ * captured on `offices.plan_tier` + `offices.signup_billing_cycle` by `resume_pending_broker_signup`.
  */
 export function BillingRequiredPage() {
   const { user } = useAuth();
@@ -58,7 +63,11 @@ export function BillingRequiredPage() {
   const resolvedPlanKey: PlanKey =
     resolvePlanKeyFromOfficeFields(office?.plan_tier ?? office?.billing_plan_tier ?? null) ??
     "core";
+  const resolvedBillingCycle: BillingCycle = resolveSignupBillingCycle(
+    office?.signup_billing_cycle
+  );
   const planLabel = PLAN_DETAILS[resolvedPlanKey].label;
+  const cycleLabel = resolvedBillingCycle === "annual" ? "annual" : "monthly";
 
   async function handleStartCheckout() {
     if (!office || !user?.email) return;
@@ -70,7 +79,7 @@ export function BillingRequiredPage() {
         officeName: office.display_name?.trim() || office.name,
         brokerEmail: user.email,
         plan: planKeyToBrokerPlanKey(resolvedPlanKey),
-        billing: "monthly",
+        billing: resolvedBillingCycle,
       });
       const url = checkout.url?.trim();
       if (!url) {
@@ -97,8 +106,10 @@ export function BillingRequiredPage() {
           <CardTitle>Complete billing to continue</CardTitle>
           <CardDescription>
             Your brokerage workspace is ready. Finish secure checkout to activate your{" "}
-            <span className="font-medium text-foreground">{planLabel}</span> subscription and unlock
-            BTQ.
+            <span className="font-medium text-foreground">
+              {planLabel} ({cycleLabel})
+            </span>{" "}
+            subscription and unlock BTQ.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
