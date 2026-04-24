@@ -10,6 +10,7 @@ import {
   syncStripeSeatQuantity,
 } from "./seatSyncShared.js";
 import { resolveAppBaseUrl } from "./appBaseUrl.js";
+import { sendInternalTeamAddNotification } from "./internalTeamAddNotifier.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 function parseJsonBody(req: VercelRequest): Record<string, unknown> {
@@ -409,6 +410,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     return res.status(400).json({ error: msg });
+  }
+
+  try {
+    const { data: officeInfo } = await admin
+      .from("offices")
+      .select("name, plan_tier")
+      .eq("id", officeId)
+      .maybeSingle();
+    const displayEmail = email.toLowerCase();
+    console.log("Preparing internal team add notification", {
+      officeId,
+      email,
+      role,
+    });
+    await sendInternalTeamAddNotification({
+      officeName:
+        typeof officeInfo?.name === "string" ? officeInfo.name : null,
+      displayName: displayName || displayEmail,
+      displayEmail,
+      role,
+      planTier:
+        typeof officeInfo?.plan_tier === "string"
+          ? officeInfo.plan_tier
+          : null,
+    });
+  } catch (error) {
+    console.error("Failed to send internal team add notification", error);
   }
 
   return res.status(200).json({ ok: true });
