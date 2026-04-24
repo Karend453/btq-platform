@@ -146,7 +146,7 @@ function PendingSection({
 }) {
   const showActions = Boolean(canManageTeam && onResend && onRemoveInvite);
   if (rows.length === 0 && !showActions) return null;
-  const colSpan = showActions ? 4 : 3;
+  const colSpan = showActions ? 3 : 2;
   return (
     <div className="space-y-2">
       <div className="space-y-1 min-w-0">
@@ -159,9 +159,6 @@ function PendingSection({
         <table className="w-full min-w-[20rem] text-left text-sm">
           <thead className="border-b border-slate-200 bg-slate-50/80 text-slate-700">
             <tr>
-              <th scope="col" className="px-3 py-2 font-medium">
-                Name
-              </th>
               <th scope="col" className="px-3 py-2 font-medium">
                 Email
               </th>
@@ -186,11 +183,8 @@ function PendingSection({
               rows.map((row) => {
                 const inviteEmail = row.invite_email?.trim() || null;
                 const displayEmail = row.email?.trim() || inviteEmail || "—";
-                const displayName =
-                  row.display_name?.trim() || "Invited user";
                 return (
                 <tr key={row.id}>
-                  <td className="px-3 py-2.5 text-slate-900 align-top">{displayName}</td>
                   <td className="px-3 py-2.5 text-slate-900 align-top break-words">
                     {displayEmail}
                   </td>
