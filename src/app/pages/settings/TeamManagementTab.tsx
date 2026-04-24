@@ -183,11 +183,16 @@ function PendingSection({
                 </td>
               </tr>
             ) : (
-              rows.map((row) => (
+              rows.map((row) => {
+                const inviteEmail = row.invite_email?.trim() || null;
+                const displayEmail = row.email?.trim() || inviteEmail || "—";
+                const displayName =
+                  row.display_name?.trim() || inviteEmail || "Invited user";
+                return (
                 <tr key={row.id}>
-                  <td className="px-3 py-2.5 text-slate-900 align-top">{memberDisplayName(row)}</td>
+                  <td className="px-3 py-2.5 text-slate-900 align-top">{displayName}</td>
                   <td className="px-3 py-2.5 text-slate-900 align-top break-words">
-                    {row.email?.trim() || "—"}
+                    {displayEmail}
                   </td>
                   <td className="px-3 py-2.5 text-slate-900 align-top whitespace-nowrap">
                     {formatOfficeRoleLabel(row.role)}
@@ -217,7 +222,8 @@ function PendingSection({
                     </td>
                   ) : null}
                 </tr>
-              ))
+                );
+              })
             )}
           </tbody>
         </table>

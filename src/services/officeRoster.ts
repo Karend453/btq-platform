@@ -16,6 +16,7 @@ export type OfficeRosterMember = {
   role: string | null;
   display_name: string | null;
   created_at: string;
+  invite_email?: string | null;
 };
 
 export type OfficeRosterSummary = {
@@ -122,6 +123,7 @@ type OfficeMembershipQueryRow = {
   role: string | null;
   status: string;
   created_at: string;
+  invite_email: string | null;
   user_profiles: MembershipProfileJoin | MembershipProfileJoin[] | null;
 };
 
@@ -143,6 +145,7 @@ function mapOfficeMembershipToRosterMember(row: OfficeMembershipQueryRow): Offic
     role: row.role ?? null,
     display_name: p?.display_name ?? null,
     created_at: row.created_at,
+    invite_email: row.invite_email ?? null,
   };
 }
 
@@ -189,6 +192,7 @@ export async function listOfficeRoster(officeId: string): Promise<{
       role,
       status,
       created_at,
+      invite_email,
       user_profiles (
         display_name,
         email
@@ -231,6 +235,7 @@ export async function listOfficePendingRoster(officeId: string): Promise<{
       role,
       status,
       created_at,
+      invite_email,
       user_profiles (
         display_name,
         email
