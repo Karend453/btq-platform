@@ -36,7 +36,7 @@ const navSectionsDefault: NavSection[] = [
     items: [
       {
         label: "Agents",
-        href: "/agents",
+        href: "/settings?tab=subagents",
         icon: Users,
       },
       {
@@ -90,7 +90,7 @@ const navSectionsBroker: NavSection[] = [
     items: [
       {
         label: "Agents",
-        href: "/settings",
+        href: "/settings?tab=subagents",
         icon: Users,
       },
       {

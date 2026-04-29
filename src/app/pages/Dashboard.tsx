@@ -324,7 +324,7 @@ export function Dashboard() {
                   <Link to="/settings">Complete setup</Link>
                 </Button>
                 <Button variant="outline" asChild>
-                  <Link to="/agents">Add your first agent</Link>
+                  <Link to="/settings?tab=subagents">Add your first agent</Link>
                 </Button>
               </div>
             </div>

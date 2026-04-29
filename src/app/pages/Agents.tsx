@@ -1,16 +1,11 @@
 import React from "react";
-import { Users } from "lucide-react";
+import { Navigate } from "react-router-dom";
 
+/**
+ * The standalone Agents page is a placeholder; the working agent management UI lives in the
+ * Team Management tab of Settings. We keep the `/agents` route registered (legacy links, sidebar
+ * entries) but immediately redirect to the real flow. `replace` keeps `/agents` out of history.
+ */
 export function Agents() {
-  return (
-    <div className="p-6">
-      <div className="max-w-7xl mx-auto">
-        <div className="flex items-center gap-3 mb-6">
-          <Users className="h-8 w-8 text-slate-600" />
-          <h1 className="text-3xl font-semibold text-slate-900">Agents</h1>
-        </div>
-        <p className="text-slate-600">Agent management page coming soon...</p>
-      </div>
-    </div>
-  );
+  return <Navigate to="/settings?tab=subagents" replace />;
 }
