@@ -45,9 +45,11 @@ import { fetchCommentsByTransactionId, insertComment } from "../../services/chec
 import { insertActivityEntry, fetchActivityByTransactionId } from "../../services/transactionActivity";
 import {
   getCurrentUser,
+  getCurrentUserProfileSnapshot,
   getTransactionRuntimeRole,
   transactionRuntimeRoleToUiRole,
   uiTransactionRoleToEngineRole,
+  type FormsProviderValue,
   type UiTransactionRole,
 } from "../../services/auth";
 import { useAuth } from "../contexts/AuthContext";
@@ -77,8 +79,9 @@ import {
 } from "../../services/clientPortfolio";
 import { requestQueuedExportProcessing } from "../../services/transactionExportProcessApi";
 import TransactionOverview from "./sections/TransactionOverview";
-import TransactionExportPackageSection from "./sections/TransactionExportPackageSection";
+import { TransactionFormsLinkInlineShortcut } from "./sections/TransactionFormsLinkInlineShortcut";
 import TransactionInbox from "./sections/TransactionInbox";
+import { TransactionDocumentInboxActions } from "./sections/TransactionDocumentInboxActions";
 import TransactionControls from "./sections/TransactionControls";
 import TransactionActivity from "./sections/TransactionActivity";
 import Checklist from "./sections/Checklist";
@@ -291,6 +294,10 @@ export default function TransactionDetailsPage() {
   const [currentUserName, setCurrentUserName] = useState<string>("Current User");
   const [currentUserId, setCurrentUserId] = useState<string>("");
   const [currentUserRole, setCurrentUserRole] = useState<UiTransactionRole>("Admin");
+  /** `undefined` while loading the profile; `null` when the viewer has not chosen a provider in Settings. */
+  const [preferredFormsProvider, setPreferredFormsProvider] = useState<
+    FormsProviderValue | null | undefined
+  >(undefined);
 
   const reloadTransaction = useCallback(
     async (opts?: { isCancelled?: () => boolean }) => {
@@ -999,6 +1006,27 @@ export default function TransactionDetailsPage() {
     return () => { cancelled = true; };
   }, [authUser?.id]);
 
+  useEffect(() => {
+    if (authLoading) return;
+    if (!authUser?.id) {
+      setPreferredFormsProvider(null);
+      return;
+    }
+    let cancelled = false;
+    setPreferredFormsProvider(undefined);
+    void getCurrentUserProfileSnapshot()
+      .then((snapshot) => {
+        if (cancelled) return;
+        setPreferredFormsProvider(snapshot?.preferred_forms_provider ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setPreferredFormsProvider(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [authLoading, authUser?.id]);
+
   const checklistTemplateId = transaction?.checklist_template_id?.trim() || null;
   const [assignedAgentName, setAssignedAgentName] = useState("Unassigned");
 
@@ -1399,12 +1427,8 @@ export default function TransactionDetailsPage() {
           onFinalizeClosingClick={() => void openFinalizeClosingModal()}
           finalizeClosingDisabled={isReadOnly || finalizeSubmitting || !canOfferFinalizeClosing}
           unattachedInboxDocumentCount={unattachedInboxDocumentCount}
-        />
-
-        <TransactionExportPackageSection
-          portfolioSnapshot={portfolioSnapshot}
-          latestExport={latestExportSnapshot}
-          exportBusy={finalizeSubmitting}
+          intakeEmail={intakeEmail}
+          onCopyIntakeEmail={handleCopyIntakeEmail}
         />
 
         <Dialog
@@ -1573,8 +1597,20 @@ export default function TransactionDetailsPage() {
           currentUserRole={currentUserRole}
           onStatusChange={handleStatusChange}
           onClosingDateChange={handleClosingDateChange}
-          intakeEmail={intakeEmail}
-          onCopyIntakeEmail={handleCopyIntakeEmail}
+          documentInboxActions={
+            <TransactionDocumentInboxActions
+              transactionId={id}
+              inboxDocuments={inboxDocuments}
+              onInboxDocumentsChange={setInboxDocuments}
+              addActivityEntry={addActivityEntry}
+              currentUserRole={currentUserRole}
+              isReadOnly={isReadOnly}
+              onOpenInbox={() => {
+                setAttachTargetItem(null);
+                setAttachDrawerOpen(true);
+              }}
+            />
+          }
         />
 
         <TransactionInbox
@@ -1590,6 +1626,14 @@ export default function TransactionDetailsPage() {
           attachTargetItem={attachTargetItem}
           onAttachDrawerOpenChange={handleAttachDrawerOpenChange}
           onAttachTargetChange={setAttachTargetItem}
+          intakeEmail={intakeEmail}
+          externalFormsUrl={transaction.external_forms_url ?? null}
+          preferredFormsProvider={preferredFormsProvider}
+          onSavedExternalFormsUrl={(nextUrl) => {
+            setTransaction((prev) =>
+              prev ? { ...prev, external_forms_url: nextUrl } : prev
+            );
+          }}
         />
 
         <Checklist
@@ -1625,6 +1669,22 @@ export default function TransactionDetailsPage() {
           onAddCustomChecklistItem={isReadOnly ? undefined : handleAddCustomChecklistItem}
           onArchiveChecklistItem={isReadOnly ? undefined : handleArchiveChecklistItem}
           onRestoreChecklistItem={isReadOnly ? undefined : handleRestoreChecklistItem}
+          formsLinkShortcut={
+            id ? (
+              <TransactionFormsLinkInlineShortcut
+                transactionId={id}
+                externalFormsUrl={transaction.external_forms_url ?? null}
+                intakeEmail={transaction.intake_email ?? null}
+                preferredProvider={preferredFormsProvider}
+                disabled={isReadOnly}
+                onSaved={(nextUrl) => {
+                  setTransaction((prev) =>
+                    prev ? { ...prev, external_forms_url: nextUrl } : prev
+                  );
+                }}
+              />
+            ) : null
+          }
         />
 
         <TransactionActivity

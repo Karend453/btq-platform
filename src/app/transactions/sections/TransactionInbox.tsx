@@ -2,26 +2,18 @@ import React, { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
-  ChevronDown,
+  ExternalLink,
   FileText,
   Inbox,
   Paperclip,
-  Filter,
-  Upload,
   Eye,
   Pencil,
   Scissors,
   Trash2,
+  Upload,
 } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
-import { Card, CardContent, CardHeader } from "../../components/ui/card";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "../../components/ui/collapsible";
-import { cn } from "../../components/ui/utils";
 import {
   Sheet,
   SheetContent,
@@ -32,6 +24,13 @@ import {
 } from "../../components/ui/sheet";
 import { Label } from "../../components/ui/label";
 import { Input } from "../../components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../components/ui/select";
 import { ChecklistItemSearchPicker } from "./ChecklistItemSearchPicker";
 import {
   Dialog,
@@ -42,12 +41,27 @@ import {
   DialogTitle,
 } from "../../components/ui/dialog";
 import {
-  uploadDocument,
   getSignedUrl,
   attachDocumentToChecklistItem,
   renameTransactionDocumentDisplayName,
   hardDeleteUnattachedInboxDocument,
+  uploadDocument,
 } from "../../../services/transactionDocuments";
+import {
+  type FormsProviderValue,
+  isFormsProviderValue,
+} from "../../../services/auth";
+import { TransactionFormsLinkEditDialog } from "./TransactionFormsLinkEditDialog";
+import { TransactionSendDocumentsDialog } from "./TransactionSendDocumentsDialog";
+
+/** "Open [Provider]" copy used by the Attach Drawer's primary action button. */
+const PROVIDER_LAUNCH_LABELS: Record<FormsProviderValue, string> = {
+  dotloop: "Open Dotloop",
+  skyslope: "Open SkySlope",
+  zipforms: "Open ZipForms",
+  other: "Open Forms Workspace",
+  none: "Open Forms Workspace",
+};
 
 export interface InboxDocument {
   id: string;
@@ -130,6 +144,12 @@ export type TransactionInboxProps = {
   /** Reserved for future intake UX; optional. */
   intakeEmail?: string | null;
   onCopyIntakeEmail?: (text?: string | null) => void;
+  /** Current value of `transactions.external_forms_url`. Drives the "Open [Provider]" action. */
+  externalFormsUrl?: string | null;
+  /** Current user's preferred forms provider; powers the action button label. */
+  preferredFormsProvider?: FormsProviderValue | null;
+  /** Fires after the embedded edit dialog saves/clears the link so the page can refresh state. */
+  onSavedExternalFormsUrl?: (nextUrl: string | null) => void;
 };
 
 function formatRelativeTime(date: Date) {
@@ -164,20 +184,40 @@ export default function TransactionInbox({
   attachTargetItem: controlledAttachTargetItem,
   onAttachDrawerOpenChange,
   onAttachTargetChange,
-  intakeEmail: _intakeEmail,
+  intakeEmail,
   onCopyIntakeEmail: _onCopyIntakeEmail,
+  externalFormsUrl,
+  preferredFormsProvider,
+  onSavedExternalFormsUrl,
 }: TransactionInboxProps) {
   const [internalAttachDrawerOpen, setInternalAttachDrawerOpen] = useState(false);
   const [internalAttachTargetItem, setInternalAttachTargetItem] = useState<ChecklistItem | null>(null);
   const [selectedDocumentForAttach, setSelectedDocumentForAttach] = useState<string | null>(null);
-  const [inboxFilter, setInboxFilter] = useState<InboxFilter>("all");
-  const [isUploading, setIsUploading] = useState(false);
+  // Default to "unattached" — the Attach Drawer's main job is to attach NEW docs, so showing
+  // already-attached docs first is noisy. Users can switch via the subtle filter dropdown.
+  const [inboxFilter, setInboxFilter] = useState<InboxFilter>("unattached");
   const [renameDocId, setRenameDocId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [renameSaving, setRenameSaving] = useState(false);
   const [deleteConfirmDoc, setDeleteConfirmDoc] = useState<InboxDocument | null>(null);
   const [deleteSaving, setDeleteSaving] = useState(false);
+  // Drawer-local upload state (separate from the Document Inbox header upload state in the
+  // Transaction card). Both share the same `uploadDocument` service so behavior is identical.
+  const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // "Send documents" modal — same UX as the Documents-header chip. Shown when the user clicks
+  // "Open [Provider]" and an `external_forms_url` is already saved.
+  const [sendDocsOpen, setSendDocsOpen] = useState(false);
+  // Add/Update transaction-link dialog — opened either from "Open [Provider]" when no link is
+  // saved yet, or from inside the Send Documents modal via "Update link"/"Add [Provider] link".
+  const [linkDialogOpen, setLinkDialogOpen] = useState(false);
+
+  const trimmedExternalFormsUrl = (externalFormsUrl ?? "").trim();
+  const hasExternalFormsUrl = trimmedExternalFormsUrl !== "";
+  const providerLaunchLabel =
+    preferredFormsProvider && isFormsProviderValue(preferredFormsProvider)
+      ? PROVIDER_LAUNCH_LABELS[preferredFormsProvider]
+      : "Open Forms Workspace";
 
   const isControlled = controlledAttachDrawerOpen !== undefined && onAttachDrawerOpenChange !== undefined;
   const isAttachDrawerOpen = isControlled ? controlledAttachDrawerOpen : internalAttachDrawerOpen;
@@ -212,6 +252,46 @@ export default function TransactionInbox({
     setInboxFilter("unattached");
     setAttachDrawerOpen(true);
   };
+
+  async function handleDrawerUploadFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !transactionId) return;
+
+    setIsUploading(true);
+    try {
+      const doc = await uploadDocument(transactionId, file);
+      if (doc) {
+        onInboxDocumentsChange([doc, ...inboxDocuments]);
+        addActivityEntry?.({
+          actor: currentUserRole,
+          category: "docs",
+          type: "document_uploaded",
+          message: `Document uploaded: ${doc.filename}`,
+          documentId: doc.id,
+        });
+        toast.success(`Uploaded "${file.name}"`);
+        // Pre-select the freshly uploaded doc so the user can attach it immediately.
+        setSelectedDocumentForAttach(doc.id);
+      } else {
+        toast.error("Upload failed");
+      }
+    } finally {
+      setIsUploading(false);
+    }
+  }
+
+  function handleOpenProvider() {
+    // Mirror the Documents-header chip exactly: when a link is saved, surface the Send
+    // Documents modal (intake email + copy + Launch [Provider] + Update link). Never open
+    // the external URL straight from the chip — the modal is the only bridge.
+    if (hasExternalFormsUrl) {
+      setSendDocsOpen(true);
+      return;
+    }
+    // No saved link → open the Add/Update transaction-link dialog.
+    setLinkDialogOpen(true);
+  }
 
   const handleAttachDocument = async () => {
     if (!selectedDocumentForAttach) {
@@ -343,38 +423,6 @@ export default function TransactionInbox({
     setAttachTargetItem(null);
     setSelectedDocumentForAttach(null);
   };
-
-  const handleUploadFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file || !transactionId) return;
-
-    setIsUploading(true);
-    try {
-      const doc = await uploadDocument(transactionId, file);
-      if (doc) {
-        onInboxDocumentsChange([doc, ...inboxDocuments]);
-        if (addActivityEntry) {
-          addActivityEntry({
-            actor: currentUserRole,
-            category: "docs",
-            type: "document_uploaded",
-            message: `Document uploaded: ${doc.filename}`,
-            documentId: doc.id,
-          });
-        }
-        toast.success(`Uploaded "${file.name}"`);
-      } else {
-        toast.error("Upload failed");
-      }
-    } finally {
-      setIsUploading(false);
-    }
-  };
-
-  const unattachedDocuments = inboxDocuments.filter((doc) => !doc.isAttached);
-  const unattachedCount = unattachedDocuments.length;
-  const previewInboxDocs = unattachedDocuments.slice(0, 3);
 
   const handleViewDocument = async (doc: InboxDocument) => {
     if (!doc.storage_path) {
@@ -513,169 +561,9 @@ export default function TransactionInbox({
 
   return (
     <>
-      {/* Document Inbox Card */}
-      <Collapsible defaultOpen>
-        <Card className="gap-0 overflow-hidden border-slate-200/90 bg-white shadow-sm">
-          <CardHeader className="space-y-3 border-b border-slate-100 px-4 py-4 sm:space-y-0">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex min-h-10 min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
-                <span className="flex items-center gap-1.5 text-base font-semibold leading-none text-slate-900">
-                  <Inbox className="h-4 w-4 shrink-0 text-slate-500" aria-hidden />
-                  Document Inbox
-                </span>
-                <Badge
-                  variant="outline"
-                  className="shrink-0 border-slate-200 bg-slate-50 text-xs font-normal text-slate-600"
-                >
-                  {unattachedCount} unattached
-                </Badge>
-              </div>
-              <div className="flex flex-shrink-0 flex-wrap items-center gap-1.5">
-                <CollapsibleTrigger asChild>
-                  <button
-                    type="button"
-                    className={cn(
-                      "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md outline-none",
-                      "text-slate-500 transition-colors hover:bg-slate-100/80",
-                      "focus-visible:ring-2 focus-visible:ring-slate-400/30 focus-visible:ring-offset-2",
-                      "data-[state=open]:[&>svg]:rotate-180"
-                    )}
-                    aria-label="Toggle Document Inbox section"
-                  >
-                    <ChevronDown className="h-4 w-4 transition-transform duration-200" aria-hidden />
-                  </button>
-                </CollapsibleTrigger>
-                <div className="flex flex-wrap gap-2">
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    className="hidden"
-                    accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif"
-                    onChange={handleUploadFile}
-                  />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={!transactionId || isUploading || isReadOnly}
-                    onClick={() => fileInputRef.current?.click()}
-                    className="border-slate-200"
-                  >
-                    <Upload className="mr-2 h-4 w-4" />
-                    {isUploading ? "Uploading…" : "Upload"}
-                  </Button>
-                  <Button
-                    variant="default"
-                    size="sm"
-                    className="bg-slate-900 text-white hover:bg-slate-800"
-                    onClick={() => handleOpenAttachDrawer()}
-                  >
-                    <Inbox className="mr-2 h-4 w-4" />
-                    Open inbox
-                  </Button>
-                  {transactionId && (
-                    <Button variant="outline" size="sm" className="border-slate-200" asChild>
-                      <Link to={`/transactions/${transactionId}/split-assign`}>Split &amp; assign</Link>
-                    </Button>
-                  )}
-                </div>
-              </div>
-            </div>
-          </CardHeader>
-          <CollapsibleContent className="overflow-hidden">
-            <CardContent className="px-4 pb-5 pt-4">
-              {previewInboxDocs.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50/50 py-8 text-center text-sm text-slate-500">
-                  <Inbox className="mx-auto mb-2 h-9 w-9 text-slate-300" />
-                  <p>No unattached documents</p>
-                  <p className="mt-1 text-xs text-slate-400">Upload a file or open the inbox to see all documents.</p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {previewInboxDocs.map((doc) => (
-                    <div
-                      key={doc.id}
-                      className="flex items-center gap-3 rounded-lg border border-slate-200/90 bg-slate-50/40 px-3 py-2.5 transition-colors hover:bg-slate-50"
-                    >
-                      <FileText className="h-4 w-4 shrink-0 text-slate-500" aria-hidden />
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-medium text-slate-900">{doc.filename}</div>
-                        <div className="text-[11px] text-slate-500">{formatRelativeTime(doc.receivedAt)}</div>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-1">
-                        {!isReadOnly && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-slate-600"
-                            title="Rename"
-                            onClick={() => openRenameDialog(doc)}
-                          >
-                            <Pencil className="h-4 w-4" />
-                            <span className="sr-only">Rename</span>
-                          </Button>
-                        )}
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-slate-600"
-                          title="View"
-                          onClick={() => void handleViewDocument(doc)}
-                        >
-                          <Eye className="h-4 w-4" />
-                          <span className="sr-only">View</span>
-                        </Button>
-                        {transactionId && (
-                          <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-slate-600" asChild>
-                            <Link to={`/transactions/${transactionId}/documents/${doc.id}/split`} title="Split document">
-                              <Scissors className="h-4 w-4" aria-hidden />
-                              <span className="sr-only">Split document</span>
-                            </Link>
-                          </Button>
-                        )}
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-slate-600"
-                          title="Attach to checklist"
-                          onClick={() => handleOpenAttachDrawer()}
-                        >
-                          <Paperclip className="h-4 w-4" />
-                          <span className="sr-only">Attach</span>
-                        </Button>
-                        {!isReadOnly && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-slate-600 hover:text-red-700"
-                            title="Permanently delete inbox copy"
-                            onClick={() => openDeleteConfirm(doc)}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                            <span className="sr-only">Delete permanently</span>
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                  {unattachedCount > 3 && (
-                    <button
-                      type="button"
-                      onClick={() => handleOpenAttachDrawer()}
-                      className="w-full rounded-md py-1.5 text-center text-sm text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                    >
-                      View all {unattachedCount} documents in inbox
-                    </button>
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </CollapsibleContent>
-        </Card>
-      </Collapsible>
+      {/* Standalone Document Inbox card removed — its actions now live in the Transaction card
+          header (`TransactionDocumentInboxActions`). The Sheet/Dialogs below remain so attach,
+          rename, and delete flows continue to work whenever they're triggered. */}
 
       {/* Attach Document Drawer */}
       <Sheet
@@ -701,43 +589,83 @@ export default function TransactionInbox({
           </SheetHeader>
 
           <div className="space-y-5 py-5">
-            {/* Filter Chips */}
+            {/*
+              Action bar replaces the previous All/Unattached/Recent filter chips. Two intent-based
+              primary actions; the filter survives only as a subtle dropdown on the far right.
+            */}
             <div className="flex flex-wrap items-center gap-2">
-              <Filter className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
-              <div className="flex flex-wrap gap-1.5">
-                <button
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif"
+                onChange={(e) => void handleDrawerUploadFile(e)}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-2 border-slate-200"
+                disabled={!transactionId || isUploading || isReadOnly}
+                onClick={() => fileInputRef.current?.click()}
+                title={
+                  isReadOnly ? "Archived transaction — uploads disabled" : "Upload a file from your computer"
+                }
+              >
+                <Upload className="h-4 w-4" aria-hidden />
+                {isUploading ? "Uploading…" : "Upload from computer"}
+              </Button>
+              {preferredFormsProvider == null ? (
+                <Button
                   type="button"
-                  onClick={() => setInboxFilter("all")}
-                  className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-                    inboxFilter === "all"
-                      ? "bg-slate-900 text-white"
-                      : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                  }`}
+                  variant="outline"
+                  size="sm"
+                  className="gap-2 border-slate-200"
+                  asChild
+                  title="Choose your forms provider in Settings"
                 >
-                  All
-                </button>
-                <button
+                  <Link to="/settings?tab=forms-provider">
+                    <ExternalLink className="h-4 w-4" aria-hidden />
+                    Set forms provider
+                  </Link>
+                </Button>
+              ) : (
+                <Button
                   type="button"
-                  onClick={() => setInboxFilter("unattached")}
-                  className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-                    inboxFilter === "unattached"
-                      ? "bg-slate-900 text-white"
-                      : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                  }`}
+                  variant="outline"
+                  size="sm"
+                  className="gap-2 border-slate-200"
+                  onClick={handleOpenProvider}
+                  title={
+                    hasExternalFormsUrl
+                      ? "Open forms + copy transaction email"
+                      : "No transaction link saved yet — opens the Add link dialog"
+                  }
                 >
-                  Unattached
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setInboxFilter("recent")}
-                  className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-                    inboxFilter === "recent"
-                      ? "bg-slate-900 text-white"
-                      : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                  }`}
+                  <ExternalLink className="h-4 w-4" aria-hidden />
+                  {providerLaunchLabel}
+                </Button>
+              )}
+              <div className="ml-auto flex items-center gap-1.5">
+                <Label htmlFor="inbox-filter" className="text-xs font-normal text-slate-500">
+                  Show
+                </Label>
+                <Select
+                  value={inboxFilter}
+                  onValueChange={(v) => setInboxFilter(v as InboxFilter)}
                 >
-                  Recent
-                </button>
+                  <SelectTrigger
+                    id="inbox-filter"
+                    className="h-8 w-[8.5rem] gap-1.5 border-slate-200 bg-transparent text-xs"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent align="end">
+                    <SelectItem value="unattached">Unattached</SelectItem>
+                    <SelectItem value="all">All</SelectItem>
+                    <SelectItem value="recent">Recent (2d)</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 
@@ -1013,6 +941,43 @@ export default function TransactionInbox({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* "Send documents to this transaction" modal — same component the Documents-header chip
+          uses. Surfaces intake email + copy + Launch [Provider] + Update link. The Launch button
+          is the only path to the external URL; we never open it directly from the action bar. */}
+      <TransactionSendDocumentsDialog
+        open={sendDocsOpen}
+        onOpenChange={setSendDocsOpen}
+        intakeEmail={intakeEmail ?? null}
+        externalFormsUrl={externalFormsUrl ?? null}
+        preferredProvider={preferredFormsProvider ?? null}
+        disabled={isReadOnly}
+        onRequestEditLink={() => {
+          // The modal already closes itself before this fires; queue the edit dialog.
+          setLinkDialogOpen(true);
+        }}
+      />
+
+      {/* Add/Update transaction-link dialog — opened either directly from "Open [Provider]" when
+          no link is saved, or from inside the Send Documents modal via "Update link". Same
+          component the Documents-header chip uses, so save/clear flows are identical. */}
+      {transactionId ? (
+        <TransactionFormsLinkEditDialog
+          open={linkDialogOpen}
+          onOpenChange={setLinkDialogOpen}
+          transactionId={transactionId}
+          externalFormsUrl={externalFormsUrl ?? null}
+          preferredProvider={preferredFormsProvider ?? null}
+          disabled={isReadOnly}
+          onSaved={(nextUrl) => {
+            onSavedExternalFormsUrl?.(nextUrl);
+            // After saving a valid link, surface the Send Documents modal so the user can copy
+            // the intake email and Launch [Provider] in one motion — without ever opening the
+            // external URL straight from the action bar.
+            if (nextUrl) setSendDocsOpen(true);
+          }}
+        />
+      ) : null}
     </>
   );
 }

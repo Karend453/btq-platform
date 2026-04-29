@@ -1,8 +1,18 @@
 import React, { useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Building2, ClipboardList, Layers, Settings, User, Users, Wallet } from "lucide-react";
+import {
+  Building2,
+  ClipboardList,
+  FileSignature,
+  Layers,
+  Settings,
+  User,
+  Users,
+  Wallet,
+} from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { AccountInfoTab } from "./AccountInfoTab";
+import { FormsProviderTab } from "./FormsProviderTab";
 import {
   OfficeChecklistTemplatesTab,
   type OfficeChecklistTemplatesTabProps,
@@ -17,6 +27,7 @@ const BASE_TAB_CONFIG = [
   { value: "subscriptions", label: "My Subscriptions", icon: Layers },
   { value: "wallet", label: "My Wallet", icon: Wallet },
   { value: "account", label: "Account Info", icon: User },
+  { value: "forms-provider", label: "Forms Provider", icon: FileSignature },
   { value: "subagents", label: "Team Management", icon: Users },
 ] as const;
 
@@ -105,6 +116,9 @@ export function BrokerSettingsPage({ showReadOnlyTemplatesTab = false }: BrokerS
           </TabsContent>
           <TabsContent value="account" className="mt-4">
             <AccountInfoTab />
+          </TabsContent>
+          <TabsContent value="forms-provider" className="mt-4">
+            <FormsProviderTab />
           </TabsContent>
           <TabsContent value="subagents" className="mt-4">
             <TeamManagementTab />

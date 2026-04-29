@@ -1,29 +1,7 @@
-import React, { useMemo, useState } from "react";
-import {
-  Building2,
-  ChevronDown,
-  FileText,
-  LayoutGrid,
-  Loader2,
-  Lock,
-  SquarePen,
-} from "lucide-react";
+import React, { useMemo } from "react";
+import { Copy, Loader2, Lock } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "../../components/ui/dropdown-menu";
-import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-} from "../../components/ui/dialog";
 import {
   Tooltip,
   TooltipContent,
@@ -38,35 +16,7 @@ import type {
   ClientPortfolioForTransactionSnapshot,
   TransactionExportSnapshot,
 } from "../../../services/clientPortfolio";
-import { ExternalToolPanelContent } from "./ExternalToolPanel";
-
-export type ActiveExternalTool = "zipforms" | "dotloop" | "skyslope" | "lofty";
-
-const TOOL_CONFIG: Record<
-  ActiveExternalTool,
-  { label: string; launchUrl: string; showEmail: boolean }
-> = {
-  zipforms: {
-    label: "ZipForms",
-    launchUrl: "https://www.zipformplus.com/",
-    showEmail: true,
-  },
-  dotloop: {
-    label: "Dotloop",
-    launchUrl: "https://www.dotloop.com/",
-    showEmail: true,
-  },
-  skyslope: {
-    label: "SkySlope",
-    launchUrl: "https://skyslope.com/forms-login/",
-    showEmail: true,
-  },
-  lofty: {
-    label: "Lofty",
-    launchUrl: "https://lofty.com/",
-    showEmail: false,
-  },
-};
+import TransactionExportPackageHeaderAction from "./TransactionExportPackageHeaderAction";
 
 function formatPortfolioClosingDate(value: string | null | undefined): string {
   if (!value) return "—";
@@ -98,6 +48,10 @@ type TransactionOverviewSectionProps = {
   finalizeClosingDisabled?: boolean;
   /** Inbox documents not linked to any checklist row — must be resolved before finalizing. */
   unattachedInboxDocumentCount?: number;
+  /** Per-transaction intake email; moved here from the Transaction card so it's always visible. */
+  intakeEmail?: string | null;
+  /** Copy handler — fires page-level toast/clipboard logic. */
+  onCopyIntakeEmail?: (text?: string | null) => void;
 };
 
 /** `pending` = spinner (processing only, or legacy client “pending” ZIP build). `queued` = static lock. */
@@ -134,11 +88,14 @@ export default function TransactionOverviewSection({
   onFinalizeClosingClick,
   finalizeClosingDisabled,
   unattachedInboxDocumentCount = 0,
+  intakeEmail,
+  onCopyIntakeEmail,
 }: TransactionOverviewSectionProps) {
+  const trimmedIntakeEmail = (intakeEmail ?? "").trim();
+  const hasIntakeEmail = trimmedIntakeEmail !== "";
   const portfolioStage = portfolioSnapshot?.portfolio_stage;
   const isFinalized = portfolioStage === "final";
   const portfolioLoading = portfolioSnapshot === undefined;
-  const intakeEmail = row.intake_email ?? "";
 
   const exportPackageLockState = useMemo((): ExportPackageLockState | null => {
     if (!isFinalized || portfolioLoading) return null;
@@ -196,16 +153,6 @@ export default function TransactionOverviewSection({
     }
     return "Export package not created yet";
   }, [exportPackageLockState, latestExport?.status, portfolioSnapshot]);
-
-  const [activeTool, setActiveTool] = useState<ActiveExternalTool | null>(null);
-  const [formsMenuOpen, setFormsMenuOpen] = useState(false);
-
-  const selectTool = (tool: ActiveExternalTool) => {
-    setActiveTool(tool);
-    setFormsMenuOpen(false);
-  };
-
-  const activeConfig = activeTool ? TOOL_CONFIG[activeTool] : null;
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -292,8 +239,7 @@ export default function TransactionOverviewSection({
             </div>
             {isFinalized && exportPackageLockState === "failed" ? (
               <p className="mt-1 text-xs font-medium text-amber-900">
-                Export package could not be created — closing is still finalized. See Export Package
-                below.
+                Export package could not be created — closing is still finalized.
               </p>
             ) : null}
             {(agentDisplayName ?? "").trim() ? (
@@ -318,132 +264,48 @@ export default function TransactionOverviewSection({
 
         <div className="flex flex-shrink-0 flex-col items-end gap-1.5 lg:ml-auto">
           <div className="flex flex-wrap items-center justify-end gap-2">
-          <DropdownMenu open={formsMenuOpen} onOpenChange={setFormsMenuOpen}>
-            <DropdownMenuTrigger asChild>
+          <TransactionExportPackageHeaderAction
+            portfolioSnapshot={portfolioSnapshot}
+            latestExport={latestExport}
+            exportBusy={finalizeInProgress}
+          />
+          {onFinalizeClosingClick ? (() => {
+            const finalizeButtonDisabled = !!finalizeClosingDisabled || isFinalized;
+            // Three-state hover helper, mirroring the Export Package tooltip pattern. Disabled
+            // buttons don't fire pointer events, so wrap them in a span when disabled.
+            const finalizeTooltipText = isFinalized
+              ? "This transaction has been finalized. The export package will remain available when ready."
+              : finalizeButtonDisabled
+                ? "Finalize Closing becomes available when required documents are complete and review issues are resolved."
+                : "Finalize Closing locks the transaction, confirms checklist completion, and prepares the export package.";
+            const finalizeButton = (
               <Button
-                variant="outline"
+                variant="default"
                 size="sm"
-                type="button"
-                className="min-w-[10.5rem] justify-between gap-2 shadow-none"
-                aria-expanded={formsMenuOpen}
+                onClick={onFinalizeClosingClick}
+                disabled={finalizeButtonDisabled}
+                className="min-h-9 min-w-[10.5rem] font-semibold shadow-sm transition-[box-shadow,transform] hover:shadow-md hover:brightness-[1.03] active:scale-[0.98] active:shadow-sm disabled:pointer-events-none disabled:opacity-60 disabled:active:scale-100"
               >
-                <span>Forms & E-Sign</span>
-                <ChevronDown className="h-4 w-4 shrink-0 opacity-70" aria-hidden />
+                {finalizeInProgress ? "Finalizing & Creating Export…" : "Finalize Closing"}
               </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              className="w-[240px] min-w-[220px] max-w-[260px] border-slate-200/90 p-2 shadow-md"
-            >
-              <DropdownMenuGroup>
-                <DropdownMenuLabel className="px-2 py-1.5 text-xs font-normal text-slate-500">
-                  Forms Providers
-                </DropdownMenuLabel>
-                <DropdownMenuItem
-                  className="cursor-pointer gap-2.5 rounded-md px-2 py-2 font-normal text-slate-800 data-[highlighted]:bg-slate-100 data-[highlighted]:text-slate-900"
-                  onSelect={(e) => {
-                    e.preventDefault();
-                    selectTool("zipforms");
-                  }}
-                >
-                  <FileText
-                    className="h-4 w-4 shrink-0 text-slate-500"
-                    strokeWidth={1.75}
-                    aria-hidden
-                  />
-                  ZipForms
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className="cursor-pointer gap-2.5 rounded-md px-2 py-2 font-normal text-slate-800 data-[highlighted]:bg-slate-100 data-[highlighted]:text-slate-900"
-                  onSelect={(e) => {
-                    e.preventDefault();
-                    selectTool("dotloop");
-                  }}
-                >
-                  <SquarePen
-                    className="h-4 w-4 shrink-0 text-slate-500"
-                    strokeWidth={1.75}
-                    aria-hidden
-                  />
-                  Dotloop
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className="cursor-pointer gap-2.5 rounded-md px-2 py-2 font-normal text-slate-800 data-[highlighted]:bg-slate-100 data-[highlighted]:text-slate-900"
-                  onSelect={(e) => {
-                    e.preventDefault();
-                    selectTool("skyslope");
-                  }}
-                >
-                  <Building2
-                    className="h-4 w-4 shrink-0 text-slate-500"
-                    strokeWidth={1.75}
-                    aria-hidden
-                  />
-                  SkySlope
-                </DropdownMenuItem>
-              </DropdownMenuGroup>
-              <DropdownMenuSeparator className="my-1.5 bg-slate-200/80" />
-              <DropdownMenuGroup>
-                <DropdownMenuLabel className="px-2 py-1.5 text-xs font-normal text-slate-500">
-                  CRM
-                </DropdownMenuLabel>
-                <DropdownMenuItem
-                  className="cursor-pointer gap-2.5 rounded-md px-2 py-2 font-normal text-slate-800 data-[highlighted]:bg-slate-100 data-[highlighted]:text-slate-900"
-                  onSelect={(e) => {
-                    e.preventDefault();
-                    selectTool("lofty");
-                  }}
-                >
-                  <LayoutGrid
-                    className="h-4 w-4 shrink-0 text-slate-500"
-                    strokeWidth={1.75}
-                    aria-hidden
-                  />
-                  Lofty
-                </DropdownMenuItem>
-              </DropdownMenuGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          <Dialog
-            open={activeTool !== null}
-            onOpenChange={(open) => {
-              if (!open) setActiveTool(null);
-            }}
-          >
-            <DialogContent
-              className="top-[44%] max-h-[min(90vh,520px)] w-full max-w-[360px] gap-0 overflow-y-auto border-slate-200/90 bg-white p-4 pr-12 pt-5 shadow-md sm:max-w-[360px]"
-            >
-              {activeConfig ? (
-                <>
-                  <DialogTitle className="sr-only">{activeConfig.label}</DialogTitle>
-                  <ExternalToolPanelContent
-                    key={activeTool ?? undefined}
-                    toolName={activeConfig.label}
-                    launchUrl={activeConfig.launchUrl}
-                    intakeEmail={intakeEmail}
-                    showEmail={activeConfig.showEmail}
-                  />
-                </>
-              ) : null}
-            </DialogContent>
-          </Dialog>
-          {onFinalizeClosingClick ? (
-            <Button
-              variant="default"
-              size="sm"
-              onClick={onFinalizeClosingClick}
-              disabled={!!finalizeClosingDisabled || isFinalized}
-              title={
-                !isFinalized && unattachedInboxDocumentCount > 0
-                  ? `Finalize is disabled: ${unattachedInboxDocumentCount} inbox-only document(s) must be attached to the checklist or permanently removed from the inbox.`
-                  : undefined
-              }
-              className="min-h-9 min-w-[10.5rem] font-semibold shadow-sm transition-[box-shadow,transform] hover:shadow-md hover:brightness-[1.03] active:scale-[0.98] active:shadow-sm disabled:pointer-events-none disabled:opacity-60 disabled:active:scale-100"
-            >
-              {finalizeInProgress ? "Finalizing & Creating Export…" : "Finalize Closing"}
-            </Button>
-          ) : null}
+            );
+            return (
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    {finalizeButtonDisabled ? (
+                      <span className="inline-flex cursor-help">{finalizeButton}</span>
+                    ) : (
+                      finalizeButton
+                    )}
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="max-w-xs text-sm">
+                    {finalizeTooltipText}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            );
+          })() : null}
           <Button variant="outline" size="sm" onClick={onEdit} className="shadow-none">
             Edit Transaction Details
           </Button>
@@ -482,6 +344,44 @@ export default function TransactionOverviewSection({
             value={formatPortfolioClosingDate(portfolioSnapshot?.event_date)}
           />
         ) : null}
+        {/*
+          Intake email lives in the summary grid as a normal field (`lg:col-start-4` keeps it
+          pinned to the bottom-right column whether the Closing Date cell is present or not).
+          The truncated value gets a native tooltip with the full address; the icon button copies
+          the full untruncated email via the page-level `onCopyIntakeEmail` handler.
+        */}
+        <div className="min-w-0 sm:col-start-2 lg:col-start-4">
+          <div className="text-sm text-slate-500">Intake email</div>
+          <div className="mt-1 flex items-center gap-1.5">
+            <span
+              className={`min-w-0 flex-1 truncate font-mono text-sm leading-snug ${hasIntakeEmail ? "text-slate-900" : "text-slate-400"}`}
+              title={hasIntakeEmail ? trimmedIntakeEmail : undefined}
+            >
+              {hasIntakeEmail ? trimmedIntakeEmail : "—"}
+            </span>
+            {hasIntakeEmail ? (
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 shrink-0 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+                      onClick={() => onCopyIntakeEmail?.(trimmedIntakeEmail)}
+                      aria-label="Copy intake email"
+                    >
+                      <Copy className="h-3.5 w-3.5" aria-hidden />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="text-xs">
+                    Copy intake email
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            ) : null}
+          </div>
+        </div>
       </div>
     </div>
   );

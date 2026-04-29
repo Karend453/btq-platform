@@ -408,6 +408,14 @@ export function resolvePersonalGciGoalAmount(
   return n;
 }
 
+/** Allowed values for `user_profiles.preferred_forms_provider` (UI-only label; no credentials). */
+export const FORMS_PROVIDER_VALUES = ["dotloop", "skyslope", "zipforms", "other", "none"] as const;
+export type FormsProviderValue = (typeof FORMS_PROVIDER_VALUES)[number];
+
+export function isFormsProviderValue(v: unknown): v is FormsProviderValue {
+  return typeof v === "string" && (FORMS_PROVIDER_VALUES as readonly string[]).includes(v);
+}
+
 /** Single-row profile for Settings: one query shared across `/settings` tabs (see SettingsProfileProvider). */
 export type UserProfileSnapshot = {
   id: string;
@@ -416,6 +424,7 @@ export type UserProfileSnapshot = {
   display_name: string | null;
   office_id: string | null;
   personal_gci_goal: number | null;
+  preferred_forms_provider: FormsProviderValue | null;
 };
 
 export async function getCurrentUserProfileSnapshot(): Promise<UserProfileSnapshot | null> {
@@ -424,7 +433,9 @@ export async function getCurrentUserProfileSnapshot(): Promise<UserProfileSnapsh
 
   const { data, error } = await supabase
     .from("user_profiles")
-    .select("id, email, role, display_name, office_id, personal_gci_goal")
+    .select(
+      "id, email, role, display_name, office_id, personal_gci_goal, preferred_forms_provider"
+    )
     .eq("id", user.id)
     .single();
 
@@ -432,7 +443,15 @@ export async function getCurrentUserProfileSnapshot(): Promise<UserProfileSnapsh
       throw new Error(error.message);
     }
 
-  return data as UserProfileSnapshot;
+  const row = data as Omit<UserProfileSnapshot, "preferred_forms_provider"> & {
+    preferred_forms_provider: string | null;
+  };
+  return {
+    ...row,
+    preferred_forms_provider: isFormsProviderValue(row.preferred_forms_provider)
+      ? row.preferred_forms_provider
+      : null,
+  };
 }
 
 /** Persist nullable personal GCI goal; use RPC so RLS does not require broad `user_profiles` UPDATE. */
@@ -443,6 +462,28 @@ export async function setPersonalGciGoal(
     return { ok: false, message: "Supabase client unavailable" };
   }
   const { error } = await supabase.rpc("set_my_personal_gci_goal", { p_goal: goal });
+  if (error) {
+    return { ok: false, message: error.message };
+  }
+  return { ok: true };
+}
+
+/**
+ * Persist nullable preferred forms/e-sign provider; uses RPC for the same RLS reason
+ * as {@link setPersonalGciGoal} (no broad UPDATE granted on `user_profiles`).
+ */
+export async function setPreferredFormsProvider(
+  provider: FormsProviderValue | null
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  if (!supabase) {
+    return { ok: false, message: "Supabase client unavailable" };
+  }
+  if (provider !== null && !isFormsProviderValue(provider)) {
+    return { ok: false, message: "Invalid forms provider" };
+  }
+  const { error } = await supabase.rpc("set_my_preferred_forms_provider", {
+    p_provider: provider,
+  });
   if (error) {
     return { ok: false, message: error.message };
   }

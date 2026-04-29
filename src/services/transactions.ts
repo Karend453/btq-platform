@@ -103,6 +103,12 @@ export type TransactionRow = {
   archivedat: string | null;
   /** Unique address for signed-doc intake (e.g. ZipForms); format txn-{id}@docs.btqrlt.com */
   intake_email: string | null;
+  /**
+   * Optional shortcut URL to this transaction's external forms/e-sign workspace
+   * (Dotloop loop, SkySlope file, ZipForms workspace, etc.). NULL when unset.
+   * No credentials stored — provider is resolved from the viewer's user_profiles.preferred_forms_provider.
+   */
+  external_forms_url: string | null;
   /** Legacy denormalized agent display; DB triggers/RPCs read `t.agent` for client_portfolio.agent_name. */
   agent?: string | null;
 };
@@ -554,6 +560,12 @@ export type UpdateTransactionInput = {
 
   /** Set when claiming a legacy row with null agent_user_id (RLS + client must allow). */
   agentUserId?: string | null;
+
+  /**
+   * Optional shortcut URL to this transaction's external forms/e-sign workspace.
+   * Pass `null` to clear; omit to leave unchanged. Same RLS as other transaction edits.
+   */
+  externalFormsUrl?: string | null;
 };
 
 export type UpdateTransactionResult = {
@@ -680,6 +692,7 @@ export async function updateTransaction(
     gci: input.gci,
     referral_fee_amount: input.referralFeeAmount,
     agent_user_id: input.agentUserId,
+    external_forms_url: input.externalFormsUrl,
   });
 
   logEditTxSave("PATCH", {

@@ -262,6 +262,11 @@ export type ChecklistProps = {
   }) => Promise<void>;
   onArchiveChecklistItem?: (item: ChecklistItem) => Promise<void>;
   onRestoreChecklistItem?: (item: ChecklistItem) => Promise<void>;
+  /**
+   * Optional slot rendered in the Documents header (left of the progress text and template selector).
+   * Used for the compact Forms / E-Sign shortcut so this component stays unaware of forms-provider state.
+   */
+  formsLinkShortcut?: React.ReactNode;
 };
 
 export default function Checklist({
@@ -287,6 +292,7 @@ export default function Checklist({
   onAddCustomChecklistItem,
   onArchiveChecklistItem,
   onRestoreChecklistItem,
+  formsLinkShortcut,
 }: ChecklistProps) {
   const [renameTarget, setRenameTarget] = useState<ChecklistItem | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
@@ -892,7 +898,10 @@ export default function Checklist({
             <FileText className="h-5 w-5" />
             Documents
           </CardTitle>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap justify-end">
+            {formsLinkShortcut ? (
+              <div className="inline-flex items-center">{formsLinkShortcut}</div>
+            ) : null}
             {hasChecklist && (
               <div className="text-sm text-slate-600">
                 {completedCount} of {totalCount} complete
