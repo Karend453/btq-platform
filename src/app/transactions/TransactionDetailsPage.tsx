@@ -219,6 +219,8 @@ export default function TransactionDetailsPage() {
   const queuedExportProcessAttemptedRef = useRef<string | null>(null);
   /** When true, closing the "Complete Closing Details" dialog must not revert the status dropdown (successful save). */
   const skipCompleteClosingStatusRevertRef = useRef(false);
+  /** Set after the page has been backgrounded at least once — avoids “checking” toast on first focus/load. */
+  const hasDocumentBeenHiddenRef = useRef(false);
   const id = useMemo(() => {
     const parts = window.location.pathname.split("/").filter(Boolean);
     return parts[parts.length - 1] ?? "";
@@ -1151,8 +1153,11 @@ export default function TransactionDetailsPage() {
     let inFlight = false;
     let pollIntervalId: number | null = null;
     let pollWindowEndTimer: number | null = null;
+    let returnRefreshWindowActive = false;
+    let baselineInboxDocCount = 0;
 
     const stopPolling = () => {
+      returnRefreshWindowActive = false;
       if (pollIntervalId != null) {
         window.clearInterval(pollIntervalId);
         pollIntervalId = null;
@@ -1170,6 +1175,14 @@ export default function TransactionDetailsPage() {
       try {
         const docs = await fetchDocumentsByTransactionId(transactionId);
         if (cancelled) return;
+
+        if (returnRefreshWindowActive && docs.length > baselineInboxDocCount) {
+          baselineInboxDocCount = docs.length;
+          toast.success("New document received", {
+            description: "Your transaction inbox has been updated.",
+          });
+        }
+
         setInboxDocuments(docs);
         const templateId = checklistTemplateId;
         if (templateId) {
@@ -1198,6 +1211,14 @@ export default function TransactionDetailsPage() {
 
         stopPolling();
 
+        baselineInboxDocCount = inboxDocumentsRef.current.length;
+        returnRefreshWindowActive = true;
+        if (hasDocumentBeenHiddenRef.current) {
+          toast.info("Checking for new documents…", {
+            description: "We'll update the inbox automatically when they arrive.",
+          });
+        }
+
         void refresh();
 
         pollIntervalId = window.setInterval(() => {
@@ -1212,10 +1233,13 @@ export default function TransactionDetailsPage() {
     };
 
     const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        hasDocumentBeenHiddenRef.current = true;
+        stopPolling();
+        return;
+      }
       if (document.visibilityState === "visible") {
         kickOffReturnRefreshWindow();
-      } else {
-        stopPolling();
       }
     };
 
