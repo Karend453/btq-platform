@@ -218,7 +218,7 @@ export default function TransactionInbox({
       case "valid_transaction_url":
         return FORMS_WORKSPACE_TRANSACTION_LAUNCH_LABEL;
       case "fallback":
-        return attachDrawerLaunchResolution.buttonLabel;
+        return FORMS_WORKSPACE_TRANSACTION_LAUNCH_LABEL;
       case "invalid_transaction_url":
         return "Update forms link";
       case "add_link":

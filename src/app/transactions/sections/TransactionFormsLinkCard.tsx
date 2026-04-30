@@ -19,11 +19,7 @@ import {
   isFormsProviderValue,
 } from "../../../services/auth";
 import { updateTransaction } from "../../../services/transactions";
-import { Badge } from "../../components/ui/badge";
-import {
-  FORMS_WORKSPACE_TRANSACTION_LAUNCH_LABEL,
-  detectFormsWorkspaceBadgeFromUrl,
-} from "../../../lib/formsWorkspaceLaunch";
+import { FORMS_WORKSPACE_TRANSACTION_LAUNCH_LABEL } from "../../../lib/formsWorkspaceLaunch";
 
 const PROVIDER_LABELS: Record<FormsProviderValue, string> = {
   dotloop: "Dotloop",
@@ -115,11 +111,6 @@ export function TransactionFormsLinkCard({
     if (preferredProvider == null) return null;
     return PROVIDER_LABELS[preferredProvider] ?? null;
   }, [preferredProvider]);
-
-  const transactionFormsBadge = useMemo(
-    () => (hasExisting ? detectFormsWorkspaceBadgeFromUrl(trimmedExisting) : null),
-    [hasExisting, trimmedExisting]
-  );
 
   const placeholder = useMemo(() => {
     if (preferredProvider && isFormsProviderValue(preferredProvider)) {
@@ -221,7 +212,7 @@ export function TransactionFormsLinkCard({
             {showProviderRow ? (
               hasExisting ? (
                 <p className="text-xs text-slate-600 leading-relaxed">
-                  Opens the workspace URL saved on this transaction. Badge shows the detected platform.
+                  Opens the workspace URL saved on this transaction.
                 </p>
               ) : providerLabel ? (
                 <p className="text-xs text-slate-600">
@@ -253,22 +244,12 @@ export function TransactionFormsLinkCard({
             </p>
             <div className="flex flex-wrap items-center gap-2">
               {openHref ? (
-                <>
-                  <Button asChild variant="default" size="sm" className="gap-1.5">
-                    <a href={openHref} target="_blank" rel="noopener noreferrer">
-                      <ExternalLink className="h-3.5 w-3.5 opacity-80" aria-hidden />
-                      {FORMS_WORKSPACE_TRANSACTION_LAUNCH_LABEL}
-                    </a>
-                  </Button>
-                  {transactionFormsBadge ? (
-                    <Badge
-                      variant="outline"
-                      className="border-slate-200 bg-slate-50 text-[10px] font-medium text-slate-700"
-                    >
-                      {transactionFormsBadge}
-                    </Badge>
-                  ) : null}
-                </>
+                <Button asChild variant="default" size="sm" className="gap-1.5">
+                  <a href={openHref} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="h-3.5 w-3.5 opacity-80" aria-hidden />
+                    {FORMS_WORKSPACE_TRANSACTION_LAUNCH_LABEL}
+                  </a>
+                </Button>
               ) : (
                 <Button
                   type="button"

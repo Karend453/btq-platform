@@ -11,7 +11,6 @@ import {
   DialogTitle,
 } from "../../components/ui/dialog";
 import { cn } from "../../components/ui/utils";
-import { Badge } from "../../components/ui/badge";
 import type { FormsProviderValue } from "../../../services/auth";
 import {
   FORMS_WORKSPACE_ADD_LINK_LABEL,
@@ -42,8 +41,7 @@ export type TransactionSendDocumentsDialogProps = {
  * (with copy button + transient "Copied ✓" hint) and a primary action derived from
  * {@link resolveFormsWorkspaceLaunch}:
  *
- *   • Transaction workspace URL → "Open Forms Workspace" + provider badge from the URL's domain.
- *   • Named provider fallback (no URL) → opens the configured provider landing URL.
+ *   • Transaction workspace URL or provider fallback landing URL → "Open Forms Workspace".
  *   • Other / none / unset → "Add Forms Workspace Link" calling `onRequestEditLink`.
  *   • Saved-but-malformed URL → amber warning + "Update link".
  *
@@ -159,27 +157,17 @@ export function TransactionSendDocumentsDialog({
           </div>
 
           {launchResolution.type === "valid_transaction_url" ? (
-            <div className="flex flex-col gap-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <Button asChild className="min-w-0 flex-1 justify-center gap-2 shadow-sm sm:flex-none">
-                  <a
-                    href={launchResolution.href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={() => onOpenChange(false)}
-                  >
-                    <ExternalLink className="h-4 w-4 shrink-0 opacity-90" aria-hidden />
-                    {FORMS_WORKSPACE_TRANSACTION_LAUNCH_LABEL}
-                  </a>
-                </Button>
-                <Badge
-                  variant="outline"
-                  className="border-slate-200 bg-slate-50 text-xs font-medium text-slate-700"
-                >
-                  {launchResolution.badge}
-                </Badge>
-              </div>
-            </div>
+            <Button asChild className="w-full justify-center gap-2 shadow-sm">
+              <a
+                href={launchResolution.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => onOpenChange(false)}
+              >
+                <ExternalLink className="h-4 w-4 shrink-0 opacity-90" aria-hidden />
+                {FORMS_WORKSPACE_TRANSACTION_LAUNCH_LABEL}
+              </a>
+            </Button>
           ) : launchResolution.type === "fallback" ? (
             <Button asChild className="w-full justify-center gap-2 shadow-sm">
               <a
@@ -189,7 +177,7 @@ export function TransactionSendDocumentsDialog({
                 onClick={() => onOpenChange(false)}
               >
                 <ExternalLink className="h-4 w-4 opacity-90" aria-hidden />
-                {launchResolution.buttonLabel}
+                {FORMS_WORKSPACE_TRANSACTION_LAUNCH_LABEL}
               </a>
             </Button>
           ) : launchResolution.type === "invalid_transaction_url" ? (

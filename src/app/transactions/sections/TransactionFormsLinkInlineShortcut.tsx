@@ -1,26 +1,13 @@
 import React, { useMemo, useState } from "react";
 import { Link as RouterLink } from "react-router-dom";
 import { cn } from "../../components/ui/utils";
-import {
-  type FormsProviderValue,
-  isFormsProviderValue,
-} from "../../../services/auth";
-import {
-  detectFormsWorkspaceBadgeFromUrl,
-  formsWorkspaceBadgeToChipLabel,
-  resolveFormsWorkspaceLaunch,
-} from "../../../lib/formsWorkspaceLaunch";
+import { type FormsProviderValue } from "../../../services/auth";
+import { resolveFormsWorkspaceLaunch } from "../../../lib/formsWorkspaceLaunch";
 import { TransactionFormsLinkEditDialog } from "./TransactionFormsLinkEditDialog";
 import { TransactionSendDocumentsDialog } from "./TransactionSendDocumentsDialog";
 
-const PROVIDER_LABELS: Record<FormsProviderValue, string> = {
-  dotloop: "Dotloop",
-  skyslope: "SkySlope",
-  zipforms: "ZipForms",
-  /** "Other" / "None" intentionally collapse to a generic label so the chip stays compact. */
-  other: "Forms",
-  none: "Forms",
-};
+/** Neutral header chip label (provider-agnostic). */
+const FORMS_WORKSPACE_CHIP_LABEL = "Forms workspace";
 
 export type TransactionFormsLinkInlineShortcutProps = {
   transactionId: string;
@@ -59,21 +46,6 @@ export function TransactionFormsLinkInlineShortcut({
     [externalFormsUrl, preferredProvider]
   );
 
-  const providerLabel = useMemo(() => {
-    if (preferredProvider && isFormsProviderValue(preferredProvider)) {
-      return PROVIDER_LABELS[preferredProvider];
-    }
-    return null;
-  }, [preferredProvider]);
-
-  const chipDisplayLabel = useMemo(() => {
-    if (hasExisting) {
-      return formsWorkspaceBadgeToChipLabel(detectFormsWorkspaceBadgeFromUrl(trimmedExisting));
-    }
-    if (providerLabel) return providerLabel;
-    return "Forms";
-  }, [hasExisting, trimmedExisting, providerLabel]);
-
   function openSendDocsModal() {
     setSendDocsOpen(true);
   }
@@ -94,7 +66,6 @@ export function TransactionFormsLinkInlineShortcut({
     }
   }
 
-  // Wait for profile only when we cannot yet derive a chip label from a saved transaction URL.
   if (preferredProvider === undefined && !hasExisting) {
     return null;
   }
@@ -131,7 +102,7 @@ export function TransactionFormsLinkInlineShortcut({
               : "text-slate-700 hover:text-slate-900"
           )}
         >
-          {chipDisplayLabel}
+          {FORMS_WORKSPACE_CHIP_LABEL}
         </button>
       </div>
 
