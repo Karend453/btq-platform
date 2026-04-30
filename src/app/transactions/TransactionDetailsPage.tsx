@@ -1967,7 +1967,6 @@ export default function TransactionDetailsPage() {
                           onClick={() => {
                             setReviewStatus("complete");
                             setNotifyAgent(false);
-                            toast.success("Status set to Complete");
                           }}
                           disabled={!selectedItem.attachedDocument}
                           className={`px-3 py-2 rounded-lg border-2 text-sm font-medium ${
