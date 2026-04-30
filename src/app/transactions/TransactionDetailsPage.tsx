@@ -1141,14 +1141,27 @@ export default function TransactionDetailsPage() {
     setChecklistItems((prev) => mergeInboxIntoChecklistItems(prev, inboxDocuments));
   }, [inboxDocuments]);
 
-  /** When returning from external forms (SkySlope, etc.), refetch inbox + checklist so new inbound docs show without a full page reload. */
+  /** When returning from external forms (SkySlope, etc.): refetch immediately then poll every 5s for 60s while visible (ingest often lags one visibility refetch). */
   useEffect(() => {
     const transactionId = id?.trim();
     if (!transactionId) return;
 
     let cancelled = false;
-    let debounceTimer: number | null = null;
+    let kickoffDebounce: number | null = null;
     let inFlight = false;
+    let pollIntervalId: number | null = null;
+    let pollWindowEndTimer: number | null = null;
+
+    const stopPolling = () => {
+      if (pollIntervalId != null) {
+        window.clearInterval(pollIntervalId);
+        pollIntervalId = null;
+      }
+      if (pollWindowEndTimer != null) {
+        window.clearTimeout(pollWindowEndTimer);
+        pollWindowEndTimer = null;
+      }
+    };
 
     const refresh = async () => {
       if (cancelled || document.visibilityState !== "visible") return;
@@ -1176,26 +1189,44 @@ export default function TransactionDetailsPage() {
       }
     };
 
-    const scheduleRefresh = () => {
+    const kickOffReturnRefreshWindow = () => {
       if (document.visibilityState !== "visible") return;
-      if (debounceTimer != null) window.clearTimeout(debounceTimer);
-      debounceTimer = window.setTimeout(() => {
-        debounceTimer = null;
+      if (kickoffDebounce != null) window.clearTimeout(kickoffDebounce);
+      kickoffDebounce = window.setTimeout(() => {
+        kickoffDebounce = null;
+        if (cancelled || document.visibilityState !== "visible") return;
+
+        stopPolling();
+
         void refresh();
-      }, 400);
+
+        pollIntervalId = window.setInterval(() => {
+          if (cancelled || document.visibilityState !== "visible") return;
+          void refresh();
+        }, 5000);
+
+        pollWindowEndTimer = window.setTimeout(() => {
+          stopPolling();
+        }, 60_000);
+      }, 250);
     };
 
     const onVisibilityChange = () => {
-      if (document.visibilityState === "visible") scheduleRefresh();
+      if (document.visibilityState === "visible") {
+        kickOffReturnRefreshWindow();
+      } else {
+        stopPolling();
+      }
     };
 
-    window.addEventListener("focus", scheduleRefresh);
+    window.addEventListener("focus", kickOffReturnRefreshWindow);
     document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
       cancelled = true;
-      if (debounceTimer != null) window.clearTimeout(debounceTimer);
-      window.removeEventListener("focus", scheduleRefresh);
+      if (kickoffDebounce != null) window.clearTimeout(kickoffDebounce);
+      stopPolling();
+      window.removeEventListener("focus", kickOffReturnRefreshWindow);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [id, checklistTemplateId]);
