@@ -11,43 +11,15 @@ import {
   DialogTitle,
 } from "../../components/ui/dialog";
 import { cn } from "../../components/ui/utils";
+import { Badge } from "../../components/ui/badge";
+import type { FormsProviderValue } from "../../../services/auth";
 import {
-  type FormsProviderValue,
-  isFormsProviderValue,
-} from "../../../services/auth";
-
-/** "Launch [Provider]" copy used for the modal's primary action. */
-const LAUNCH_BUTTON_LABELS: Record<FormsProviderValue, string> = {
-  dotloop: "Launch Dotloop",
-  skyslope: "Launch SkySlope",
-  zipforms: "Launch ZipForms",
-  other: "Launch Forms Workspace",
-  none: "Launch Forms Workspace",
-};
-
-/** "Add [Provider] link" copy used when no `external_forms_url` is saved yet. */
-const ADD_LINK_BUTTON_LABELS: Record<FormsProviderValue, string> = {
-  dotloop: "Add Dotloop link",
-  skyslope: "Add SkySlope link",
-  zipforms: "Add ZipForms link",
-  other: "Add forms link",
-  none: "Add forms link",
-};
+  FORMS_WORKSPACE_ADD_LINK_LABEL,
+  FORMS_WORKSPACE_TRANSACTION_LAUNCH_LABEL,
+  resolveFormsWorkspaceLaunch,
+} from "../../../lib/formsWorkspaceLaunch";
 
 const COPIED_HINT_MS = 1500;
-
-/** Browser-side http/https validation; matches the inline shortcut + edit dialog. */
-function parseHttpUrl(raw: string): URL | null {
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  try {
-    const u = new URL(trimmed);
-    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
-    return u;
-  } catch {
-    return null;
-  }
-}
 
 export type TransactionSendDocumentsDialogProps = {
   /** Controlled open state — parent owns the `sendDocsOpen` boolean. */
@@ -67,16 +39,16 @@ export type TransactionSendDocumentsDialogProps = {
 
 /**
  * Reusable "Send documents to this transaction" modal. Surfaces the per-transaction intake email
- * (with copy button + transient "Copied ✓" hint) and a primary action that depends on the saved
- * `external_forms_url`:
+ * (with copy button + transient "Copied ✓" hint) and a primary action derived from
+ * {@link resolveFormsWorkspaceLaunch}:
  *
- *   • valid http(s) URL → "Launch [Provider]" anchor opens it in a new tab.
- *   • saved-but-malformed → amber warning + "Update link" calling `onRequestEditLink`.
- *   • no link saved      → "Add [Provider] link" calling `onRequestEditLink`.
+ *   • Transaction workspace URL → "Open Forms Workspace" + provider badge from the URL's domain.
+ *   • Named provider fallback (no URL) → opens the configured provider landing URL.
+ *   • Other / none / unset → "Add Forms Workspace Link" calling `onRequestEditLink`.
+ *   • Saved-but-malformed URL → amber warning + "Update link".
  *
  * The Add/Update transaction-link dialog stays the parent's responsibility — this component
- * simply asks the parent to open it via `onRequestEditLink`. That keeps the same UX consistent
- * across surfaces (Documents-header chip, Attach Document drawer, etc.).
+ * opens it via `onRequestEditLink` when needed.
  */
 export function TransactionSendDocumentsDialog({
   open,
@@ -92,28 +64,9 @@ export function TransactionSendDocumentsDialog({
   const trimmedIntakeEmail = (intakeEmail ?? "").trim();
   const hasIntakeEmail = trimmedIntakeEmail !== "";
 
-  const trimmedExisting = (externalFormsUrl ?? "").trim();
-  const hasExisting = trimmedExisting !== "";
-
-  const openHref = useMemo(
-    () => (hasExisting ? parseHttpUrl(trimmedExisting)?.toString() ?? null : null),
-    [hasExisting, trimmedExisting]
-  );
-
-  const launchButtonLabel = useMemo(
-    () =>
-      preferredProvider && isFormsProviderValue(preferredProvider)
-        ? LAUNCH_BUTTON_LABELS[preferredProvider]
-        : "Launch Forms Workspace",
-    [preferredProvider]
-  );
-
-  const addLinkButtonLabel = useMemo(
-    () =>
-      preferredProvider && isFormsProviderValue(preferredProvider)
-        ? ADD_LINK_BUTTON_LABELS[preferredProvider]
-        : "Add forms link",
-    [preferredProvider]
+  const launchResolution = useMemo(
+    () => resolveFormsWorkspaceLaunch(externalFormsUrl, preferredProvider ?? null),
+    [externalFormsUrl, preferredProvider]
   );
 
   // Reset the "Copied" hint each time the modal closes so it doesn't flash on the next open.
@@ -205,19 +158,41 @@ export function TransactionSendDocumentsDialog({
             </div>
           </div>
 
-          {hasExisting && openHref ? (
+          {launchResolution.type === "valid_transaction_url" ? (
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <Button asChild className="min-w-0 flex-1 justify-center gap-2 shadow-sm sm:flex-none">
+                  <a
+                    href={launchResolution.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => onOpenChange(false)}
+                  >
+                    <ExternalLink className="h-4 w-4 shrink-0 opacity-90" aria-hidden />
+                    {FORMS_WORKSPACE_TRANSACTION_LAUNCH_LABEL}
+                  </a>
+                </Button>
+                <Badge
+                  variant="outline"
+                  className="border-slate-200 bg-slate-50 text-xs font-medium text-slate-700"
+                >
+                  {launchResolution.badge}
+                </Badge>
+              </div>
+            </div>
+          ) : launchResolution.type === "fallback" ? (
             <Button asChild className="w-full justify-center gap-2 shadow-sm">
               <a
-                href={openHref}
+                href={launchResolution.href}
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={() => onOpenChange(false)}
               >
                 <ExternalLink className="h-4 w-4 opacity-90" aria-hidden />
-                {launchButtonLabel}
+                {launchResolution.buttonLabel}
               </a>
             </Button>
-          ) : hasExisting ? (
+          ) : launchResolution.type === "invalid_transaction_url" ? (
             <div className="space-y-2">
               <p className="text-xs text-amber-700">
                 Saved link is not a valid http/https URL. Update it to launch in a new tab.
@@ -238,11 +213,11 @@ export function TransactionSendDocumentsDialog({
               onClick={requestEditLinkAndClose}
               disabled={disabled}
             >
-              {addLinkButtonLabel}
+              {FORMS_WORKSPACE_ADD_LINK_LABEL}
             </Button>
           )}
 
-          {hasExisting && openHref ? (
+          {launchResolution.type === "valid_transaction_url" ? (
             <button
               type="button"
               onClick={requestEditLinkAndClose}
@@ -250,6 +225,15 @@ export function TransactionSendDocumentsDialog({
               className="block w-full text-center text-xs text-slate-500 hover:text-slate-700 hover:underline underline-offset-2 disabled:opacity-50 disabled:no-underline"
             >
               Update link
+            </button>
+          ) : launchResolution.type === "fallback" ? (
+            <button
+              type="button"
+              onClick={requestEditLinkAndClose}
+              disabled={disabled}
+              className="block w-full text-center text-xs text-slate-500 hover:text-slate-700 hover:underline underline-offset-2 disabled:opacity-50 disabled:no-underline"
+            >
+              Add transaction workspace link
             </button>
           ) : null}
         </div>

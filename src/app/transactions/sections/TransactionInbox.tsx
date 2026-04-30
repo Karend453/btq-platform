@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -47,21 +47,14 @@ import {
   hardDeleteUnattachedInboxDocument,
   uploadDocument,
 } from "../../../services/transactionDocuments";
+import { type FormsProviderValue } from "../../../services/auth";
 import {
-  type FormsProviderValue,
-  isFormsProviderValue,
-} from "../../../services/auth";
+  FORMS_WORKSPACE_ADD_LINK_LABEL,
+  FORMS_WORKSPACE_TRANSACTION_LAUNCH_LABEL,
+  resolveFormsWorkspaceLaunch,
+} from "../../../lib/formsWorkspaceLaunch";
 import { TransactionFormsLinkEditDialog } from "./TransactionFormsLinkEditDialog";
 import { TransactionSendDocumentsDialog } from "./TransactionSendDocumentsDialog";
-
-/** "Open [Provider]" copy used by the Attach Drawer's primary action button. */
-const PROVIDER_LAUNCH_LABELS: Record<FormsProviderValue, string> = {
-  dotloop: "Open Dotloop",
-  skyslope: "Open SkySlope",
-  zipforms: "Open ZipForms",
-  other: "Open Forms Workspace",
-  none: "Open Forms Workspace",
-};
 
 export interface InboxDocument {
   id: string;
@@ -214,10 +207,24 @@ export default function TransactionInbox({
 
   const trimmedExternalFormsUrl = (externalFormsUrl ?? "").trim();
   const hasExternalFormsUrl = trimmedExternalFormsUrl !== "";
-  const providerLaunchLabel =
-    preferredFormsProvider && isFormsProviderValue(preferredFormsProvider)
-      ? PROVIDER_LAUNCH_LABELS[preferredFormsProvider]
-      : "Open Forms Workspace";
+
+  const attachDrawerLaunchResolution = useMemo(
+    () => resolveFormsWorkspaceLaunch(externalFormsUrl, preferredFormsProvider ?? null),
+    [externalFormsUrl, preferredFormsProvider]
+  );
+
+  const attachDrawerFormsButtonLabel = useMemo(() => {
+    switch (attachDrawerLaunchResolution.type) {
+      case "valid_transaction_url":
+        return FORMS_WORKSPACE_TRANSACTION_LAUNCH_LABEL;
+      case "fallback":
+        return attachDrawerLaunchResolution.buttonLabel;
+      case "invalid_transaction_url":
+        return "Update forms link";
+      case "add_link":
+        return FORMS_WORKSPACE_ADD_LINK_LABEL;
+    }
+  }, [attachDrawerLaunchResolution]);
 
   const isControlled = controlledAttachDrawerOpen !== undefined && onAttachDrawerOpenChange !== undefined;
   const isAttachDrawerOpen = isControlled ? controlledAttachDrawerOpen : internalAttachDrawerOpen;
@@ -282,15 +289,14 @@ export default function TransactionInbox({
   }
 
   function handleOpenProvider() {
-    // Mirror the Documents-header chip exactly: when a link is saved, surface the Send
-    // Documents modal (intake email + copy + Launch [Provider] + Update link). Never open
-    // the external URL straight from the chip — the modal is the only bridge.
-    if (hasExternalFormsUrl) {
-      setSendDocsOpen(true);
+    if (
+      attachDrawerLaunchResolution.type === "add_link" ||
+      attachDrawerLaunchResolution.type === "invalid_transaction_url"
+    ) {
+      setLinkDialogOpen(true);
       return;
     }
-    // No saved link → open the Add/Update transaction-link dialog.
-    setLinkDialogOpen(true);
+    setSendDocsOpen(true);
   }
 
   const handleAttachDocument = async () => {
@@ -615,7 +621,7 @@ export default function TransactionInbox({
                 <Upload className="h-4 w-4" aria-hidden />
                 {isUploading ? "Uploading…" : "Upload from computer"}
               </Button>
-              {preferredFormsProvider == null ? (
+              {preferredFormsProvider == null && !hasExternalFormsUrl ? (
                 <Button
                   type="button"
                   variant="outline"
@@ -637,13 +643,16 @@ export default function TransactionInbox({
                   className="gap-2 border-slate-200"
                   onClick={handleOpenProvider}
                   title={
-                    hasExternalFormsUrl
+                    attachDrawerLaunchResolution.type === "valid_transaction_url" ||
+                    attachDrawerLaunchResolution.type === "fallback"
                       ? "Open forms + copy transaction email"
-                      : "No transaction link saved yet — opens the Add link dialog"
+                      : attachDrawerLaunchResolution.type === "invalid_transaction_url"
+                        ? "Saved link is invalid — update it"
+                        : "Add a forms workspace link for this transaction"
                   }
                 >
                   <ExternalLink className="h-4 w-4" aria-hidden />
-                  {providerLaunchLabel}
+                  {attachDrawerFormsButtonLabel}
                 </Button>
               )}
               <div className="ml-auto flex items-center gap-1.5">

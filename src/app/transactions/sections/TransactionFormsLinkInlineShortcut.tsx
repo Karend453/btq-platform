@@ -5,6 +5,11 @@ import {
   type FormsProviderValue,
   isFormsProviderValue,
 } from "../../../services/auth";
+import {
+  detectFormsWorkspaceBadgeFromUrl,
+  formsWorkspaceBadgeToChipLabel,
+  resolveFormsWorkspaceLaunch,
+} from "../../../lib/formsWorkspaceLaunch";
 import { TransactionFormsLinkEditDialog } from "./TransactionFormsLinkEditDialog";
 import { TransactionSendDocumentsDialog } from "./TransactionSendDocumentsDialog";
 
@@ -31,11 +36,9 @@ export type TransactionFormsLinkInlineShortcutProps = {
 };
 
 /**
- * Compact inline forms / e-sign shortcut for the Documents header. The chip itself never opens an
- * external URL directly anymore — clicking it opens the Send Documents modal, which surfaces the
- * transaction's intake email + a "Launch [Provider]" button (or "Add [Provider] link" when no
- * `external_forms_url` is saved). The Add/Update transaction-link modal is reused unchanged for
- * the URL form. When no preferred provider is set, the chip becomes a Settings link.
+ * Compact inline forms / e-sign shortcut for the Documents header. Clicking opens either the
+ * Send Documents modal (intake + launch from transaction URL, provider fallback URL, or update
+ * flow) or the Add/Update link dialog when no launch URL is available.
  */
 export function TransactionFormsLinkInlineShortcut({
   transactionId,
@@ -51,12 +54,25 @@ export function TransactionFormsLinkInlineShortcut({
   const trimmedExisting = (externalFormsUrl ?? "").trim();
   const hasExisting = trimmedExisting !== "";
 
+  const launchResolution = useMemo(
+    () => resolveFormsWorkspaceLaunch(externalFormsUrl, preferredProvider ?? null),
+    [externalFormsUrl, preferredProvider]
+  );
+
   const providerLabel = useMemo(() => {
     if (preferredProvider && isFormsProviderValue(preferredProvider)) {
       return PROVIDER_LABELS[preferredProvider];
     }
     return null;
   }, [preferredProvider]);
+
+  const chipDisplayLabel = useMemo(() => {
+    if (hasExisting) {
+      return formsWorkspaceBadgeToChipLabel(detectFormsWorkspaceBadgeFromUrl(trimmedExisting));
+    }
+    if (providerLabel) return providerLabel;
+    return "Forms";
+  }, [hasExisting, trimmedExisting, providerLabel]);
 
   function openSendDocsModal() {
     setSendDocsOpen(true);
@@ -67,13 +83,23 @@ export function TransactionFormsLinkInlineShortcut({
     setDialogOpen(true);
   }
 
-  // Loading state — render nothing so the header doesn't flicker.
-  if (preferredProvider === undefined) {
+  function handleChipClick() {
+    if (
+      launchResolution.type === "add_link" ||
+      launchResolution.type === "invalid_transaction_url"
+    ) {
+      openAddOrUpdateLinkModal();
+    } else {
+      openSendDocsModal();
+    }
+  }
+
+  // Wait for profile only when we cannot yet derive a chip label from a saved transaction URL.
+  if (preferredProvider === undefined && !hasExisting) {
     return null;
   }
 
-  // No preferred provider configured — subtle settings link, no modal.
-  if (preferredProvider === null) {
+  if (preferredProvider === null && !hasExisting) {
     return (
       <RouterLink
         to="/settings?tab=forms-provider"
@@ -84,29 +110,28 @@ export function TransactionFormsLinkInlineShortcut({
     );
   }
 
-  // Provider is set (named, "Other", or explicit "None"). The provider name itself is the chip:
-  //   • link saved   → blue/clickable, opens Send Documents modal
-  //   • no link yet  → muted text, opens Add/Update link modal directly
   const chipTitle = hasExisting
     ? "Open forms + copy transaction email"
-    : "Add forms link";
+    : launchResolution.type === "fallback"
+      ? "Open forms workspace (fallback) + copy transaction email"
+      : "Add or update forms workspace link";
 
   return (
     <>
       <div className="inline-flex items-center text-xs whitespace-nowrap">
         <button
           type="button"
-          onClick={hasExisting ? openSendDocsModal : openAddOrUpdateLinkModal}
+          onClick={handleChipClick}
           title={chipTitle}
           aria-label={chipTitle}
           className={cn(
             "font-medium underline-offset-2 hover:underline",
-            hasExisting
+            launchResolution.type === "valid_transaction_url" || launchResolution.type === "fallback"
               ? "text-blue-600 hover:text-blue-700"
               : "text-slate-700 hover:text-slate-900"
           )}
         >
-          {providerLabel}
+          {chipDisplayLabel}
         </button>
       </div>
 

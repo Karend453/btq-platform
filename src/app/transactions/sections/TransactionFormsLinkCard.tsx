@@ -19,6 +19,11 @@ import {
   isFormsProviderValue,
 } from "../../../services/auth";
 import { updateTransaction } from "../../../services/transactions";
+import { Badge } from "../../components/ui/badge";
+import {
+  FORMS_WORKSPACE_TRANSACTION_LAUNCH_LABEL,
+  detectFormsWorkspaceBadgeFromUrl,
+} from "../../../lib/formsWorkspaceLaunch";
 
 const PROVIDER_LABELS: Record<FormsProviderValue, string> = {
   dotloop: "Dotloop",
@@ -26,14 +31,6 @@ const PROVIDER_LABELS: Record<FormsProviderValue, string> = {
   zipforms: "ZipForms",
   other: "Other",
   none: "None",
-};
-
-const OPEN_BUTTON_LABELS: Record<FormsProviderValue, string> = {
-  dotloop: "Open Dotloop",
-  skyslope: "Open SkySlope",
-  zipforms: "Open ZipForms",
-  other: "Open Forms Workspace",
-  none: "Open Forms Workspace",
 };
 
 const PROVIDER_PLACEHOLDERS: Record<FormsProviderValue, string> = {
@@ -92,8 +89,9 @@ export type TransactionFormsLinkCardProps = {
 
 /**
  * Per-transaction shortcut to a forms / e-sign workspace (Dotloop loop, SkySlope file,
- * ZipForms workspace, etc.). Provider is read from the viewer's `user_profiles.preferred_forms_provider`
- * — never duplicated on the transaction. Save uses {@link updateTransaction} so RLS / permissions
+ * ZipForms workspace, etc.). When a transaction URL is saved it is the launch target;
+ * Settings preference is a fallback for placeholders on this card. Save uses
+ * {@link updateTransaction} so RLS / permissions
  * match the existing edit path. No credentials, tokens, or usernames are stored.
  */
 export function TransactionFormsLinkCard({
@@ -118,12 +116,10 @@ export function TransactionFormsLinkCard({
     return PROVIDER_LABELS[preferredProvider] ?? null;
   }, [preferredProvider]);
 
-  const openButtonLabel = useMemo(() => {
-    if (preferredProvider && isFormsProviderValue(preferredProvider)) {
-      return OPEN_BUTTON_LABELS[preferredProvider];
-    }
-    return "Open Forms Workspace";
-  }, [preferredProvider]);
+  const transactionFormsBadge = useMemo(
+    () => (hasExisting ? detectFormsWorkspaceBadgeFromUrl(trimmedExisting) : null),
+    [hasExisting, trimmedExisting]
+  );
 
   const placeholder = useMemo(() => {
     if (preferredProvider && isFormsProviderValue(preferredProvider)) {
@@ -223,9 +219,13 @@ export function TransactionFormsLinkCard({
           <div className="min-w-0 space-y-0.5">
             <CardTitle className="text-base">Forms / E-Sign</CardTitle>
             {showProviderRow ? (
-              providerLabel ? (
+              hasExisting ? (
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Opens the workspace URL saved on this transaction. Badge shows the detected platform.
+                </p>
+              ) : providerLabel ? (
                 <p className="text-xs text-slate-600">
-                  Provider:{" "}
+                  Provider preference (fallback):{" "}
                   <span className="font-medium text-slate-800">{providerLabel}</span>
                 </p>
               ) : noProviderSet ? (
@@ -253,12 +253,22 @@ export function TransactionFormsLinkCard({
             </p>
             <div className="flex flex-wrap items-center gap-2">
               {openHref ? (
-                <Button asChild variant="default" size="sm" className="gap-1.5">
-                  <a href={openHref} target="_blank" rel="noopener noreferrer">
-                    <ExternalLink className="h-3.5 w-3.5 opacity-80" aria-hidden />
-                    {openButtonLabel}
-                  </a>
-                </Button>
+                <>
+                  <Button asChild variant="default" size="sm" className="gap-1.5">
+                    <a href={openHref} target="_blank" rel="noopener noreferrer">
+                      <ExternalLink className="h-3.5 w-3.5 opacity-80" aria-hidden />
+                      {FORMS_WORKSPACE_TRANSACTION_LAUNCH_LABEL}
+                    </a>
+                  </Button>
+                  {transactionFormsBadge ? (
+                    <Badge
+                      variant="outline"
+                      className="border-slate-200 bg-slate-50 text-[10px] font-medium text-slate-700"
+                    >
+                      {transactionFormsBadge}
+                    </Badge>
+                  ) : null}
+                </>
               ) : (
                 <Button
                   type="button"
@@ -269,7 +279,7 @@ export function TransactionFormsLinkCard({
                   title="Saved link is not a valid http/https URL"
                 >
                   <ExternalLink className="h-3.5 w-3.5 opacity-80" aria-hidden />
-                  {openButtonLabel}
+                  {FORMS_WORKSPACE_TRANSACTION_LAUNCH_LABEL}
                 </Button>
               )}
               <Button

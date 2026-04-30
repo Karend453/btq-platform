@@ -35,8 +35,9 @@ const PROVIDER_OPTIONS: { value: FormsProviderValue; label: string }[] = [
 const UNSET_SENTINEL = "__unset__";
 
 /**
- * User-level forms / e-sign provider preference. Stored as a label only — no credentials,
- * tokens, or usernames are persisted. Used to personalize transaction document workflows.
+ * User-level forms / e-sign provider preference (fallback only). Stored as a label only —
+ * no credentials, tokens, or usernames are persisted. When a transaction has
+ * `external_forms_url`, that URL is used instead for launch targets.
  */
 export function FormsProviderTab() {
   const { profile } = useSettingsProfile();
@@ -93,8 +94,7 @@ export function FormsProviderTab() {
             <div className="min-w-0 space-y-1">
               <CardTitle className="text-lg">Forms Provider</CardTitle>
               <CardDescription className="text-slate-700 text-base leading-relaxed">
-                Choose the forms or e-sign platform you typically use. BTQ will use this to
-                personalize document workflow shortcuts inside transactions.
+                Used as a fallback when no forms workspace URL is saved on a transaction.
               </CardDescription>
             </div>
           </div>
@@ -129,8 +129,6 @@ export function FormsProviderTab() {
                 ))}
               </SelectContent>
             </Select>
-            <p className="text-xs text-slate-500 leading-relaxed">
-            </p>
           </div>
 
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
