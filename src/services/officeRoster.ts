@@ -17,6 +17,8 @@ export type OfficeRosterMember = {
   display_name: string | null;
   created_at: string;
   invite_email?: string | null;
+  /** `office_memberships.status` when loaded (e.g. `active`, `pending`). */
+  status?: string | null;
 };
 
 export type OfficeRosterSummary = {
@@ -45,11 +47,15 @@ export function isVisibleCustomerRosterRole(role: string | null | undefined): bo
   return r === "broker" || r === "admin" || r === "agent";
 }
 
-export function memberDisplayName(m: Pick<OfficeRosterMember, "display_name" | "email">): string {
+export function memberDisplayName(
+  m: Pick<OfficeRosterMember, "display_name" | "email" | "invite_email">,
+): string {
   const name = m.display_name?.trim();
   if (name) return name;
   const email = m.email?.trim();
   if (email) return email;
+  const invite = m.invite_email?.trim();
+  if (invite) return invite;
   return "—";
 }
 
@@ -146,6 +152,7 @@ function mapOfficeMembershipToRosterMember(row: OfficeMembershipQueryRow): Offic
     display_name: p?.display_name ?? null,
     created_at: row.created_at,
     invite_email: row.invite_email ?? null,
+    status: row.status ?? null,
   };
 }
 
@@ -167,7 +174,8 @@ function compareRosterMembersByRoleThenName(a: OfficeRosterMember, b: OfficeRost
   return memberDisplayName(a).localeCompare(memberDisplayName(b), undefined, { sensitivity: "base" });
 }
 
-function sortOfficeRosterMembers(members: OfficeRosterMember[]): OfficeRosterMember[] {
+/** Same ordering used for active and pending roster lists: role rank, then display name. */
+export function sortOfficeRosterMembers(members: OfficeRosterMember[]): OfficeRosterMember[] {
   return [...members].sort(compareRosterMembersByRoleThenName);
 }
 
@@ -366,6 +374,14 @@ function parseApiErrorJson(body: unknown): string | null {
   return null;
 }
 
+function parseBillingSyncWarning(body: unknown): string | null {
+  if (!body || typeof body !== "object" || body === null) return null;
+  const w = (body as { billingSyncWarning?: unknown }).billingSyncWarning;
+  if (typeof w !== "string") return null;
+  const s = w.trim();
+  return s.length > 0 ? s : null;
+}
+
 function parseApiErrorMeta(body: unknown): { code?: string; targetUserId?: string } {
   if (!body || typeof body !== "object" || body === null) return {};
   const o = body as { code?: unknown; targetUserId?: unknown };
@@ -496,7 +512,7 @@ export async function activatePendingOfficeMembershipsForSession(): Promise<void
 export async function brokerRemoveTeamInvite(params: {
   officeId: string;
   userId: string;
-}): Promise<{ error: string | null }> {
+}): Promise<{ error: string | null; billingSyncWarning?: string | null }> {
   const officeId = params.officeId.trim();
   const userId = params.userId.trim();
   if (!officeId || !userId) return { error: "Office and member are required." };
@@ -520,12 +536,13 @@ export async function brokerRemoveTeamInvite(params: {
   if (!res.ok) {
     return { error: parseApiErrorJson(body) || `Request failed (${res.status})` };
   }
-  return { error: null };
+  const billingSyncWarning = parseBillingSyncWarning(body);
+  return billingSyncWarning ? { error: null, billingSyncWarning } : { error: null };
 }
 
 /**
  * Soft-removes a member: sets `office_memberships.status = inactive` (no delete, no `user_profiles` changes).
- * Then syncs Stripe seat quantity to match active admin+agent memberships. If Stripe sync fails, deactivation still stands.
+ * Then syncs Stripe seat quantity to match admin+agent memberships with status active or pending. If Stripe sync fails, deactivation still stands.
  */
 export async function brokerDeactivateOfficeMember(params: {
   officeId: string;

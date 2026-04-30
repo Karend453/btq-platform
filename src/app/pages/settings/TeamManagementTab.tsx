@@ -13,6 +13,7 @@ import {
   listOfficeRoster,
   memberDisplayName,
   partitionCustomerRosterByRole,
+  sortOfficeRosterMembers,
   type OfficeRosterMember,
   type TeamAddableOfficeRole,
 } from "../../../services/officeRoster";
@@ -29,6 +30,24 @@ import {
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 
+function RosterRoleCell({ row }: { row: OfficeRosterMember }) {
+  const base = formatOfficeRoleLabel(row.role);
+  if ((row.status ?? "").toLowerCase() !== "pending") {
+    return <span>{base}</span>;
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+      <span>
+        {base} · Invite Pending
+      </span>
+      <span
+        className="inline-block h-2 w-2 shrink-0 rounded-full bg-[#e3d78a]"
+        aria-hidden
+      />
+    </span>
+  );
+}
+
 function RosterSection({
   title,
   description,
@@ -37,7 +56,11 @@ function RosterSection({
   canManageTeam,
   onRequestAdd,
   onRemoveMember,
+  onResendInvite,
+  onRemoveInvite,
   removeBusyUserId,
+  resendBusyUserId,
+  pendingRemoveBusyUserId,
 }: {
   title: string;
   description: string;
@@ -46,12 +69,18 @@ function RosterSection({
   canManageTeam?: boolean;
   onRequestAdd?: (role: TeamAddableOfficeRole) => void;
   onRemoveMember?: (member: OfficeRosterMember) => void;
+  onResendInvite?: (member: OfficeRosterMember) => void;
+  onRemoveInvite?: (member: OfficeRosterMember) => void;
   removeBusyUserId?: string | null;
+  resendBusyUserId?: string | null;
+  pendingRemoveBusyUserId?: string | null;
 }) {
   const showAddButton = Boolean(canManageTeam && addRoleForSection && onRequestAdd);
-  const showRemovePerRow = Boolean(canManageTeam && onRemoveMember);
+  const showActionColumn = Boolean(
+    canManageTeam && onRemoveMember && onResendInvite && onRemoveInvite,
+  );
   if (rows.length === 0 && !showAddButton) return null;
-  const colSpan = showRemovePerRow ? 4 : 3;
+  const colSpan = showActionColumn ? 4 : 3;
   return (
     <div className="space-y-2">
       <div className="space-y-1 min-w-0">
@@ -62,7 +91,11 @@ function RosterSection({
               type="button"
               className="shrink-0 rounded-md border border-slate-200 bg-white p-1.5 text-slate-600 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400 disabled:opacity-50"
               aria-label={`Add ${addRoleForSection} to ${title}`}
-              disabled={removeBusyUserId != null}
+              disabled={
+                removeBusyUserId != null ||
+                resendBusyUserId != null ||
+                pendingRemoveBusyUserId != null
+              }
               onClick={() => onRequestAdd?.(addRoleForSection)}
             >
               <Plus className="h-4 w-4" aria-hidden />
@@ -84,8 +117,10 @@ function RosterSection({
               <th scope="col" className="px-3 py-2 font-medium whitespace-nowrap">
                 Role
               </th>
-              {showRemovePerRow ? (
-                <th scope="col" className="w-10 px-2 py-2 font-medium text-right" aria-label="Actions" />
+              {showActionColumn ? (
+                <th scope="col" className="px-3 py-2 font-medium text-right whitespace-nowrap">
+                  Actions
+                </th>
               ) : null}
             </tr>
           </thead>
@@ -97,125 +132,59 @@ function RosterSection({
                 </td>
               </tr>
             ) : (
-              rows.map((row) => (
-                <tr key={row.id}>
-                  <td className="px-3 py-2.5 text-slate-900 align-top">{memberDisplayName(row)}</td>
-                  <td className="px-3 py-2.5 text-slate-900 align-top break-words">
-                    {row.email?.trim() || "—"}
-                  </td>
-                  <td className="px-3 py-2.5 text-slate-900 align-top whitespace-nowrap">
-                    {formatOfficeRoleLabel(row.role)}
-                  </td>
-                  {showRemovePerRow ? (
-                    <td className="px-2 py-2.5 align-top text-right">
-                      <button
-                        type="button"
-                        className="inline-flex rounded p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400 disabled:opacity-50"
-                        aria-label={`Remove ${memberDisplayName(row)}`}
-                        disabled={removeBusyUserId === row.id}
-                        onClick={() => onRemoveMember?.(row)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" aria-hidden strokeWidth={1.75} />
-                      </button>
-                    </td>
-                  ) : null}
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-function PendingSection({
-  rows,
-  canManageTeam,
-  onResend,
-  onRemoveInvite,
-  resendBusyUserId,
-  removeBusyUserId,
-}: {
-  rows: OfficeRosterMember[];
-  canManageTeam?: boolean;
-  onResend?: (member: OfficeRosterMember) => void;
-  onRemoveInvite?: (member: OfficeRosterMember) => void;
-  resendBusyUserId?: string | null;
-  removeBusyUserId?: string | null;
-}) {
-  const showActions = Boolean(canManageTeam && onResend && onRemoveInvite);
-  if (rows.length === 0 && !showActions) return null;
-  const colSpan = showActions ? 3 : 2;
-  return (
-    <div className="space-y-2">
-      <div className="space-y-1 min-w-0">
-        <h3 className="text-sm font-semibold text-slate-900">Pending Acceptance</h3>
-        <p className="text-xs text-slate-500 leading-relaxed">
-          Invitations sent but not yet accepted.
-        </p>
-      </div>
-      <div className="overflow-x-auto rounded-md border border-slate-200 border-dashed">
-        <table className="w-full min-w-[20rem] text-left text-sm">
-          <thead className="border-b border-slate-200 bg-slate-50/80 text-slate-700">
-            <tr>
-              <th scope="col" className="px-3 py-2 font-medium">
-                Email
-              </th>
-              <th scope="col" className="px-3 py-2 font-medium whitespace-nowrap">
-                Role
-              </th>
-              {showActions ? (
-                <th scope="col" className="px-3 py-2 font-medium text-right whitespace-nowrap">
-                  Actions
-                </th>
-              ) : null}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {rows.length === 0 ? (
-              <tr>
-                <td className="px-3 py-4 text-slate-500 align-top" colSpan={colSpan}>
-                  No pending invites for this office.
-                </td>
-              </tr>
-            ) : (
               rows.map((row) => {
-                const inviteEmail = row.invite_email?.trim() || null;
-                const displayEmail = row.email?.trim() || inviteEmail || "—";
+                const pending = (row.status ?? "").toLowerCase() === "pending";
+                const rowBusy =
+                  Boolean(pending && (resendBusyUserId === row.id || pendingRemoveBusyUserId === row.id)) ||
+                  (!pending && removeBusyUserId === row.id);
                 return (
-                <tr key={row.id}>
-                  <td className="px-3 py-2.5 text-slate-900 align-top break-words">
-                    {displayEmail}
-                  </td>
-                  <td className="px-3 py-2.5 text-slate-900 align-top whitespace-nowrap">
-                    {formatOfficeRoleLabel(row.role)}
-                  </td>
-                  {showActions ? (
-                    <td className="px-3 py-2 align-top">
-                      <div className="flex flex-wrap justify-end gap-1.5">
-                        <button
-                          type="button"
-                          className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400 disabled:opacity-50"
-                          disabled={resendBusyUserId === row.id || removeBusyUserId === row.id}
-                          onClick={() => onResend?.(row)}
-                        >
-                          <Mail className="h-3.5 w-3.5 shrink-0" aria-hidden strokeWidth={1.75} />
-                          Resend
-                        </button>
-                        <button
-                          type="button"
-                          className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400 disabled:opacity-50"
-                          disabled={resendBusyUserId === row.id || removeBusyUserId === row.id}
-                          onClick={() => onRemoveInvite?.(row)}
-                        >
-                          <UserMinus className="h-3.5 w-3.5 shrink-0" aria-hidden strokeWidth={1.75} />
-                          Remove
-                        </button>
-                      </div>
+                  <tr key={row.id}>
+                    <td className="px-3 py-2.5 text-slate-900 align-top">{memberDisplayName(row)}</td>
+                    <td className="px-3 py-2.5 text-slate-900 align-top break-words">
+                      {row.email?.trim() || row.invite_email?.trim() || "—"}
                     </td>
-                  ) : null}
-                </tr>
+                    <td className="px-3 py-2.5 text-slate-900 align-top whitespace-nowrap">
+                      <RosterRoleCell row={row} />
+                    </td>
+                    {showActionColumn ? (
+                      <td className="px-3 py-2 align-top">
+                        {pending ? (
+                          <div className="flex flex-wrap justify-end gap-1.5">
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400 disabled:opacity-50"
+                              disabled={rowBusy}
+                              onClick={() => onResendInvite?.(row)}
+                            >
+                              <Mail className="h-3.5 w-3.5 shrink-0" aria-hidden strokeWidth={1.75} />
+                              Resend
+                            </button>
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400 disabled:opacity-50"
+                              disabled={rowBusy}
+                              onClick={() => onRemoveInvite?.(row)}
+                            >
+                              <UserMinus className="h-3.5 w-3.5 shrink-0" aria-hidden strokeWidth={1.75} />
+                              Remove
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex justify-end">
+                            <button
+                              type="button"
+                              className="inline-flex rounded p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400 disabled:opacity-50"
+                              aria-label={`Remove ${memberDisplayName(row)}`}
+                              disabled={rowBusy}
+                              onClick={() => onRemoveMember?.(row)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" aria-hidden strokeWidth={1.75} />
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                    ) : null}
+                  </tr>
                 );
               })
             )}
@@ -227,14 +196,13 @@ function PendingSection({
 }
 
 /**
- * Active roster from `office_memberships` for the current office. Brokers add admins/agents (invite new users or
- * attach existing accounts) and may deactivate seats.
+ * Team roster for the current office: active and pending `office_memberships`. Brokers add admins/agents and may
+ * deactivate seats or manage pending invites.
  */
 export function TeamManagementTab() {
   const [rosterLoading, setRosterLoading] = useState(true);
   const [rosterError, setRosterError] = useState<string | null>(null);
   const [members, setMembers] = useState<OfficeRosterMember[]>([]);
-  const [pendingMembers, setPendingMembers] = useState<OfficeRosterMember[]>([]);
   const [hasOffice, setHasOffice] = useState(false);
   const [officeId, setOfficeId] = useState<string | null>(null);
   const [viewerIsBroker, setViewerIsBroker] = useState(false);
@@ -260,7 +228,6 @@ export function TeamManagementTab() {
       setHasOffice(false);
       setOfficeId(null);
       setMembers([]);
-      setPendingMembers([]);
       setRosterLoading(false);
       return;
     }
@@ -273,19 +240,16 @@ export function TeamManagementTab() {
     if (active.error) {
       setRosterError(active.error);
       setMembers([]);
-      setPendingMembers([]);
       setRosterLoading(false);
       return;
     }
     if (pending.error) {
       setRosterError(pending.error);
       setMembers([]);
-      setPendingMembers([]);
       setRosterLoading(false);
       return;
     }
-    setMembers(active.members);
-    setPendingMembers(pending.members);
+    setMembers(sortOfficeRosterMembers([...active.members, ...pending.members]));
     setRosterLoading(false);
   }, []);
 
@@ -425,11 +389,18 @@ export function TeamManagementTab() {
       }
       setPendingRemoveBusyUserId(member.id);
       setRosterError(null);
-      const { error } = await brokerRemoveTeamInvite({ officeId, userId: member.id });
+      setBillingSyncWarning(null);
+      const { error, billingSyncWarning: syncWarn } = await brokerRemoveTeamInvite({
+        officeId,
+        userId: member.id,
+      });
       setPendingRemoveBusyUserId(null);
       if (error) {
         setRosterError(error);
         return;
+      }
+      if (syncWarn) {
+        setBillingSyncWarning(syncWarn);
       }
       await loadRoster();
     },
@@ -456,11 +427,18 @@ export function TeamManagementTab() {
     if (!officeId || !addDuplicateTargetId) return;
     setPendingRemoveBusyUserId(addDuplicateTargetId);
     setRosterError(null);
-    const { error } = await brokerRemoveTeamInvite({ officeId, userId: addDuplicateTargetId });
+    setBillingSyncWarning(null);
+    const { error, billingSyncWarning: syncWarn } = await brokerRemoveTeamInvite({
+      officeId,
+      userId: addDuplicateTargetId,
+    });
     setPendingRemoveBusyUserId(null);
     if (error) {
       setRosterError(error);
       return;
+    }
+    if (syncWarn) {
+      setBillingSyncWarning(syncWarn);
     }
     setAddDuplicateTargetId(null);
     setAddFormError(null);
@@ -470,7 +448,7 @@ export function TeamManagementTab() {
 
   const { brokers, admins, agents } = partitionCustomerRosterByRole(members);
   const hasAnyRows = brokers.length + admins.length + agents.length > 0;
-  const showRosterLayout = hasAnyRows || canManageTeam || pendingMembers.length > 0;
+  const showRosterLayout = hasAnyRows || canManageTeam;
 
   let rosterPanel: React.ReactNode;
   if (rosterLoading) {
@@ -506,7 +484,11 @@ export function TeamManagementTab() {
           addRoleForSection="admin"
           onRequestAdd={handleRequestAdd}
           onRemoveMember={handleRemoveMember}
+          onResendInvite={handlePendingResend}
+          onRemoveInvite={handlePendingRemove}
           removeBusyUserId={removeBusyUserId}
+          resendBusyUserId={pendingResendBusyUserId}
+          pendingRemoveBusyUserId={pendingRemoveBusyUserId}
         />
         <RosterSection
           title="Agents"
@@ -516,15 +498,11 @@ export function TeamManagementTab() {
           addRoleForSection="agent"
           onRequestAdd={handleRequestAdd}
           onRemoveMember={handleRemoveMember}
-          removeBusyUserId={removeBusyUserId}
-        />
-        <PendingSection
-          rows={pendingMembers}
-          canManageTeam={canManageTeam}
-          onResend={handlePendingResend}
+          onResendInvite={handlePendingResend}
           onRemoveInvite={handlePendingRemove}
+          removeBusyUserId={removeBusyUserId}
           resendBusyUserId={pendingResendBusyUserId}
-          removeBusyUserId={pendingRemoveBusyUserId}
+          pendingRemoveBusyUserId={pendingRemoveBusyUserId}
         />
       </>
     );
@@ -658,7 +636,7 @@ export function TeamManagementTab() {
             <div className="min-w-0 space-y-1">
               <CardTitle className="text-lg">Team Management</CardTitle>
               <CardDescription className="text-slate-700 text-base leading-relaxed">
-                Active roster below uses active memberships only; pending invites appear in the separate section.
+                All team members listed are included in billing. Invite status does not affect seat count.
               </CardDescription>
             </div>
           </div>

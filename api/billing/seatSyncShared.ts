@@ -2,7 +2,8 @@ import type Stripe from "stripe";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 /**
- * Paid seats = active memberships for admin + agent only (broker is included in base plan).
+ * Paid seats = billable memberships for admin + agent with `status` active or pending (invite not yet accepted still counts).
+ * Broker is included in base plan; `btq_admin` and inactive/removed memberships are excluded.
  */
 export async function countPaidSeats(
   supabase: SupabaseClient,
@@ -12,7 +13,7 @@ export async function countPaidSeats(
     .from("office_memberships")
     .select("*", { count: "exact", head: true })
     .eq("office_id", officeId)
-    .eq("status", "active")
+    .in("status", ["active", "pending"])
     .in("role", ["admin", "agent"]);
 
   if (error) {
@@ -22,15 +23,14 @@ export async function countPaidSeats(
 }
 
 /**
- * Target Stripe paid-seat quantity after `broker_add_office_member` adds or upserts an admin/agent.
+ * Target Stripe paid-seat quantity when adding/updating an admin/agent **before** the DB write completes.
  *
- * - **Already active** `admin` or `agent`: do **not** increase seats (same billable seat; upsert only).
- * - **Pending** `admin` or `agent`: do **not** increase seats (invite not accepted; no bill until active).
- * - **Inactive** `admin` or `agent`: **do** increase seats (reactivation restores a paid seat).
- * - **No membership row** (new member) or **no matching profile**: increase by one (caller may override for brand-new email invites that insert `pending` without billing).
+ * `countPaidSeats` includes **active + pending**, so {@link prevPaidCount} already counts pending invites in the office.
  *
- * This RPC only assigns `admin` or `agent` (not `broker`), so a separate “non-billable → billable” role-change
- * path is out of scope here.
+ * - **Already active** `admin` or `agent`: **do not** increase (seat already billed).
+ * - **Already pending** `admin` or `agent`: **do not** increase — duplicate invites are blocked upstream; kept for safety.
+ * - **Inactive** `admin` or `agent`: **do** increase (reactivation restores a paid seat).
+ * - **No membership row** / **no profile row**: caller adds a new billing seat (new email invite ⇒ `pending` row).
  */
 export async function resolveNextPaidSeatCountForAdd(
   supabase: SupabaseClient,

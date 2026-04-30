@@ -1,7 +1,13 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { getStripeServer } from "../../src/lib/stripeServer.js";
+import { getSeatPriceId } from "../../src/lib/stripePrices.js";
 import { getSupabaseServiceRole } from "../../src/lib/supabaseServer.js";
 import { getUserIdFromAuthHeader } from "./billingAuth.js";
-import { assertBrokerForOffice } from "./seatSyncShared.js";
+import {
+  assertBrokerForOffice,
+  countPaidSeats,
+  syncStripeSeatQuantity,
+} from "./seatSyncShared.js";
 
 function parseJsonBody(req: VercelRequest): Record<string, unknown> {
   let raw: unknown;
@@ -94,6 +100,55 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (delErr) {
     console.error("[remove-team-invite] delete", delErr);
     return res.status(500).json({ error: "Could not remove invite" });
+  }
+
+  const { data: officeRow, error: officeErr } = await admin
+    .from("offices")
+    .select("stripe_subscription_id")
+    .eq("id", officeId)
+    .maybeSingle();
+
+  if (officeErr) {
+    console.error("[remove-team-invite] offices select after delete", officeErr);
+    return res.status(200).json({
+      ok: true,
+      billingSyncWarning:
+        "Invite removed, but billing status could not be verified against Stripe. Contact support if charges look wrong.",
+    });
+  }
+
+  const subscriptionId =
+    typeof officeRow?.stripe_subscription_id === "string"
+      ? officeRow.stripe_subscription_id.trim()
+      : "";
+
+  if (!subscriptionId) {
+    return res.status(200).json({ ok: true });
+  }
+
+  try {
+    let seatPriceId: string;
+    try {
+      seatPriceId = getSeatPriceId();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[remove-team-invite] STRIPE_PRICE_SEAT missing", msg);
+      return res.status(200).json({
+        ok: true,
+        billingSyncWarning: "Invite removed, but seat billing is not configured—subscription quantity was not updated.",
+      });
+    }
+
+    const stripe = getStripeServer();
+    const targetCount = await countPaidSeats(admin, officeId);
+    await syncStripeSeatQuantity(stripe, subscriptionId, seatPriceId, targetCount);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[remove-team-invite] Stripe seat sync failed after delete", { officeId, msg });
+    return res.status(200).json({
+      ok: true,
+      billingSyncWarning: `Invite removed, but Stripe seat count may be out of sync: ${msg}`,
+    });
   }
 
   return res.status(200).json({ ok: true });

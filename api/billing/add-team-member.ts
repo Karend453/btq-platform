@@ -192,8 +192,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (existingProfileId) {
       nextCount = await resolveNextPaidSeatCountForAdd(admin, officeId, email, prevCount);
     } else {
-      // New email: invite flow inserts `pending` until the user accepts (no paid seat until active).
-      nextCount = prevCount;
+      // New email → membership `pending`; pending admin/agent counts toward paid seats immediately.
+      nextCount = prevCount + 1;
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
