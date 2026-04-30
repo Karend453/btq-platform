@@ -426,6 +426,8 @@ export type CreateTransactionInput = {
   checklistTemplateId?: string | null;
   /** Stored on `transaction_side`; drives which of listagent/buyeragent gets session email. */
   transactionSide?: string | null;
+  /** Optional per-transaction forms/e-sign workspace URL (`transactions.external_forms_url`). */
+  externalFormsUrl?: string | null;
 };
 
 const INTAKE_EMAIL_DOMAIN = "docs.btqrlt.com";
@@ -481,6 +483,21 @@ export async function createTransaction(input: CreateTransactionInput): Promise<
     sessionEmail ||
     null;
 
+  let external_forms_url: string | null = null;
+  const extRaw = (input.externalFormsUrl ?? "").trim();
+  if (extRaw) {
+    let u: URL;
+    try {
+      u = new URL(extRaw);
+    } catch {
+      throw new Error("Invalid forms workspace URL");
+    }
+    if (u.protocol !== "http:" && u.protocol !== "https:") {
+      throw new Error("Invalid forms workspace URL");
+    }
+    external_forms_url = u.toString();
+  }
+
   const id = crypto.randomUUID();
   const intake_email = intakeEmailForTransactionId(id);
 
@@ -502,6 +519,7 @@ export async function createTransaction(input: CreateTransactionInput): Promise<
     checklist_template_id,
     checklisttype,
     intake_email,
+    external_forms_url,
   };
 
   console.log(

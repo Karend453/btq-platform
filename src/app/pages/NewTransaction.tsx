@@ -26,6 +26,19 @@ interface TransactionData {
   identifier: string;
   clientName: string;
   officeId: string;
+  /** Optional `transactions.external_forms_url`; empty means unset. */
+  formsWorkspaceUrl: string;
+}
+
+function isValidOptionalHttpUrl(raw: string): boolean {
+  const t = raw.trim();
+  if (!t) return true;
+  try {
+    const u = new URL(t);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 /** Values for `transactions.transaction_side`; must stay aligned with transactionSideFlags() in services. */
@@ -53,6 +66,7 @@ export function NewTransaction() {
     identifier: "",
     clientName: "",
     officeId: "",
+    formsWorkspaceUrl: "",
   });
   /** `offices.id` (UUID) → display label for the select and review step. */
   const [officeOptions, setOfficeOptions] = useState<{ id: string; name: string }[]>([]);
@@ -142,6 +156,7 @@ export function NewTransaction() {
         officeId: transactionData.officeId,
         checklistTemplateId,
         transactionSide: transactionSideFromWizardType(transactionData.type),
+        externalFormsUrl: transactionData.formsWorkspaceUrl.trim() || null,
       });
 
       if (!created) {
@@ -162,7 +177,12 @@ export function NewTransaction() {
     }
   };
 
+  const formsWorkspaceUrlTrimmed = transactionData.formsWorkspaceUrl.trim();
+  const formsWorkspaceUrlInvalid =
+    formsWorkspaceUrlTrimmed !== "" && !isValidOptionalHttpUrl(transactionData.formsWorkspaceUrl);
+
   const isStepValid = () => {
+    if (formsWorkspaceUrlInvalid) return false;
     switch (currentStep) {
       case 1:
         return transactionData.type !== "";
@@ -406,6 +426,36 @@ export function NewTransaction() {
       </select>
     </div>
 
+    <div>
+      <Label htmlFor="formsWorkspaceUrl">Forms Workspace URL</Label>
+      <Input
+        id="formsWorkspaceUrl"
+        type="url"
+        inputMode="url"
+        autoComplete="off"
+        spellCheck={false}
+        placeholder="https://forms.skyslope.com/..."
+        value={transactionData.formsWorkspaceUrl}
+        onChange={(e) =>
+          setTransactionData({
+            ...transactionData,
+            formsWorkspaceUrl: e.target.value,
+          })
+        }
+        className="mt-1.5"
+        aria-invalid={formsWorkspaceUrlInvalid || undefined}
+      />
+      {formsWorkspaceUrlInvalid ? (
+        <p className="text-sm text-red-600 mt-2" role="alert">
+          Enter a valid URL starting with http:// or https://
+        </p>
+      ) : (
+        <p className="text-sm text-slate-500 mt-2">
+          Paste forms workspace URL if you&apos;ve already started the file.
+        </p>
+      )}
+    </div>
+
   </div>
 )}
             {/* Step 4: Review & Confirm */}
@@ -458,6 +508,13 @@ export function NewTransaction() {
                     </div>
                     <div className="text-sm text-slate-600 mt-1">
                       {officeOptions.find((o) => o.id === transactionData.officeId)?.name ?? "—"}
+                    </div>
+                  </div>
+
+                  <div className="border-t border-slate-200 pt-4">
+                    <div className="text-sm text-slate-600 mb-1">Forms Workspace URL</div>
+                    <div className="font-medium text-slate-900 break-all">
+                      {formsWorkspaceUrlTrimmed || "—"}
                     </div>
                   </div>
 
