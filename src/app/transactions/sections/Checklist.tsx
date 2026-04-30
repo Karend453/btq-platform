@@ -175,7 +175,7 @@ function getChecklistRowIcon(item: ChecklistItem, docStatus: DocumentStatus) {
     return <CheckCircle2 className="h-5 w-5 text-slate-400" />;
   }
   if (isReferenceOnlyAttached(item)) {
-    return <Paperclip className="h-5 w-5 text-slate-500" />;
+    return <CheckCircle2 className="h-5 w-5 text-emerald-600" />;
   }
   return getChecklistIcon(docStatus, false);
 }
@@ -186,8 +186,8 @@ function getChecklistRowReviewBadge(item: ChecklistItem, docStatus: DocumentStat
   }
   if (isReferenceOnlyAttached(item)) {
     return (
-      <Badge variant="outline" className="bg-slate-50 text-slate-700 border-slate-200 text-xs">
-        Attached
+      <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 border">
+        Completed
       </Badge>
     );
   }

@@ -1141,6 +1141,65 @@ export default function TransactionDetailsPage() {
     setChecklistItems((prev) => mergeInboxIntoChecklistItems(prev, inboxDocuments));
   }, [inboxDocuments]);
 
+  /** When returning from external forms (SkySlope, etc.), refetch inbox + checklist so new inbound docs show without a full page reload. */
+  useEffect(() => {
+    const transactionId = id?.trim();
+    if (!transactionId) return;
+
+    let cancelled = false;
+    let debounceTimer: number | null = null;
+    let inFlight = false;
+
+    const refresh = async () => {
+      if (cancelled || document.visibilityState !== "visible") return;
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const docs = await fetchDocumentsByTransactionId(transactionId);
+        if (cancelled) return;
+        setInboxDocuments(docs);
+        const templateId = checklistTemplateId;
+        if (templateId) {
+          const [items, commentsByItem] = await Promise.all([
+            fetchChecklistItemsForTransaction(transactionId, templateId),
+            fetchCommentsByTransactionId(transactionId),
+          ]);
+          if (cancelled) return;
+          const withComments: ChecklistItem[] = items.map((item) => ({
+            ...item,
+            comments: commentsByItem.get(String(item.id)) ?? [],
+          })) as ChecklistItem[];
+          setChecklistItems(mergeInboxIntoChecklistItems(withComments, docs));
+        }
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    const scheduleRefresh = () => {
+      if (document.visibilityState !== "visible") return;
+      if (debounceTimer != null) window.clearTimeout(debounceTimer);
+      debounceTimer = window.setTimeout(() => {
+        debounceTimer = null;
+        void refresh();
+      }, 400);
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") scheduleRefresh();
+    };
+
+    window.addEventListener("focus", scheduleRefresh);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      if (debounceTimer != null) window.clearTimeout(debounceTimer);
+      window.removeEventListener("focus", scheduleRefresh);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [id, checklistTemplateId]);
+
   const isReadOnly = transactionStatus === "Archived";
 
   const unattachedInboxDocumentCount = useMemo(
