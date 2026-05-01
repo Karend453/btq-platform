@@ -41,7 +41,7 @@ export type TransactionSendDocumentsDialogProps = {
  * (with copy button + transient "Copied ✓" hint) and a primary action derived from
  * {@link resolveFormsWorkspaceLaunch}:
  *
- *   • Transaction workspace URL or provider fallback landing URL → "Open Forms Workspace".
+ *   • Transaction workspace URL or provider fallback landing URL → "Open Forms".
  *   • Other / none / unset → "Add Forms Workspace Link" calling `onRequestEditLink`.
  *   • Saved-but-malformed URL → amber warning + "Update link".
  *

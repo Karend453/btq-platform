@@ -84,7 +84,7 @@ export function TransactionFormsLinkInlineShortcut({
   const chipTitle = hasExisting
     ? "Open forms + copy transaction email"
     : launchResolution.type === "fallback"
-      ? "Open forms workspace (fallback) + copy transaction email"
+      ? "Open forms (fallback) + copy transaction email"
       : "Add or update forms workspace link";
 
   return (

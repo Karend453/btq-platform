@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
   ArrowRight,
   Check,
+  ExternalLink,
   Home,
   FileText,
   Users,
@@ -20,6 +21,11 @@ import {
   type ChecklistTemplate,
 } from "../../services/checklistTemplates";
 import { Label } from "../components/ui/label";
+import { type FormsProviderValue, getCurrentUserProfileSnapshot } from "../../services/auth";
+import {
+  FORMS_WORKSPACE_TRANSACTION_LAUNCH_LABEL,
+  resolveFormsWorkspaceLaunch,
+} from "../../lib/formsWorkspaceLaunch";
 
 interface TransactionData {
   type: "Purchase" | "Listing" | "Lease" | "Other" | "";
@@ -76,6 +82,15 @@ export function NewTransaction() {
   const [checklistTemplates, setChecklistTemplates] = useState<ChecklistTemplate[]>([]);
   const [checklistTemplateId, setChecklistTemplateId] = useState("");
   const [checklistTemplatesLoading, setChecklistTemplatesLoading] = useState(false);
+  const [preferredFormsProvider, setPreferredFormsProvider] = useState<
+    FormsProviderValue | null | undefined
+  >(undefined);
+
+  useEffect(() => {
+    void getCurrentUserProfileSnapshot()
+      .then((p) => setPreferredFormsProvider(p?.preferred_forms_provider ?? null))
+      .catch(() => setPreferredFormsProvider(null));
+  }, []);
 
   useEffect(() => {
     void getCurrentOffice().then((o) => {
@@ -180,6 +195,41 @@ export function NewTransaction() {
   const formsWorkspaceUrlTrimmed = transactionData.formsWorkspaceUrl.trim();
   const formsWorkspaceUrlInvalid =
     formsWorkspaceUrlTrimmed !== "" && !isValidOptionalHttpUrl(transactionData.formsWorkspaceUrl);
+
+  const formsWorkspaceLaunchResolution = useMemo(
+    () =>
+      resolveFormsWorkspaceLaunch(transactionData.formsWorkspaceUrl, preferredFormsProvider ?? null),
+    [transactionData.formsWorkspaceUrl, preferredFormsProvider]
+  );
+
+  function handleOpenFormsWorkspace() {
+    if (formsWorkspaceLaunchResolution.type === "valid_transaction_url") {
+      window.open(
+        formsWorkspaceLaunchResolution.href,
+        "_blank",
+        "noopener,noreferrer"
+      );
+      return;
+    }
+    if (formsWorkspaceLaunchResolution.type === "fallback") {
+      window.open(formsWorkspaceLaunchResolution.href, "_blank", "noopener,noreferrer");
+      return;
+    }
+    if (formsWorkspaceLaunchResolution.type === "invalid_transaction_url") {
+      toast.warning(
+        "That link isn’t a valid http/https URL. Update the field above to open it in a new tab."
+      );
+      return;
+    }
+    // add_link — no launch URL until user pastes one or chooses a provider with a fallback
+    if (preferredFormsProvider == null) {
+      navigate("/settings?tab=forms-provider");
+      return;
+    }
+    toast.info("Paste your forms workspace URL above, or change your preferred provider in Settings.", {
+      duration: 4500,
+    });
+  }
 
   const isStepValid = () => {
     if (formsWorkspaceUrlInvalid) return false;
@@ -427,7 +477,33 @@ export function NewTransaction() {
     </div>
 
     <div>
-      <Label htmlFor="formsWorkspaceUrl">Forms Workspace URL</Label>
+      <div className="grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-baseline">
+        <Label htmlFor="formsWorkspaceUrl" className="min-w-0">
+          Forms Workspace URL
+        </Label>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-7 shrink-0 border-slate-200 px-2.5 text-xs font-medium gap-1.5 has-[>svg]:px-2 justify-self-end sm:justify-self-auto [&_svg]:size-3.5 [&_svg]:shrink-0"
+          onClick={handleOpenFormsWorkspace}
+          disabled={preferredFormsProvider === undefined}
+          title={
+            preferredFormsProvider === undefined
+              ? "Loading forms preferences…"
+              : formsWorkspaceLaunchResolution.type === "add_link"
+                ? preferredFormsProvider == null
+                  ? "Choose your forms provider in Settings"
+                  : "Paste a workspace URL above or update your preferred provider in Settings"
+                : formsWorkspaceLaunchResolution.type === "invalid_transaction_url"
+                  ? "Fix the URL above to open it in a new tab"
+                  : "Open forms in a new tab"
+          }
+        >
+          <ExternalLink className="shrink-0" aria-hidden />
+          {FORMS_WORKSPACE_TRANSACTION_LAUNCH_LABEL}
+        </Button>
+      </div>
       <Input
         id="formsWorkspaceUrl"
         type="url"
@@ -446,11 +522,11 @@ export function NewTransaction() {
         aria-invalid={formsWorkspaceUrlInvalid || undefined}
       />
       {formsWorkspaceUrlInvalid ? (
-        <p className="text-sm text-red-600 mt-2" role="alert">
+        <p className="text-sm text-red-600 mt-[7px]" role="alert">
           Enter a valid URL starting with http:// or https://
         </p>
       ) : (
-        <p className="text-sm text-slate-500 mt-2">
+        <p className="text-sm text-slate-500 mt-[7px]">
           Paste forms workspace URL if you&apos;ve already started the file.
         </p>
       )}

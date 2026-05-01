@@ -71,6 +71,6 @@ export function resolveFormsWorkspaceLaunch(
   return { type: "add_link" };
 }
 
-export const FORMS_WORKSPACE_TRANSACTION_LAUNCH_LABEL = "Open Forms Workspace";
+export const FORMS_WORKSPACE_TRANSACTION_LAUNCH_LABEL = "Open Forms";
 
 export const FORMS_WORKSPACE_ADD_LINK_LABEL = "Add Forms Workspace Link";
