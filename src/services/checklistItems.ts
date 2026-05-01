@@ -1,6 +1,8 @@
 import { supabase } from "../lib/supabaseClient";
 import type { ChecklistItemFromTemplate } from "./checklistTemplates";
 import {
+  compareChecklistTemplateItems,
+  compareChecklistTemplateSections,
   fetchChecklistTemplateSectionsAndItems,
   type ChecklistTemplateItemRow,
   type ChecklistTemplateSectionRow,
@@ -88,25 +90,33 @@ function sortChecklistRowsByTemplate(
   sections: ChecklistTemplateSectionRow[],
   items: ChecklistTemplateItemRow[]
 ): DbChecklistItem[] {
-  const sectionMap = new Map(
-    sections.map((s) => [s.id, { name: s.name ?? "", sortOrder: s.sort_order ?? 999 }])
-  );
-  const getSectionSortOrder = (sectionId: string | null) =>
-    sectionId ? (sectionMap.get(sectionId)?.sortOrder ?? 999) : 999;
-
+  const sectionById = new Map(sections.map((s) => [s.id, s]));
   const itemById = new Map(items.map((i) => [i.id, i]));
+
+  const sectionOrFallback = (sectionId: string | null): ChecklistTemplateSectionRow =>
+    sectionId && sectionById.has(sectionId)
+      ? sectionById.get(sectionId)!
+      : ({
+          id: "__unsectioned__",
+          template_id: "",
+          name: "Other",
+          sort_order: 999999,
+          created_at: null,
+        } as ChecklistTemplateSectionRow);
 
   return [...rows].sort((a, b) => {
     const ta = getTemplateItem(a, itemById);
     const tb = getTemplateItem(b, itemById);
     const secA = resolveSectionId(a, ta);
     const secB = resolveSectionId(b, tb);
-    const orderA = getSectionSortOrder(secA);
-    const orderB = getSectionSortOrder(secB);
-    if (orderA !== orderB) return orderA - orderB;
+    const secCmp = compareChecklistTemplateSections(
+      sectionOrFallback(secA),
+      sectionOrFallback(secB)
+    );
+    if (secCmp !== 0) return secCmp;
     const so = (a.sort_order ?? 0) - (b.sort_order ?? 0);
     if (so !== 0) return so;
-    return a.name.localeCompare(b.name);
+    return a.id.localeCompare(b.id);
   });
 }
 
@@ -184,7 +194,7 @@ export async function ensureChecklistItemsForTransaction(
 
   const { data: items, error } = await supabase
     .from("checklist_template_items")
-    .select("id, name, requirement, is_compliance_document, section_id, sort_order")
+    .select("id, name, requirement, is_compliance_document, section_id, sort_order, created_at")
     .eq("template_id", templateId);
 
   if (error || !items?.length) {
@@ -209,7 +219,8 @@ export async function ensureChecklistItemsForTransaction(
       .filter((id): id is string => id != null && String(id).trim() !== "")
   );
 
-  const rows = items
+  const rows = [...items]
+    .sort(compareChecklistTemplateItems)
     .filter((ti) => !existingTemplateIds.has(ti.id))
     .map((ti) => ({
       transaction_id: transactionId,
@@ -257,7 +268,7 @@ export async function replaceChecklistItemsFromTemplate(
 
   const { data: items, error } = await supabase
     .from("checklist_template_items")
-    .select("id, name, requirement, is_compliance_document, section_id, sort_order")
+    .select("id, name, requirement, is_compliance_document, section_id, sort_order, created_at")
     .eq("template_id", templateId);
 
   if (error || !items?.length) {
@@ -282,7 +293,8 @@ export async function replaceChecklistItemsFromTemplate(
       .filter((id): id is string => id != null && String(id).trim() !== "")
   );
 
-  const rows = items
+  const rows = [...items]
+    .sort(compareChecklistTemplateItems)
     .filter((ti) => !existingTemplateIds.has(ti.id))
     .map((ti) => ({
       transaction_id: transactionId,

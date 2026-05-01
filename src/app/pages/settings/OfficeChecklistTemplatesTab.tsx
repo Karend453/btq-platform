@@ -1,17 +1,12 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Archive,
   ChevronDown,
   ChevronRight,
   ClipboardList,
-  Clock,
   Copy,
-  Eye,
   FileText,
   Loader2,
-  MessageSquare,
-  Paperclip,
-  Pencil,
+  MoreVertical,
   Plus,
   Trash2,
 } from "lucide-react";
@@ -21,6 +16,8 @@ import { useOfficeForSettingsTabs } from "./useOfficeForSettingsTabs";
 import {
   archiveOfficeChecklistTemplate,
   cloneBtqMasterTemplateToOffice,
+  compareChecklistTemplateItems,
+  compareChecklistTemplateSections,
   deleteChecklistTemplateItem,
   deleteChecklistTemplateSectionCascade,
   duplicateOfficeChecklistTemplate,
@@ -33,6 +30,7 @@ import {
   renameOfficeChecklistTemplate,
   setDefaultOfficeChecklistTemplate,
   updateChecklistTemplateItem,
+  updateChecklistTemplateSection,
   type BtqMasterChecklistTemplateRow,
   type OfficeChecklistTemplateRow,
 } from "../../../services/checklistTemplates";
@@ -40,12 +38,11 @@ import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "../../components/ui/dialog";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../../components/ui/dropdown-menu";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import {
@@ -73,34 +70,6 @@ function getRequirementBadge(requirement: string | null) {
   );
 }
 
-/** Matches transaction checklist “Not Submitted” styling; inert on template settings. */
-function inertReviewBadge() {
-  return (
-    <Badge className="bg-slate-50 text-slate-600 border-slate-300 border pointer-events-none opacity-60">
-      Not Submitted
-    </Badge>
-  );
-}
-
-function InertTransactionActionIcons() {
-  return (
-    <div className="flex shrink-0 flex-nowrap items-center gap-1.5 pointer-events-none opacity-40">
-      <span className="inline-flex h-8 w-8 items-center justify-center" title="Attach document">
-        <Paperclip className="h-4 w-4 text-slate-600" aria-hidden />
-      </span>
-      <span className="inline-flex h-8 w-8 items-center justify-center relative" title="Comments">
-        <MessageSquare className="h-4 w-4 text-slate-600" aria-hidden />
-      </span>
-      <span className="inline-flex h-8 w-8 items-center justify-center" title="Review document">
-        <Eye className="h-4 w-4 text-slate-600" aria-hidden />
-      </span>
-      <span className="inline-flex h-8 w-8 items-center justify-center" title="Archive item">
-        <Archive className="h-4 w-4 text-slate-600" aria-hidden />
-      </span>
-    </div>
-  );
-}
-
 export type OfficeChecklistTemplatesTabProps = {
   /**
    * When true (btq_admin Settings tab), templates are view-only. Brokers use full edit on
@@ -120,9 +89,6 @@ export function OfficeChecklistTemplatesTab({ readOnly = false }: OfficeChecklis
   const [sectionsByTemplateId, setSectionsByTemplateId] = useState<
     Record<string, NonNullable<Awaited<ReturnType<typeof fetchChecklistTemplateSectionsAndItems>> | null>>
   >({});
-  const [renameItem, setRenameItem] = useState<{ templateId: string; id: string; name: string } | null>(null);
-  const [renameDraft, setRenameDraft] = useState("");
-  const [renameSaving, setRenameSaving] = useState(false);
 
   const refreshOfficeTemplates = useCallback(async (officeId: string) => {
     const rows = await listOfficeChecklistTemplates(officeId);
@@ -192,27 +158,6 @@ export function OfficeChecklistTemplatesTab({ readOnly = false }: OfficeChecklis
     const raw = await fetchChecklistTemplateSectionsAndItems(templateId);
     setSectionsByTemplateId((prev) => ({ ...prev, [templateId]: raw ?? null }));
     if (office?.id) await refreshOfficeTemplates(office.id);
-  };
-
-  const handleSaveRenameItem = async () => {
-    if (readOnly || !renameItem) return;
-    const trimmed = renameDraft.trim();
-    if (!trimmed) {
-      toast.error("Name cannot be empty");
-      return;
-    }
-    setRenameSaving(true);
-    try {
-      const { error } = await updateChecklistTemplateItem({ itemId: renameItem.id, name: trimmed });
-      if (error) {
-        toast.error(error.message);
-        return;
-      }
-      setRenameItem(null);
-      await refreshStructureForTemplate(renameItem.templateId);
-    } finally {
-      setRenameSaving(false);
-    }
   };
 
   if (office === undefined) {
@@ -295,10 +240,6 @@ export function OfficeChecklistTemplatesTab({ readOnly = false }: OfficeChecklis
                   onToggle={() => void toggleCard(t.id)}
                   onRefreshList={() => refreshOfficeTemplates(office.id)}
                   onRefreshStructure={() => refreshStructureForTemplate(t.id)}
-                  onRenameItemClick={(item) => {
-                    setRenameItem({ templateId: t.id, id: item.id, name: item.name });
-                    setRenameDraft(item.name);
-                  }}
                   onDuplicate={async () => {
                     const { newTemplateId, error } = await duplicateOfficeChecklistTemplate(t.id, office.id);
                     if (error || !newTemplateId) {
@@ -334,35 +275,6 @@ export function OfficeChecklistTemplatesTab({ readOnly = false }: OfficeChecklis
           )}
         </CardContent>
       </Card>
-
-      {!readOnly ? (
-        <Dialog open={!!renameItem} onOpenChange={(open) => !open && setRenameItem(null)}>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>Rename checklist item</DialogTitle>
-            </DialogHeader>
-            <div className="grid gap-2 py-2">
-              <Label htmlFor="rename-item-name">Name</Label>
-              <Input
-                id="rename-item-name"
-                value={renameDraft}
-                onChange={(e) => setRenameDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void handleSaveRenameItem();
-                }}
-              />
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setRenameItem(null)}>
-                Cancel
-              </Button>
-              <Button type="button" onClick={() => void handleSaveRenameItem()} disabled={renameSaving}>
-                {renameSaving ? "Saving…" : "Save"}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      ) : null}
     </div>
   );
 }
@@ -375,7 +287,6 @@ function OfficeTemplateCard({
   onToggle,
   onRefreshList,
   onRefreshStructure,
-  onRenameItemClick,
   onDuplicate,
   onArchive,
 }: {
@@ -386,7 +297,6 @@ function OfficeTemplateCard({
   onToggle: () => void;
   onRefreshList: () => Promise<void>;
   onRefreshStructure: () => Promise<void>;
-  onRenameItemClick: (item: { id: string; name: string }) => void;
   onDuplicate: () => Promise<void>;
   onArchive: () => Promise<void>;
 }) {
@@ -488,7 +398,6 @@ function OfficeTemplateCard({
               templateId={template.id}
               sections={sections}
               onRefreshStructure={onRefreshStructure}
-              onRenameItemClick={onRenameItemClick}
             />
           )}
         </div>
@@ -497,190 +406,79 @@ function OfficeTemplateCard({
   );
 }
 
+/** In-place move for reordering sections/items in the template editor. */
+function arrayMove<T>(arr: T[], fromIndex: number, toIndex: number): T[] {
+  if (fromIndex < 0 || fromIndex >= arr.length || toIndex < 0 || toIndex >= arr.length) {
+    return [...arr];
+  }
+  const next = [...arr];
+  const [removed] = next.splice(fromIndex, 1);
+  next.splice(toIndex, 0, removed);
+  return next;
+}
+
 function OfficeTemplateEditor({
   readOnly,
   templateId,
   sections,
   onRefreshStructure,
-  onRenameItemClick,
 }: {
   readOnly: boolean;
   templateId: string;
   sections: NonNullable<Awaited<ReturnType<typeof fetchChecklistTemplateSectionsAndItems>>>;
   onRefreshStructure: () => Promise<void>;
-  onRenameItemClick: (item: { id: string; name: string }) => void;
 }) {
-  const secs = [...sections.sections].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+  const secs = [...sections.sections].sort(compareChecklistTemplateSections);
+  const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
+  const [sectionNameDraft, setSectionNameDraft] = useState("");
+  const sectionEditSkipBlurCommitRef = useRef(false);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [itemNameDraft, setItemNameDraft] = useState("");
+  const itemEditSkipBlurCommitRef = useRef(false);
+
+  const editableNameTriggerClass =
+    "w-full min-h-8 min-w-0 max-w-[20rem] rounded-md px-1.5 py-0.5 text-left outline-none transition-colors hover:bg-slate-200/40 focus-visible:ring-2 focus-visible:ring-slate-400/50 focus-visible:ring-offset-1";
+
+  const editableItemNameTriggerClass =
+    "min-h-8 min-w-0 flex-1 rounded-md px-1.5 py-0.5 text-left outline-none transition-colors hover:bg-slate-200/40 focus-visible:ring-2 focus-visible:ring-slate-400/50 focus-visible:ring-offset-1";
+
+  async function persistSectionOrder(ordered: typeof secs) {
+    const results = await Promise.all(
+      ordered.map((s, idx) => updateChecklistTemplateSection({ sectionId: s.id, sortOrder: idx }))
+    );
+    const firstErr = results.find((r) => r.error)?.error;
+    if (firstErr) {
+      toast.error(firstErr.message);
+      return;
+    }
+    await onRefreshStructure();
+  }
+
+  async function persistItemOrderInSection(orderedItems: (typeof sections.items)[number][]) {
+    const results = await Promise.all(
+      orderedItems.map((it, idx) => updateChecklistTemplateItem({ itemId: it.id, sortOrder: idx }))
+    );
+    const firstErr = results.find((r) => r.error)?.error;
+    if (firstErr) {
+      toast.error(firstErr.message);
+      return;
+    }
+    await onRefreshStructure();
+  }
 
   return (
     <Card className="border-slate-200 shadow-sm">
-      <CardHeader className="pb-2">
-        <CardTitle className="flex items-center gap-2 text-base text-slate-900">
-          <FileText className="h-5 w-5 text-slate-600" />
+      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0 pb-2">
+        <CardTitle className="flex items-center gap-2 text-base font-semibold text-slate-900">
+          <FileText className="h-5 w-5 shrink-0 text-slate-600" />
           Checklist structure
         </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3 pt-0">
-        {secs.map((sec, sectionIndex) => {
-          const items = sections.items
-            .filter((i) => i.section_id === sec.id)
-            .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
-          return (
-            <div key={sec.id}>
-              <div
-                className={`flex items-center justify-between gap-2 pb-1 ${
-                  sectionIndex === 0 ? "pt-0" : "pt-2"
-                }`}
-              >
-                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 flex-1 min-w-0 flex items-center gap-2">
-                  {readOnly ? (
-                    <span className="max-w-xl text-xs font-semibold uppercase tracking-wider text-slate-700">
-                      {sec.name ?? "—"}
-                    </span>
-                  ) : (
-                    <Input
-                      defaultValue={sec.name ?? ""}
-                      className="max-w-xl h-8 text-xs font-semibold uppercase tracking-wider border-slate-200"
-                      onBlur={async (e) => {
-                        const v = e.target.value.trim();
-                        if (!v || v === sec.name) return;
-                        const { error } = await renameChecklistTemplateSection(sec.id, v);
-                        if (error) toast.error(error.message);
-                        else await onRefreshStructure();
-                      }}
-                    />
-                  )}
-                </div>
-                {!readOnly ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 shrink-0 text-xs text-red-600 hover:text-red-700"
-                    onClick={async () => {
-                      if (!confirm("Delete this section and its items?")) return;
-                      const { error } = await deleteChecklistTemplateSectionCascade(sec.id, templateId);
-                      if (error) toast.error(error.message);
-                      else await onRefreshStructure();
-                    }}
-                  >
-                    <Trash2 className="h-3.5 w-3.5 mr-1" />
-                    Delete section
-                  </Button>
-                ) : null}
-              </div>
-
-              <div className="space-y-2">
-                {items.map((it) => (
-                  <div
-                    key={it.id}
-                    className="flex items-start gap-3 p-4 bg-slate-50 rounded-lg border border-slate-200 hover:border-slate-300 transition-colors"
-                  >
-                    <div className="shrink-0 pt-0.5 pointer-events-none opacity-50">
-                      <Clock className="h-5 w-5 text-slate-400" aria-hidden />
-                    </div>
-                    <div className="min-w-0 flex-1 flex flex-col gap-1">
-                      <div className="flex min-w-0 items-center gap-2">
-                        <span className="min-w-0 truncate font-medium text-slate-900" title={it.name}>
-                          {it.name}
-                        </span>
-                        {!readOnly ? (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7 shrink-0 text-slate-500 hover:text-slate-800"
-                            title="Rename item"
-                            onClick={() => onRenameItemClick(it)}
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                            <span className="sr-only">Rename item</span>
-                          </Button>
-                        ) : null}
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 flex-nowrap items-center gap-1.5 flex-wrap justify-end">
-                      {readOnly ? (
-                        getRequirementBadge(it.requirement)
-                      ) : (
-                        <button
-                          type="button"
-                          className="rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
-                          title="Click to toggle required / optional"
-                          onClick={async () => {
-                            const next = it.requirement === "optional" ? "required" : "optional";
-                            const { error } = await updateChecklistTemplateItem({
-                              itemId: it.id,
-                              requirement: next,
-                            });
-                            if (error) toast.error(error.message);
-                            else await onRefreshStructure();
-                          }}
-                        >
-                          {getRequirementBadge(it.requirement)}
-                        </button>
-                      )}
-                      {inertReviewBadge()}
-                      <InertTransactionActionIcons />
-                      {!readOnly ? (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 shrink-0 text-red-600 hover:text-red-700 pointer-events-auto"
-                          title="Delete item"
-                          onClick={async () => {
-                            if (!confirm("Delete this item?")) return;
-                            const { error } = await deleteChecklistTemplateItem(it.id);
-                            if (error) toast.error(error.message);
-                            else await onRefreshStructure();
-                          }}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                          <span className="sr-only">Delete item</span>
-                        </Button>
-                      ) : null}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {!readOnly ? (
-                <div className="pt-2">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 text-slate-600"
-                    onClick={async () => {
-                      const nextSort =
-                        items.length > 0 ? Math.max(...items.map((i) => i.sort_order ?? 0)) + 1 : 0;
-                      const { id: newId, error } = await insertChecklistTemplateItem({
-                        templateId,
-                        sectionId: sec.id,
-                        name: "New item",
-                        requirement: "required",
-                        sortOrder: nextSort,
-                      });
-                      if (error || !newId) toast.error(error?.message ?? "Could not add item");
-                      else await onRefreshStructure();
-                    }}
-                  >
-                    <Plus className="h-3.5 w-3.5 mr-1" />
-                    Add item
-                  </Button>
-                </div>
-              ) : null}
-            </div>
-          );
-        })}
-
         {!readOnly ? (
           <Button
             type="button"
             variant="secondary"
             size="sm"
-            className="mt-2"
+            className="shrink-0"
             onClick={async () => {
               const nextSort =
                 secs.length > 0 ? Math.max(...secs.map((s) => s.sort_order ?? 0)) + 1 : 0;
@@ -697,6 +495,323 @@ function OfficeTemplateEditor({
             Add section
           </Button>
         ) : null}
+      </CardHeader>
+      <CardContent className="space-y-3 pt-0">
+        {secs.map((sec, sectionIndex) => {
+          const items = sections.items
+            .filter((i) => i.section_id === sec.id)
+            .sort(compareChecklistTemplateItems);
+          const isFirstSection = sectionIndex === 0;
+          const isLastSection = sectionIndex >= secs.length - 1;
+          return (
+            <div key={sec.id}>
+              <div
+                className={`flex flex-wrap items-center justify-between gap-x-3 gap-y-2 pb-2 ${
+                  sectionIndex === 0 ? "pt-0" : "pt-2 border-t border-slate-200/80"
+                }`}
+              >
+                <div className="min-w-0 w-full max-w-[20rem] sm:w-auto">
+                  {readOnly ? (
+                    <span className="block truncate text-xs font-semibold uppercase tracking-wider text-slate-700">
+                      {sec.name ?? "—"}
+                    </span>
+                  ) : editingSectionId === sec.id ? (
+                    <Input
+                      autoFocus
+                      value={sectionNameDraft}
+                      onChange={(e) => setSectionNameDraft(e.target.value)}
+                      className="h-8 w-full max-w-[20rem] min-w-0 border-slate-200 text-xs font-semibold uppercase tracking-wider"
+                      title={sec.name ?? ""}
+                      aria-label="Section name"
+                      onFocus={(e) => e.currentTarget.select()}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          e.currentTarget.blur();
+                        }
+                        if (e.key === "Escape") {
+                          e.preventDefault();
+                          sectionEditSkipBlurCommitRef.current = true;
+                          setSectionNameDraft(sec.name ?? "");
+                          setEditingSectionId(null);
+                        }
+                      }}
+                      onBlur={(e) => {
+                        const raw = e.currentTarget.value;
+                        void (async () => {
+                          if (sectionEditSkipBlurCommitRef.current) {
+                            sectionEditSkipBlurCommitRef.current = false;
+                            return;
+                          }
+                          const v = raw.trim();
+                          if (!v || v === sec.name) {
+                            setEditingSectionId(null);
+                            return;
+                          }
+                          const { error } = await renameChecklistTemplateSection(sec.id, v);
+                          if (error) {
+                            toast.error(error.message);
+                            return;
+                          }
+                          await onRefreshStructure();
+                          setEditingSectionId(null);
+                        })();
+                      }}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      className={`${editableNameTriggerClass} truncate whitespace-nowrap text-xs font-semibold uppercase tracking-wider text-slate-800`}
+                      title={sec.name ?? ""}
+                      onClick={() => {
+                        setEditingItemId(null);
+                        setEditingSectionId(sec.id);
+                        setSectionNameDraft(sec.name ?? "");
+                      }}
+                    >
+                      <span className="block truncate">{sec.name ?? "—"}</span>
+                    </button>
+                  )}
+                </div>
+                {!readOnly ? (
+                  <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 text-slate-600"
+                      onClick={async () => {
+                        const nextSort =
+                          items.length > 0 ? Math.max(...items.map((i) => i.sort_order ?? 0)) + 1 : 0;
+                        const { id: newId, error } = await insertChecklistTemplateItem({
+                          templateId,
+                          sectionId: sec.id,
+                          name: "New item",
+                          requirement: "required",
+                          sortOrder: nextSort,
+                        });
+                        if (error || !newId) toast.error(error?.message ?? "Could not add item");
+                        else await onRefreshStructure();
+                      }}
+                    >
+                      <Plus className="h-3.5 w-3.5 mr-1" />
+                      Add item
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 shrink-0 text-xs text-red-600 hover:text-red-700"
+                      onClick={async () => {
+                        if (!confirm("Delete this section and its items?")) return;
+                        const { error } = await deleteChecklistTemplateSectionCascade(sec.id, templateId);
+                        if (error) toast.error(error.message);
+                        else await onRefreshStructure();
+                      }}
+                    >
+                      <Trash2 className="h-3.5 w-3.5 mr-1" />
+                      Delete section
+                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 shrink-0 text-slate-600"
+                          aria-label="Section reorder"
+                        >
+                          <MoreVertical className="h-4 w-4" />
+                          <span className="sr-only">Open section actions</span>
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-44">
+                        <DropdownMenuItem
+                          disabled={isFirstSection}
+                          onSelect={() => {
+                            if (isFirstSection) return;
+                            void persistSectionOrder(arrayMove(secs, sectionIndex, sectionIndex - 1));
+                          }}
+                        >
+                          Move section up
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={isLastSection}
+                          onSelect={() => {
+                            if (isLastSection) return;
+                            void persistSectionOrder(arrayMove(secs, sectionIndex, sectionIndex + 1));
+                          }}
+                        >
+                          Move section down
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="space-y-2">
+                {items.map((it, itemIndex) => {
+                  const isFirstItem = itemIndex === 0;
+                  const isLastItem = itemIndex >= items.length - 1;
+                  return (
+                    <div
+                      key={it.id}
+                      className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:gap-3"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex min-h-8 min-w-0">
+                          {readOnly ? (
+                            <span className="min-w-0 truncate font-medium text-slate-900" title={it.name}>
+                              {it.name}
+                            </span>
+                          ) : editingItemId === it.id ? (
+                            <Input
+                              autoFocus
+                              value={itemNameDraft}
+                              onChange={(e) => setItemNameDraft(e.target.value)}
+                              className="h-8 min-w-0 flex-1 border-slate-200 px-2 py-1 text-base font-medium leading-none text-slate-900 md:text-sm"
+                              aria-label="Checklist item name"
+                              onFocus={(e) => e.currentTarget.select()}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  e.currentTarget.blur();
+                                }
+                                if (e.key === "Escape") {
+                                  e.preventDefault();
+                                  itemEditSkipBlurCommitRef.current = true;
+                                  setItemNameDraft(it.name);
+                                  setEditingItemId(null);
+                                }
+                              }}
+                              onBlur={(e) => {
+                                const raw = e.currentTarget.value;
+                                void (async () => {
+                                  if (itemEditSkipBlurCommitRef.current) {
+                                    itemEditSkipBlurCommitRef.current = false;
+                                    return;
+                                  }
+                                  const v = raw.trim();
+                                  if (!v || v === it.name) {
+                                    setEditingItemId(null);
+                                    return;
+                                  }
+                                  const { error } = await updateChecklistTemplateItem({
+                                    itemId: it.id,
+                                    name: v,
+                                  });
+                                  if (error) {
+                                    toast.error(error.message);
+                                    return;
+                                  }
+                                  await onRefreshStructure();
+                                  setEditingItemId(null);
+                                })();
+                              }}
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              className={editableItemNameTriggerClass}
+                              onClick={() => {
+                                setEditingSectionId(null);
+                                setEditingItemId(it.id);
+                                setItemNameDraft(it.name);
+                              }}
+                            >
+                              <span className="block min-w-0 truncate font-medium text-slate-900" title={it.name}>
+                                {it.name}
+                              </span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 flex-nowrap items-center gap-1.5">
+                        {readOnly ? (
+                          getRequirementBadge(it.requirement)
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              className="rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+                              title="Click to toggle required / optional"
+                              onClick={async () => {
+                                const next = it.requirement === "optional" ? "required" : "optional";
+                                const { error } = await updateChecklistTemplateItem({
+                                  itemId: it.id,
+                                  requirement: next,
+                                });
+                                if (error) toast.error(error.message);
+                                else await onRefreshStructure();
+                              }}
+                            >
+                              {getRequirementBadge(it.requirement)}
+                            </button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 shrink-0 text-red-600 hover:text-red-700"
+                              title="Delete item"
+                              onClick={async () => {
+                                if (!confirm("Delete this item?")) return;
+                                const { error } = await deleteChecklistTemplateItem(it.id);
+                                if (error) toast.error(error.message);
+                                else await onRefreshStructure();
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              <span className="sr-only">Delete item</span>
+                            </Button>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 shrink-0 text-slate-600"
+                                  aria-label="Item reorder"
+                                >
+                                  <MoreVertical className="h-4 w-4" />
+                                  <span className="sr-only">Open item actions</span>
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-40">
+                                <DropdownMenuItem
+                                  disabled={isFirstItem}
+                                  onSelect={() => {
+                                    if (isFirstItem) return;
+                                    void persistItemOrderInSection(
+                                      arrayMove(items, itemIndex, itemIndex - 1)
+                                    );
+                                  }}
+                                >
+                                  Move up
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  disabled={isLastItem}
+                                  onSelect={() => {
+                                    if (isLastItem) return;
+                                    void persistItemOrderInSection(
+                                      arrayMove(items, itemIndex, itemIndex + 1)
+                                    );
+                                  }}
+                                >
+                                  Move down
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
       </CardContent>
     </Card>
   );

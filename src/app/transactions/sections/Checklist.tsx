@@ -41,7 +41,10 @@ import {
 import { toast } from "sonner";
 import type { ChecklistItem, InboxDocument } from "./TransactionInbox";
 import type { ChecklistTemplate } from "../../../services/checklistTemplates";
-import { fetchChecklistTemplateSectionsAndItems } from "../../../services/checklistTemplates";
+import {
+  compareChecklistTemplateSections,
+  fetchChecklistTemplateSectionsAndItems,
+} from "../../../services/checklistTemplates";
 import { getSignedUrl, attachDocumentToChecklistItem } from "../../../services/transactionDocuments";
 import {
   getDocumentState,
@@ -330,7 +333,9 @@ export default function Checklist({
     void fetchChecklistTemplateSectionsAndItems(checklistTemplateId).then((raw) => {
       if (cancelled || !raw) return;
       setTemplateSections(
-        raw.sections.map((s) => ({ id: s.id, name: (s.name ?? "").trim() || "Section" }))
+        [...raw.sections]
+          .sort(compareChecklistTemplateSections)
+          .map((s) => ({ id: s.id, name: (s.name ?? "").trim() || "Section" }))
       );
     });
     return () => {
@@ -389,7 +394,7 @@ export default function Checklist({
     for (const g of list) {
       g.items.sort(
         (a, b) =>
-          (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.name.localeCompare(b.name)
+          (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.id.localeCompare(b.id)
       );
     }
     return list.sort(
@@ -572,6 +577,13 @@ export default function Checklist({
         orphans.push(item);
       }
     }
+    const cmpBySortAndId = (a: ChecklistItem, b: ChecklistItem) =>
+      (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.id.localeCompare(b.id);
+
+    for (const s of templateSections) {
+      bySection.get(s.id)!.sort(cmpBySortAndId);
+    }
+    orphans.sort(cmpBySortAndId);
     return { itemsByTemplateSectionId: bySection, orphanChecklistItems: orphans };
   }, [activeChecklistItems, templateSections]);
 

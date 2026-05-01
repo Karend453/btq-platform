@@ -172,6 +172,7 @@ export type ChecklistTemplateSectionRow = {
   template_id: string;
   name: string | null;
   sort_order: number | null;
+  created_at?: string | null;
 };
 export type ChecklistTemplateItemRow = {
   id: string;
@@ -181,7 +182,33 @@ export type ChecklistTemplateItemRow = {
   requirement: string | null;
   sort_order: number | null;
   is_compliance_document?: boolean | null;
+  created_at?: string | null;
 };
+
+/** sort_order ASC, then created_at ASC, then id — never alphabetize by name. */
+export function compareChecklistTemplateSections(
+  a: Pick<ChecklistTemplateSectionRow, "id" | "sort_order"> & { created_at?: string | null },
+  b: Pick<ChecklistTemplateSectionRow, "id" | "sort_order"> & { created_at?: string | null }
+): number {
+  const d = (a.sort_order ?? 0) - (b.sort_order ?? 0);
+  if (d !== 0) return d;
+  const ta = a.created_at ?? "";
+  const tb = b.created_at ?? "";
+  if (ta !== tb) return ta < tb ? -1 : ta > tb ? 1 : 0;
+  return a.id.localeCompare(b.id);
+}
+
+export function compareChecklistTemplateItems(
+  a: Pick<ChecklistTemplateItemRow, "id" | "sort_order"> & { created_at?: string | null },
+  b: Pick<ChecklistTemplateItemRow, "id" | "sort_order"> & { created_at?: string | null }
+): number {
+  const d = (a.sort_order ?? 0) - (b.sort_order ?? 0);
+  if (d !== 0) return d;
+  const ta = a.created_at ?? "";
+  const tb = b.created_at ?? "";
+  if (ta !== tb) return ta < tb ? -1 : ta > tb ? 1 : 0;
+  return a.id.localeCompare(b.id);
+}
 
 type DbSection = ChecklistTemplateSectionRow;
 type DbItem = ChecklistTemplateItemRow;
@@ -548,19 +575,33 @@ export async function setDefaultOfficeChecklistTemplate(templateId: string): Pro
   return { error: error ? new Error(error.message) : null };
 }
 
+export async function updateChecklistTemplateSection(params: {
+  sectionId: string;
+  name?: string;
+  sortOrder?: number;
+}): Promise<{ error: Error | null }> {
+  const patch: Record<string, unknown> = {};
+  if (params.name !== undefined) {
+    const trimmed = params.name.trim();
+    if (!trimmed) return { error: new Error("Section name is required") };
+    patch.name = trimmed;
+  }
+  if (params.sortOrder !== undefined) patch.sort_order = params.sortOrder;
+  if (Object.keys(patch).length === 0) return { error: null };
+
+  const { error } = await supabase
+    .from("checklist_template_sections")
+    .update(patch)
+    .eq("id", params.sectionId);
+
+  return { error: error ? new Error(error.message) : null };
+}
+
 export async function renameChecklistTemplateSection(
   sectionId: string,
   name: string
 ): Promise<{ error: Error | null }> {
-  const trimmed = name.trim();
-  if (!trimmed) return { error: new Error("Section name is required") };
-
-  const { error } = await supabase
-    .from("checklist_template_sections")
-    .update({ name: trimmed })
-    .eq("id", sectionId);
-
-  return { error: error ? new Error(error.message) : null };
+  return updateChecklistTemplateSection({ sectionId, name });
 }
 
 export async function insertChecklistTemplateSection(params: {
@@ -706,9 +747,7 @@ export async function duplicateOfficeChecklistTemplate(
   const newTemplateId = inserted.id as string;
   const sectionMap = new Map<string, string>();
 
-  const sectionsSorted = [...raw.sections].sort(
-    (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)
-  );
+  const sectionsSorted = [...raw.sections].sort(compareChecklistTemplateSections);
 
   for (const sec of sectionsSorted) {
     const { data: secRow, error: secE } = await supabase
@@ -727,7 +766,7 @@ export async function duplicateOfficeChecklistTemplate(
     sectionMap.set(sec.id, secRow.id as string);
   }
 
-  const itemsSorted = [...raw.items].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+  const itemsSorted = [...raw.items].sort(compareChecklistTemplateItems);
 
   for (const it of itemsSorted) {
     const newSec = it.section_id ? sectionMap.get(it.section_id) ?? null : null;
@@ -807,19 +846,32 @@ function mapItemsToChecklist(
   sections: DbSection[],
   items: DbItem[]
 ): ChecklistItemFromTemplate[] {
-  const sectionMap = new Map(sections.map((s) => [s.id, { name: s.name ?? "", sortOrder: s.sort_order ?? 999 }]));
-  const getSectionSortOrder = (sectionId: string | null) =>
-    sectionId ? (sectionMap.get(sectionId)?.sortOrder ?? 999) : 999;
+  const sectionMap = new Map(sections.map((s) => [s.id, s]));
+  const sectionOrFallback = (sectionId: string | null): DbSection =>
+    sectionId && sectionMap.has(sectionId)
+      ? sectionMap.get(sectionId)!
+      : ({
+          id: "__unsectioned__",
+          template_id: "",
+          name: "Other",
+          sort_order: 999999,
+          created_at: null,
+        } as DbSection);
 
   const sorted = [...items].sort((a, b) => {
-    const orderA = getSectionSortOrder(a.section_id);
-    const orderB = getSectionSortOrder(b.section_id);
-    if (orderA !== orderB) return orderA - orderB;
-    return (a.sort_order ?? 999) - (b.sort_order ?? 999);
+    const secCmp = compareChecklistTemplateSections(
+      sectionOrFallback(a.section_id),
+      sectionOrFallback(b.section_id)
+    );
+    if (secCmp !== 0) return secCmp;
+    return compareChecklistTemplateItems(a, b);
   });
 
   return sorted.map((item) => {
-    const section = item.section_id ? sectionMap.get(item.section_id) : undefined;
+    const sectionRow = item.section_id ? sectionMap.get(item.section_id) : undefined;
+    const section = sectionRow
+      ? { name: sectionRow.name ?? "", sortOrder: sectionRow.sort_order ?? 999 }
+      : undefined;
     return {
       id: item.id,
       name: item.name,
@@ -851,14 +903,20 @@ export async function fetchChecklistTemplateSectionsAndItems(
   const [sectionsRes, itemsRes] = await Promise.all([
     supabase
       .from("checklist_template_sections")
-      .select("id, template_id, name, sort_order")
+      .select("id, template_id, name, sort_order, created_at")
       .eq("template_id", templateId)
-      .order("sort_order", { ascending: true, nullsFirst: false }),
+      .order("sort_order", { ascending: true, nullsFirst: false })
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true }),
     supabase
       .from("checklist_template_items")
-      .select("id, template_id, section_id, name, requirement, sort_order, is_compliance_document")
+      .select(
+        "id, template_id, section_id, name, requirement, sort_order, is_compliance_document, created_at"
+      )
       .eq("template_id", templateId)
-      .order("sort_order", { ascending: true, nullsFirst: false }),
+      .order("sort_order", { ascending: true, nullsFirst: false })
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true }),
   ]);
 
   if (sectionsRes.error || itemsRes.error) {

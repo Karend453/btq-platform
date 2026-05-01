@@ -42,7 +42,9 @@ export type GroupedChecklistSection = {
     return Array.from(sectionMap.values())
       .map((section) => ({
         ...section,
-        items: section.items.sort((a, b) => a.sortOrder - b.sortOrder),
+        items: section.items.sort(
+          (a, b) => a.sortOrder - b.sortOrder || a.id.localeCompare(b.id)
+        ),
       }))
       .sort((a, b) => a.sortOrder - b.sortOrder);
   }
