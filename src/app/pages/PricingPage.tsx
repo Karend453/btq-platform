@@ -37,7 +37,7 @@ const PLANS: Plan[] = [
       "Lofty CRM + IDX website",
       "Transaction tracking + compliance",
       "Document organization + audit trail",
-      "Email intake with auto document routing",
+      "Broker dashboard + agent management",
     ],
     cta: "Get started with Core",
   },
@@ -63,8 +63,7 @@ const PLANS: Plan[] = [
     positioning: "For teams and brokerages that need advanced oversight and flexibility.",
     bullets: [
       "Everything in Growth",
-      "Advanced transaction management",
-      "Broker dashboard + agent management",
+      "SkySlope transaction management",
       "Compliance oversight",
       "Expanded back-office support",
     ],
