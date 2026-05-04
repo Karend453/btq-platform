@@ -186,9 +186,12 @@ export function BackOfficeBusinessOverviewPage() {
   const [year, setYear] = useState<number>(currentCalendarYear());
   const [month, setMonth] = useState<number>(currentCalendarMonth());
 
-  const [payoutLoading, setPayoutLoading] = useState(false);
-  const [payoutError, setPayoutError] = useState<string | null>(null);
-  const [payoutData, setPayoutData] = useState<MonthlyPayoutsApiResponse | null>(null);
+  const [ytdPayoutsLoading, setYtdPayoutsLoading] = useState(false);
+  const [ytdPayoutsError, setYtdPayoutsError] = useState<string | null>(null);
+  /** Index 0 = January … index month-1 = selected month; only set when Jan–selected month all loaded OK. */
+  const [ytdPayoutsByMonth, setYtdPayoutsByMonth] = useState<MonthlyPayoutsApiResponse[] | null>(
+    null
+  );
 
   const [officesLoading, setOfficesLoading] = useState(true);
   const [officesError, setOfficesError] = useState<string | null>(null);
@@ -256,17 +259,42 @@ export function BackOfficeBusinessOverviewPage() {
 
   useEffect(() => {
     let cancelled = false;
-    setPayoutLoading(true);
-    setPayoutError(null);
-    fetchMonthlyPayoutsSummary(year, month).then((result) => {
+    setYtdPayoutsLoading(true);
+    setYtdPayoutsError(null);
+    setYtdPayoutsByMonth(null);
+
+    const months = Array.from({ length: month }, (_, i) => i + 1);
+    Promise.all(months.map((m) => fetchMonthlyPayoutsSummary(year, m))).then((results) => {
       if (cancelled) return;
-      if (result.ok) {
-        setPayoutData(result.data);
-      } else {
-        setPayoutData(null);
-        setPayoutError(result.error);
+
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i];
+        const expectMonth = i + 1;
+        if (!r.ok) {
+          setYtdPayoutsError(
+            r.error ??
+              `Could not load Stripe payouts for ${monthOptionLabel(expectMonth)} ${year}.`
+          );
+          setYtdPayoutsByMonth(null);
+          setYtdPayoutsLoading(false);
+          return;
+        }
+        if (r.data.year !== year || r.data.month !== expectMonth) {
+          setYtdPayoutsError(
+            `Stripe payout response did not match ${monthOptionLabel(expectMonth)} ${year}.`
+          );
+          setYtdPayoutsByMonth(null);
+          setYtdPayoutsLoading(false);
+          return;
+        }
       }
-      setPayoutLoading(false);
+
+      const rows: MonthlyPayoutsApiResponse[] = [];
+      for (const r of results) {
+        if (r.ok) rows.push(r.data);
+      }
+      setYtdPayoutsByMonth(rows);
+      setYtdPayoutsLoading(false);
     });
     return () => {
       cancelled = true;
@@ -379,7 +407,7 @@ export function BackOfficeBusinessOverviewPage() {
     const rawStart = draftStartingDollars.trim();
     const rawGoal = draftGoalDollars.trim();
     if (rawStart === "") {
-      setPositionSaveError("Enter cash balance (use 0 if none).");
+      setPositionSaveError("Enter starting cash balance (use 0 if none).");
       return;
     }
     if (rawGoal === "") {
@@ -389,7 +417,7 @@ export function BackOfficeBusinessOverviewPage() {
     const startDollars = Number(rawStart);
     const goalDollars = Number(rawGoal);
     if (!Number.isFinite(startDollars)) {
-      setPositionSaveError("Cash balance is invalid.");
+      setPositionSaveError("Starting cash balance is invalid.");
       return;
     }
     if (!Number.isFinite(goalDollars) || goalDollars < 0) {
@@ -420,20 +448,34 @@ export function BackOfficeBusinessOverviewPage() {
 
   const positionCashReady = useMemo(() => {
     if (settingsLoading || settingsError) return false;
-    if (payoutLoading) return false;
-    return payoutData != null;
-  }, [settingsLoading, settingsError, payoutLoading, payoutData]);
+    if (ytdPayoutsLoading || ytdPayoutsError) return false;
+    if (!ytdPayoutsByMonth || ytdPayoutsByMonth.length !== month) return false;
+    return true;
+  }, [
+    settingsLoading,
+    settingsError,
+    ytdPayoutsLoading,
+    ytdPayoutsError,
+    ytdPayoutsByMonth,
+    month,
+  ]);
 
   const positionDerived = useMemo(() => {
-    if (!positionCashReady || payoutData == null) return null;
-    const payoutCents = payoutData.amount_paid_out_cents;
-    const netChangeCents = payoutCents - expenseEstimateCents;
-    const projectedBalanceCents = startingBalanceCents + netChangeCents;
+    if (!positionCashReady || !ytdPayoutsByMonth || ytdPayoutsByMonth.length !== month) {
+      return null;
+    }
+    const payoutCentsSelected = ytdPayoutsByMonth[month - 1].amount_paid_out_cents;
+    const netChangeCents = payoutCentsSelected - expenseEstimateCents;
+    let sumNetChangeYtd = 0;
+    for (let i = 0; i < month; i += 1) {
+      sumNetChangeYtd += ytdPayoutsByMonth[i].amount_paid_out_cents - expenseEstimateCents;
+    }
+    const projectedBalanceCents = startingBalanceCents + sumNetChangeYtd;
     const runwayMonths = runwayMonthsFromCents(projectedBalanceCents, expenseEstimateCents);
     const goalProgressRatio =
       annualGoalCents > 0 ? projectedBalanceCents / annualGoalCents : null;
     return {
-      payoutCents,
+      payoutCents: payoutCentsSelected,
       netChangeCents,
       projectedBalanceCents,
       runwayMonths,
@@ -441,9 +483,10 @@ export function BackOfficeBusinessOverviewPage() {
     };
   }, [
     positionCashReady,
-    payoutData,
-    startingBalanceCents,
+    ytdPayoutsByMonth,
+    month,
     expenseEstimateCents,
+    startingBalanceCents,
     annualGoalCents,
   ]);
 
@@ -491,12 +534,12 @@ export function BackOfficeBusinessOverviewPage() {
           </div>
         </div>
 
-        {payoutError && (
+        {ytdPayoutsError && (
           <p
             className="mt-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
             role="alert"
           >
-            {payoutError}
+            Business Position payouts (year-to-date): {ytdPayoutsError}
           </p>
         )}
 
@@ -511,7 +554,7 @@ export function BackOfficeBusinessOverviewPage() {
                 type="button"
                 className="shrink-0 text-xs font-medium text-slate-600 underline-offset-2 hover:text-slate-900 hover:underline disabled:cursor-not-allowed disabled:opacity-50 disabled:no-underline"
                 disabled={settingsLoading || Boolean(settingsError)}
-                aria-label="Edit cash balance and annual goal"
+                aria-label="Edit starting cash balance and annual goal"
                 onClick={openPositionDialog}
               >
                 Edit
@@ -519,14 +562,14 @@ export function BackOfficeBusinessOverviewPage() {
             </div>
             <dl className="mt-4 space-y-3 text-sm">
               <div className="flex justify-between gap-4 border-b border-slate-100 pb-3">
-                <dt className="shrink-0 text-slate-500">Cash Balance</dt>
+                <dt className="shrink-0 text-slate-500">Starting Cash Balance</dt>
                 <dd className="text-right font-semibold tabular-nums text-slate-900">
                   {settingsLoading ? (
                     <span className="font-normal text-slate-500">Loading…</span>
                   ) : settingsError ? (
                     <span className="font-normal text-slate-400">—</span>
                   ) : startingBalanceCents === 0 ? (
-                    <span className="font-normal text-slate-500">Set cash balance</span>
+                    <span className="font-normal text-slate-500">Set starting cash balance</span>
                   ) : (
                     formatUsdFromCents(startingBalanceCents)
                   )}
@@ -535,10 +578,10 @@ export function BackOfficeBusinessOverviewPage() {
               <div className="flex justify-between gap-4 border-b border-slate-100 pb-3">
                 <dt className="text-slate-500">Stripe Payouts This Month</dt>
                 <dd className="text-right font-semibold tabular-nums text-slate-900">
-                  {payoutLoading ? (
+                  {ytdPayoutsLoading ? (
                     <span className="font-normal text-slate-500">Loading…</span>
-                  ) : payoutData ? (
-                    formatUsdFromCents(payoutData.amount_paid_out_cents)
+                  ) : ytdPayoutsByMonth && ytdPayoutsByMonth[month - 1] ? (
+                    formatUsdFromCents(ytdPayoutsByMonth[month - 1].amount_paid_out_cents)
                   ) : (
                     <span className="font-normal text-slate-400">—</span>
                   )}
@@ -580,7 +623,12 @@ export function BackOfficeBusinessOverviewPage() {
                   {!positionDerived ? (
                     <span className="font-normal text-slate-400">—</span>
                   ) : (
-                    formatUsdFromCents(positionDerived.projectedBalanceCents)
+                    <>
+                      <div>{formatUsdFromCents(positionDerived.projectedBalanceCents)}</div>
+                      <div className="mt-0.5 text-xs font-normal text-slate-400">
+                        Through selected month.
+                      </div>
+                    </>
                   )}
                 </dd>
               </div>
@@ -895,14 +943,14 @@ export function BackOfficeBusinessOverviewPage() {
             <DialogHeader>
               <DialogTitle className="text-slate-900">Edit Business Position</DialogTitle>
               <DialogDescription className="text-slate-600">
-                Cash Balance and Annual Goal are saved for this dashboard (USD). Stripe totals are
-                unchanged.
+                Starting Cash Balance and Annual Goal are saved for this dashboard (USD). Stripe
+                totals are unchanged.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
               <div className="space-y-2">
                 <label htmlFor="position-starting-usd" className="text-sm font-medium text-slate-700">
-                  Cash Balance
+                  Starting Cash Balance
                 </label>
                 <input
                   id="position-starting-usd"
