@@ -1,7 +1,11 @@
 import React from "react";
 import { Layers } from "lucide-react";
 import type { Office } from "../../../services/offices";
-import { PLAN_DETAILS, resolvePlanKeyFromOfficeFields } from "../../../lib/pricingPlans";
+import {
+  LIST_PRICE_SEAT_PER_USER_MONTH_USD,
+  PLAN_DETAILS,
+  resolvePlanKeyFromOfficeFields,
+} from "../../../lib/pricingPlans";
 import { useSettingsProfile } from "./SettingsProfileContext";
 import { useOfficeForSettingsTabs } from "./useOfficeForSettingsTabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
@@ -104,7 +108,10 @@ function CurrentPlanFields({ office }: { office: Office }) {
             <ReadonlyField label="Status" value={statusLabel} />
             <ReadonlyField label="Billing model" value="Monthly" />
             <ReadonlyField label="Billable seats" value={billableSeatsValue} />
-            <ReadonlyField label="Seat rate" value="$20 / user / month" />
+            <ReadonlyField
+              label="Seat rate"
+              value={`$${LIST_PRICE_SEAT_PER_USER_MONTH_USD} / user / month`}
+            />
           </>
         ) : (
           <>

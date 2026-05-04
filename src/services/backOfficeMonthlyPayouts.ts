@@ -134,8 +134,6 @@ export async function fetchMonthlyPayoutsSummary(
     return { ok: false, error: parseApiError(body) ?? `Request failed (${res.status})` };
   }
 
-  console.log("payout response", body);
-
   const parsed = parseMonthlyPayoutsSuccessBody(body);
   if (!parsed) {
     return { ok: false, error: "Invalid response from server." };

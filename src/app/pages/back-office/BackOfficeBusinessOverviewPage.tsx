@@ -1,10 +1,107 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { Briefcase } from "lucide-react";
-import { listOfficesForBackOffice, type BackOfficeListOfficeRow } from "../../../services/offices";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Briefcase, ChevronDown, ChevronUp, ChevronsUpDown } from "lucide-react";
+import {
+  listOfficesForBackOfficeV2,
+  type BackOfficeListOfficeRow,
+} from "../../../services/offices";
 import {
   fetchMonthlyPayoutsSummary,
   type MonthlyPayoutsApiResponse,
 } from "../../../services/backOfficeMonthlyPayouts";
+import {
+  fetchBtqBackofficeSettings,
+  upsertBtqBackofficeFinancialSettings,
+} from "../../../services/btqBackofficeSettings";
+import {
+  buildBackOfficeRevenueModel,
+  type RevenueModelRowView,
+} from "../../../lib/backOfficeExpectedMonthlyIncome";
+import { Button } from "../../components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../../components/ui/dialog";
+
+type RevenueSortKey =
+  | "office"
+  | "broker"
+  | "plan"
+  | "billingCycle"
+  | "subAgents"
+  | "expected";
+
+function isMissingCellText(s: string): boolean {
+  return s.trim() === "" || s === "—";
+}
+
+function compareStringsMissingLast(a: string, b: string, dir: 1 | -1): number {
+  const am = isMissingCellText(a);
+  const bm = isMissingCellText(b);
+  if (am && bm) return 0;
+  if (am) return 1;
+  if (bm) return -1;
+  return a.localeCompare(b, undefined, { sensitivity: "base" }) * dir;
+}
+
+function compareNullableNumbersMissingLast(
+  a: number | null,
+  b: number | null,
+  dir: 1 | -1
+): number {
+  const am = a == null || !Number.isFinite(a);
+  const bm = b == null || !Number.isFinite(b);
+  if (am && bm) return 0;
+  if (am) return 1;
+  if (bm) return -1;
+  return (a - b) * dir;
+}
+
+function sortRevenueRows(
+  rows: RevenueModelRowView[],
+  sortKey: RevenueSortKey,
+  sortDir: "asc" | "desc"
+): RevenueModelRowView[] {
+  const dir: 1 | -1 = sortDir === "asc" ? 1 : -1;
+  const out = [...rows];
+  out.sort((ra, rb) => {
+    switch (sortKey) {
+      case "office":
+        return compareStringsMissingLast(ra.officeLabel, rb.officeLabel, dir);
+      case "broker":
+        return compareStringsMissingLast(ra.brokerPrimaryLabel, rb.brokerPrimaryLabel, dir);
+      case "plan":
+        return compareStringsMissingLast(ra.planLabel, rb.planLabel, dir);
+      case "billingCycle":
+        return compareStringsMissingLast(ra.billingCycleLabel, rb.billingCycleLabel, dir);
+      case "subAgents":
+        return compareNullableNumbersMissingLast(ra.subAgentsSortValue, rb.subAgentsSortValue, dir);
+      case "expected":
+        return compareNullableNumbersMissingLast(
+          ra.monthlyEquivalentUsd,
+          rb.monthlyEquivalentUsd,
+          dir
+        );
+      default:
+        return 0;
+    }
+  });
+  return out;
+}
+
+function SortCaret({ active, dir }: { active: boolean; dir: "asc" | "desc" }) {
+  if (!active) {
+    return <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden />;
+  }
+  return dir === "asc" ? (
+    <ChevronUp className="h-3.5 w-3.5 shrink-0 text-slate-700" aria-hidden />
+  ) : (
+    <ChevronDown className="h-3.5 w-3.5 shrink-0 text-slate-700" aria-hidden />
+  );
+}
 
 function currentCalendarYear(): number {
   return new Date().getFullYear();
@@ -21,6 +118,22 @@ function formatUsdFromCents(cents: number): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(cents / 100);
+}
+
+function formatUsd0Whole(value: number | null): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+/** Runway in months (balance ÷ monthly expense); null when expense is zero or non-finite. */
+function runwayMonthsFromCents(balanceCents: number, expenseCents: number): number | null {
+  if (expenseCents <= 0) return null;
+  const m = balanceCents / expenseCents;
+  return Number.isFinite(m) ? m : null;
 }
 
 function monthOptionLabel(month: number): string {
@@ -45,6 +158,30 @@ function billingRiskCounts(rows: BackOfficeListOfficeRow[]): {
   return { pastDue, unpaid, canceled };
 }
 
+/** Sum catalog normalized monthly revenue for offices in billing risk (same row math as revenue table). */
+function monthlyRevenueAtRiskUsd(
+  offices: BackOfficeListOfficeRow[],
+  revenueRows: RevenueModelRowView[]
+): number | null {
+  const byOfficeId = new Map<string, number | null>();
+  for (const r of revenueRows) {
+    byOfficeId.set(r.officeId, r.monthlyEquivalentUsd);
+  }
+
+  let sum = 0;
+  for (const o of offices) {
+    const st = (o.billing_status ?? "").trim().toLowerCase();
+    if (st !== "past_due" && st !== "unpaid" && st !== "canceled") continue;
+
+    const monthlyEq = byOfficeId.get(o.id);
+    if (monthlyEq === undefined) continue;
+    if (monthlyEq == null || !Number.isFinite(monthlyEq)) return null;
+    sum += monthlyEq;
+  }
+
+  return sum;
+}
+
 export function BackOfficeBusinessOverviewPage() {
   const [year, setYear] = useState<number>(currentCalendarYear());
   const [month, setMonth] = useState<number>(currentCalendarMonth());
@@ -57,6 +194,21 @@ export function BackOfficeBusinessOverviewPage() {
   const [officesError, setOfficesError] = useState<string | null>(null);
   const [offices, setOffices] = useState<BackOfficeListOfficeRow[]>([]);
 
+  const [settingsLoading, setSettingsLoading] = useState(true);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [expenseEstimateCents, setExpenseEstimateCents] = useState(0);
+  const [startingBalanceCents, setStartingBalanceCents] = useState(0);
+  const [annualGoalCents, setAnnualGoalCents] = useState(0);
+  const [expenseDialogOpen, setExpenseDialogOpen] = useState(false);
+  const [expenseDraftDollars, setExpenseDraftDollars] = useState("");
+  const [expenseSaveError, setExpenseSaveError] = useState<string | null>(null);
+  const [expenseSaving, setExpenseSaving] = useState(false);
+  const [positionDialogOpen, setPositionDialogOpen] = useState(false);
+  const [draftStartingDollars, setDraftStartingDollars] = useState("");
+  const [draftGoalDollars, setDraftGoalDollars] = useState("");
+  const [positionSaveError, setPositionSaveError] = useState<string | null>(null);
+  const [positionSaving, setPositionSaving] = useState(false);
+
   const yearOptions = useMemo(() => {
     const y = currentCalendarYear();
     const out: number[] = [];
@@ -68,11 +220,34 @@ export function BackOfficeBusinessOverviewPage() {
     let cancelled = false;
     setOfficesLoading(true);
     setOfficesError(null);
-    listOfficesForBackOffice().then(({ offices: rows, error: err }) => {
+    listOfficesForBackOfficeV2().then(({ offices: rows, error: err }) => {
       if (cancelled) return;
       setOffices(rows);
       setOfficesError(err);
       setOfficesLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSettingsLoading(true);
+    setSettingsError(null);
+    fetchBtqBackofficeSettings().then(({ row, error: err }) => {
+      if (cancelled) return;
+      if (err) {
+        setSettingsError(err);
+        setExpenseEstimateCents(0);
+        setStartingBalanceCents(0);
+        setAnnualGoalCents(0);
+      } else {
+        setExpenseEstimateCents(row?.monthly_expense_estimate_cents ?? 0);
+        setStartingBalanceCents(row?.starting_balance_cents ?? 0);
+        setAnnualGoalCents(row?.annual_goal_cents ?? 0);
+      }
+      setSettingsLoading(false);
     });
     return () => {
       cancelled = true;
@@ -100,6 +275,177 @@ export function BackOfficeBusinessOverviewPage() {
 
   const risk = useMemo(() => billingRiskCounts(offices), [offices]);
   const unpaidCanceledTotal = risk.unpaid + risk.canceled;
+
+  const revenueModel = useMemo(() => buildBackOfficeRevenueModel(offices), [offices]);
+
+  const revenueAtRiskUsd = useMemo(
+    () => monthlyRevenueAtRiskUsd(offices, revenueModel.rows),
+    [offices, revenueModel.rows]
+  );
+
+  const [revenueSortKey, setRevenueSortKey] = useState<RevenueSortKey>("office");
+  const [revenueSortDir, setRevenueSortDir] = useState<"asc" | "desc">("asc");
+
+  const sortedRevenueRows = useMemo(
+    () => sortRevenueRows(revenueModel.rows, revenueSortKey, revenueSortDir),
+    [revenueModel.rows, revenueSortKey, revenueSortDir]
+  );
+
+  function toggleRevenueSort(nextKey: RevenueSortKey) {
+    if (nextKey === revenueSortKey) {
+      setRevenueSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setRevenueSortKey(nextKey);
+      setRevenueSortDir("asc");
+    }
+  }
+
+  const expectedMonthlyIncomeUsd = useMemo(() => {
+    if (officesLoading || officesError || revenueModel.rows.length === 0) return null;
+    const v = revenueModel.totalMonthlyEquivalentUsd;
+    return Number.isFinite(v) ? v : null;
+  }, [
+    officesLoading,
+    officesError,
+    revenueModel.rows.length,
+    revenueModel.totalMonthlyEquivalentUsd,
+  ]);
+
+  const expectedMonthlyExpenseUsd = useMemo(() => {
+    if (settingsLoading || settingsError) return null;
+    return expenseEstimateCents / 100;
+  }, [settingsLoading, settingsError, expenseEstimateCents]);
+
+  const expectedPlUsd = useMemo(() => {
+    if (expectedMonthlyIncomeUsd == null || expectedMonthlyExpenseUsd == null) return null;
+    return expectedMonthlyIncomeUsd - expectedMonthlyExpenseUsd;
+  }, [expectedMonthlyIncomeUsd, expectedMonthlyExpenseUsd]);
+
+  const resetExpenseDialogDraft = useCallback(() => {
+    setExpenseDraftDollars((expenseEstimateCents / 100).toFixed(2));
+    setExpenseSaveError(null);
+  }, [expenseEstimateCents]);
+
+  function openExpenseDialog() {
+    resetExpenseDialogDraft();
+    setExpenseDialogOpen(true);
+  }
+
+  async function saveExpenseEstimate() {
+    setExpenseSaveError(null);
+    const raw = expenseDraftDollars.trim();
+    if (raw === "") {
+      setExpenseSaveError("Enter a dollar amount (use 0 if none).");
+      return;
+    }
+    const dollars = Number(raw);
+    if (!Number.isFinite(dollars) || dollars < 0) {
+      setExpenseSaveError("Enter a valid non-negative dollar amount.");
+      return;
+    }
+    const cents = Math.round(dollars * 100);
+    if (!Number.isFinite(cents)) {
+      setExpenseSaveError("Amount is invalid.");
+      return;
+    }
+    setExpenseSaving(true);
+    const { ok, error: err } = await upsertBtqBackofficeFinancialSettings({
+      monthly_expense_estimate_cents: cents,
+      starting_balance_cents: startingBalanceCents,
+      annual_goal_cents: annualGoalCents,
+    });
+    setExpenseSaving(false);
+    if (!ok) {
+      setExpenseSaveError(err ?? "Could not save.");
+      return;
+    }
+    setExpenseEstimateCents(cents);
+    setExpenseDialogOpen(false);
+  }
+
+  const resetPositionDialogDraft = useCallback(() => {
+    setDraftStartingDollars((startingBalanceCents / 100).toFixed(2));
+    setDraftGoalDollars((annualGoalCents / 100).toFixed(2));
+    setPositionSaveError(null);
+  }, [startingBalanceCents, annualGoalCents]);
+
+  function openPositionDialog() {
+    resetPositionDialogDraft();
+    setPositionDialogOpen(true);
+  }
+
+  async function savePositionSettings() {
+    setPositionSaveError(null);
+    const rawStart = draftStartingDollars.trim();
+    const rawGoal = draftGoalDollars.trim();
+    if (rawStart === "") {
+      setPositionSaveError("Enter cash balance (use 0 if none).");
+      return;
+    }
+    if (rawGoal === "") {
+      setPositionSaveError("Enter annual goal (use 0 if none).");
+      return;
+    }
+    const startDollars = Number(rawStart);
+    const goalDollars = Number(rawGoal);
+    if (!Number.isFinite(startDollars)) {
+      setPositionSaveError("Cash balance is invalid.");
+      return;
+    }
+    if (!Number.isFinite(goalDollars) || goalDollars < 0) {
+      setPositionSaveError("Annual goal must be zero or greater.");
+      return;
+    }
+    const startCents = Math.round(startDollars * 100);
+    const goalCents = Math.round(goalDollars * 100);
+    if (!Number.isFinite(startCents) || !Number.isFinite(goalCents)) {
+      setPositionSaveError("Amount is invalid.");
+      return;
+    }
+    setPositionSaving(true);
+    const { ok, error: err } = await upsertBtqBackofficeFinancialSettings({
+      monthly_expense_estimate_cents: expenseEstimateCents,
+      starting_balance_cents: startCents,
+      annual_goal_cents: goalCents,
+    });
+    setPositionSaving(false);
+    if (!ok) {
+      setPositionSaveError(err ?? "Could not save.");
+      return;
+    }
+    setStartingBalanceCents(startCents);
+    setAnnualGoalCents(goalCents);
+    setPositionDialogOpen(false);
+  }
+
+  const positionCashReady = useMemo(() => {
+    if (settingsLoading || settingsError) return false;
+    if (payoutLoading) return false;
+    return payoutData != null;
+  }, [settingsLoading, settingsError, payoutLoading, payoutData]);
+
+  const positionDerived = useMemo(() => {
+    if (!positionCashReady || payoutData == null) return null;
+    const payoutCents = payoutData.amount_paid_out_cents;
+    const netChangeCents = payoutCents - expenseEstimateCents;
+    const projectedBalanceCents = startingBalanceCents + netChangeCents;
+    const runwayMonths = runwayMonthsFromCents(projectedBalanceCents, expenseEstimateCents);
+    const goalProgressRatio =
+      annualGoalCents > 0 ? projectedBalanceCents / annualGoalCents : null;
+    return {
+      payoutCents,
+      netChangeCents,
+      projectedBalanceCents,
+      runwayMonths,
+      goalProgressRatio,
+    };
+  }, [
+    positionCashReady,
+    payoutData,
+    startingBalanceCents,
+    expenseEstimateCents,
+    annualGoalCents,
+  ]);
 
   return (
     <div className="p-6">
@@ -156,28 +502,130 @@ export function BackOfficeBusinessOverviewPage() {
 
         <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:col-span-1">
-            <div className="text-sm font-medium text-slate-900">Business Position</div>
-            <div className="mt-3 text-sm text-slate-500">Stripe Payouts This Month</div>
-            {payoutLoading ? (
-              <div className="mt-3 text-sm text-slate-500">Loading payouts…</div>
-            ) : payoutData ? (
-              <>
-                <div className="mt-2 text-3xl font-semibold tracking-tight text-slate-900 tabular-nums">
-                  {formatUsdFromCents(payoutData.amount_paid_out_cents)}
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <div className="text-sm font-medium text-slate-900">Business Position</div>
+                <p className="mt-0.5 text-xs text-slate-400">Selected month</p>
+              </div>
+              <button
+                type="button"
+                className="shrink-0 text-xs font-medium text-slate-600 underline-offset-2 hover:text-slate-900 hover:underline disabled:cursor-not-allowed disabled:opacity-50 disabled:no-underline"
+                disabled={settingsLoading || Boolean(settingsError)}
+                aria-label="Edit cash balance and annual goal"
+                onClick={openPositionDialog}
+              >
+                Edit
+              </button>
+            </div>
+            <dl className="mt-4 space-y-3 text-sm">
+              <div className="flex justify-between gap-4 border-b border-slate-100 pb-3">
+                <dt className="shrink-0 text-slate-500">Cash Balance</dt>
+                <dd className="text-right font-semibold tabular-nums text-slate-900">
+                  {settingsLoading ? (
+                    <span className="font-normal text-slate-500">Loading…</span>
+                  ) : settingsError ? (
+                    <span className="font-normal text-slate-400">—</span>
+                  ) : startingBalanceCents === 0 ? (
+                    <span className="font-normal text-slate-500">Set cash balance</span>
+                  ) : (
+                    formatUsdFromCents(startingBalanceCents)
+                  )}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-4 border-b border-slate-100 pb-3">
+                <dt className="text-slate-500">Stripe Payouts This Month</dt>
+                <dd className="text-right font-semibold tabular-nums text-slate-900">
+                  {payoutLoading ? (
+                    <span className="font-normal text-slate-500">Loading…</span>
+                  ) : payoutData ? (
+                    formatUsdFromCents(payoutData.amount_paid_out_cents)
+                  ) : (
+                    <span className="font-normal text-slate-400">—</span>
+                  )}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-4 border-b border-slate-100 pb-3">
+                <dt className="text-slate-500">Monthly Expenses</dt>
+                <dd className="text-right font-semibold tabular-nums text-slate-900">
+                  {settingsLoading ? (
+                    <span className="font-normal text-slate-500">Loading…</span>
+                  ) : settingsError ? (
+                    <span className="font-normal text-slate-400">—</span>
+                  ) : expenseEstimateCents === 0 ? (
+                    <span className="font-normal text-slate-500">Set expense estimate</span>
+                  ) : (
+                    formatUsdFromCents(expenseEstimateCents)
+                  )}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-4 border-b border-slate-100 pb-3">
+                <dt className="text-slate-500">Net Change</dt>
+                <dd
+                  className={`text-right font-semibold tabular-nums ${
+                    positionDerived && positionDerived.netChangeCents < 0
+                      ? "text-red-600"
+                      : "text-slate-900"
+                  }`}
+                >
+                  {!positionDerived ? (
+                    <span className="font-normal text-slate-400">—</span>
+                  ) : (
+                    formatUsdFromCents(positionDerived.netChangeCents)
+                  )}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-4 border-b border-slate-100 pb-3">
+                <dt className="text-slate-500">Projected Balance</dt>
+                <dd className="text-right font-semibold tabular-nums text-slate-900">
+                  {!positionDerived ? (
+                    <span className="font-normal text-slate-400">—</span>
+                  ) : (
+                    formatUsdFromCents(positionDerived.projectedBalanceCents)
+                  )}
+                </dd>
+              </div>
+              <div className="border-b border-slate-100 pb-3">
+                <div className="flex justify-between gap-4">
+                  <dt className="text-slate-500">Goal Progress</dt>
+                  <dd className="text-right">
+                    {annualGoalCents <= 0 ? (
+                      <span className="text-sm font-medium text-slate-500">Set annual goal</span>
+                    ) : !positionDerived ? (
+                      <span className="text-slate-400">—</span>
+                    ) : (
+                      <span className="font-semibold tabular-nums text-slate-900">
+                        {`${formatUsd0Whole(positionDerived.projectedBalanceCents / 100)} / ${formatUsd0Whole(annualGoalCents / 100)} (${Math.round((positionDerived.goalProgressRatio ?? 0) * 100)}%)`}
+                      </span>
+                    )}
+                  </dd>
                 </div>
-                <p className="mt-2 text-xs text-slate-400">Paid out from Stripe</p>
-                <p className="mt-2 text-sm text-slate-600">
-                  <span className="font-medium text-slate-900 tabular-nums">
-                    {payoutData.payout_count}
-                  </span>{" "}
-                  {payoutData.payout_count === 1 ? "payout" : "payouts"}
-                </p>
-              </>
-            ) : payoutError ? (
-              <p className="mt-3 text-sm text-slate-600">Payout totals unavailable.</p>
-            ) : (
-              <div className="mt-3 text-sm text-slate-500">No payout data loaded.</div>
-            )}
+                {annualGoalCents > 0 && positionDerived ? (
+                  <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                    <div
+                      className="h-full rounded-full bg-emerald-600"
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          Math.max(0, (positionDerived.goalProgressRatio ?? 0) * 100)
+                        )}%`,
+                      }}
+                    />
+                  </div>
+                ) : null}
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-slate-500">Cash Runway</dt>
+                <dd className="text-right font-semibold tabular-nums text-slate-900">
+                  {!positionDerived || expenseEstimateCents <= 0 ? (
+                    <span className="font-normal text-slate-400">—</span>
+                  ) : positionDerived.runwayMonths == null ? (
+                    <span className="font-normal text-slate-400">—</span>
+                  ) : (
+                    `${positionDerived.runwayMonths.toFixed(1)} mo`
+                  )}
+                </dd>
+              </div>
+            </dl>
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -185,15 +633,51 @@ export function BackOfficeBusinessOverviewPage() {
             <dl className="mt-4 space-y-3 text-sm">
               <div className="flex justify-between gap-4 border-b border-slate-100 pb-3">
                 <dt className="text-slate-500">Expected Monthly Income</dt>
-                <dd className="font-medium text-slate-400">—</dd>
+                <dd className="font-semibold tabular-nums text-slate-900">
+                  {officesLoading ? (
+                    <span className="font-normal text-slate-500">Loading…</span>
+                  ) : officesError ? (
+                    <span className="font-normal text-slate-400">—</span>
+                  ) : revenueModel.rows.length === 0 ? (
+                    <span className="font-normal text-slate-400">—</span>
+                  ) : (
+                    formatUsd0Whole(expectedMonthlyIncomeUsd)
+                  )}
+                </dd>
               </div>
-              <div className="flex justify-between gap-4 border-b border-slate-100 pb-3">
-                <dt className="text-slate-500">Expected Monthly Expenses</dt>
-                <dd className="font-medium text-slate-400">Manual later</dd>
+              <div className="flex justify-between gap-4 border-b border-slate-100 pb-3 items-start">
+                <dt className="text-slate-500 shrink-0 pt-0.5">Expected Monthly Expenses</dt>
+                <dd className="flex flex-col items-end gap-1.5 text-right">
+                  <div className="min-h-[1.25rem] font-semibold tabular-nums text-slate-900">
+                    {settingsLoading ? (
+                      <span className="font-normal text-slate-500">Loading…</span>
+                    ) : settingsError ? (
+                      <span className="font-normal text-slate-400">—</span>
+                    ) : expenseEstimateCents === 0 ? (
+                      <span className="font-normal text-slate-500">Set expense estimate</span>
+                    ) : (
+                      formatUsdFromCents(expenseEstimateCents)
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className="text-xs font-medium text-slate-600 underline-offset-2 hover:text-slate-900 hover:underline disabled:cursor-not-allowed disabled:opacity-50 disabled:no-underline"
+                    disabled={settingsLoading}
+                    onClick={openExpenseDialog}
+                  >
+                    Edit
+                  </button>
+                </dd>
               </div>
               <div className="flex justify-between gap-4">
                 <dt className="text-slate-500">Expected P/L</dt>
-                <dd className="font-medium text-slate-400">—</dd>
+                <dd className="font-semibold tabular-nums text-slate-900">
+                  {expectedPlUsd == null ? (
+                    <span className="font-normal text-slate-400">—</span>
+                  ) : (
+                    formatUsd0Whole(expectedPlUsd)
+                  )}
+                </dd>
               </div>
             </dl>
           </div>
@@ -221,17 +705,253 @@ export function BackOfficeBusinessOverviewPage() {
                     </span>
                   </dd>
                 </div>
+                <div className="flex justify-between gap-4">
+                  <dt className="text-slate-500">Monthly revenue at risk</dt>
+                  <dd className="font-semibold tabular-nums text-slate-900">
+                    {revenueAtRiskUsd == null ? (
+                      <span className="font-normal text-slate-400">—</span>
+                    ) : (
+                      formatUsd0Whole(revenueAtRiskUsd)
+                    )}
+                  </dd>
+                </div>
               </dl>
             )}
           </div>
         </div>
 
-        <div className="mt-8 rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 p-6">
+        <div className="mt-8">
           <h2 className="text-lg font-semibold text-slate-900">Revenue model</h2>
-          <p className="mt-2 text-sm text-slate-500">
-            Office-level expected revenue model will live here.
+          <p className="mt-1 text-sm text-slate-500">
+            Active-access offices only ({revenueModel.rows.length} row
+            {revenueModel.rows.length === 1 ? "" : "s"}).
           </p>
+          <p className="mt-1 text-xs text-slate-500">
+          </p>
+
+          {officesLoading && <p className="mt-4 text-sm text-slate-500">Loading offices…</p>}
+          {!officesLoading && officesError && (
+            <p className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              Revenue table unavailable ({officesError}).
+            </p>
+          )}
+
+          {!officesLoading && !officesError && revenueModel.rows.length === 0 && (
+            <p className="mt-4 text-sm text-slate-600">No active-access offices to show.</p>
+          )}
+
+          {!officesLoading && !officesError && revenueModel.rows.length > 0 && (
+            <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
+              <table className="min-w-full text-left text-sm">
+                <thead className="border-b border-slate-200 bg-slate-50 text-xs font-medium text-slate-600">
+                  <tr>
+                    <th className="px-4 py-3" aria-sort={revenueSortKey === "office" ? (revenueSortDir === "asc" ? "ascending" : "descending") : "none"}>
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1 rounded-sm text-left hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2"
+                        onClick={() => toggleRevenueSort("office")}
+                      >
+                        Office
+                        <SortCaret active={revenueSortKey === "office"} dir={revenueSortDir} />
+                      </button>
+                    </th>
+                    <th className="px-4 py-3" aria-sort={revenueSortKey === "broker" ? (revenueSortDir === "asc" ? "ascending" : "descending") : "none"}>
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1 rounded-sm text-left hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2"
+                        onClick={() => toggleRevenueSort("broker")}
+                      >
+                        Broker / Primary
+                        <SortCaret active={revenueSortKey === "broker"} dir={revenueSortDir} />
+                      </button>
+                    </th>
+                    <th className="px-4 py-3" aria-sort={revenueSortKey === "plan" ? (revenueSortDir === "asc" ? "ascending" : "descending") : "none"}>
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1 rounded-sm text-left hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2"
+                        onClick={() => toggleRevenueSort("plan")}
+                      >
+                        Plan
+                        <SortCaret active={revenueSortKey === "plan"} dir={revenueSortDir} />
+                      </button>
+                    </th>
+                    <th className="px-4 py-3" aria-sort={revenueSortKey === "billingCycle" ? (revenueSortDir === "asc" ? "ascending" : "descending") : "none"}>
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1 rounded-sm text-left hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2"
+                        onClick={() => toggleRevenueSort("billingCycle")}
+                      >
+                        Billing Cycle
+                        <SortCaret active={revenueSortKey === "billingCycle"} dir={revenueSortDir} />
+                      </button>
+                    </th>
+                    <th className="px-4 py-3 text-right" aria-sort={revenueSortKey === "subAgents" ? (revenueSortDir === "asc" ? "ascending" : "descending") : "none"}>
+                      <button
+                        type="button"
+                        className="inline-flex w-full items-center justify-end gap-1 rounded-sm hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2"
+                        onClick={() => toggleRevenueSort("subAgents")}
+                      >
+                        SubAgents
+                        <SortCaret active={revenueSortKey === "subAgents"} dir={revenueSortDir} />
+                      </button>
+                    </th>
+                    <th className="px-4 py-3 text-right" aria-sort={revenueSortKey === "expected" ? (revenueSortDir === "asc" ? "ascending" : "descending") : "none"}>
+                      <button
+                        type="button"
+                        className="inline-flex w-full items-center justify-end gap-1 rounded-sm hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2"
+                        onClick={() => toggleRevenueSort("expected")}
+                      >
+                        Expected Amount
+                        <SortCaret active={revenueSortKey === "expected"} dir={revenueSortDir} />
+                      </button>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {sortedRevenueRows.map((row) => (
+                    <tr key={row.officeId}>
+                      <td className="px-4 py-3 font-medium text-slate-900">{row.officeLabel}</td>
+                      <td className="px-4 py-3 text-slate-700">{row.brokerPrimaryLabel}</td>
+                      <td className="px-4 py-3 text-slate-700">{row.planLabel}</td>
+                      <td className="px-4 py-3 text-slate-700">{row.billingCycleLabel}</td>
+                      <td className="px-4 py-3 text-right tabular-nums text-slate-900">{row.subAgentsLabel}</td>
+                      <td className="px-4 py-3 text-right tabular-nums text-slate-900">
+                        {formatUsd0Whole(row.monthlyEquivalentUsd)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
+
+        <Dialog
+          open={expenseDialogOpen}
+          onOpenChange={(open) => {
+            setExpenseDialogOpen(open);
+            if (!open) {
+              setExpenseSaveError(null);
+              setExpenseDraftDollars((expenseEstimateCents / 100).toFixed(2));
+            }
+          }}
+        >
+          <DialogContent className="border-slate-200 sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="text-slate-900">Monthly expense estimate</DialogTitle>
+              <DialogDescription className="text-slate-600">
+                Manual monthly total used in the Expected Monthly Model (USD).
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2">
+              <label htmlFor="expense-draft-usd" className="text-sm font-medium text-slate-700">
+                Amount (USD)
+              </label>
+              <input
+                id="expense-draft-usd"
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step={0.01}
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 shadow-sm"
+                value={expenseDraftDollars}
+                onChange={(e) => setExpenseDraftDollars(e.target.value)}
+                disabled={expenseSaving}
+              />
+              {expenseSaveError && (
+                <p className="text-sm text-red-700" role="alert">
+                  {expenseSaveError}
+                </p>
+              )}
+            </div>
+            <DialogFooter className="gap-2 sm:gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={expenseSaving}
+                onClick={() => setExpenseDialogOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="button" disabled={expenseSaving} onClick={() => void saveExpenseEstimate()}>
+                {expenseSaving ? "Saving…" : "Save"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={positionDialogOpen}
+          onOpenChange={(open) => {
+            setPositionDialogOpen(open);
+            if (!open) {
+              setPositionSaveError(null);
+              setDraftStartingDollars((startingBalanceCents / 100).toFixed(2));
+              setDraftGoalDollars((annualGoalCents / 100).toFixed(2));
+            }
+          }}
+        >
+          <DialogContent className="border-slate-200 sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="text-slate-900">Edit Business Position</DialogTitle>
+              <DialogDescription className="text-slate-600">
+                Cash Balance and Annual Goal are saved for this dashboard (USD). Stripe totals are
+                unchanged.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label htmlFor="position-starting-usd" className="text-sm font-medium text-slate-700">
+                  Cash Balance
+                </label>
+                <input
+                  id="position-starting-usd"
+                  type="number"
+                  inputMode="decimal"
+                  step={0.01}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 shadow-sm"
+                  value={draftStartingDollars}
+                  onChange={(e) => setDraftStartingDollars(e.target.value)}
+                  disabled={positionSaving}
+                />
+              </div>
+              <div className="space-y-2">
+                <label htmlFor="position-goal-usd" className="text-sm font-medium text-slate-700">
+                  Annual Goal
+                </label>
+                <input
+                  id="position-goal-usd"
+                  type="number"
+                  inputMode="decimal"
+                  min={0}
+                  step={0.01}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 shadow-sm"
+                  value={draftGoalDollars}
+                  onChange={(e) => setDraftGoalDollars(e.target.value)}
+                  disabled={positionSaving}
+                />
+              </div>
+              {positionSaveError && (
+                <p className="text-sm text-red-700" role="alert">
+                  {positionSaveError}
+                </p>
+              )}
+            </div>
+            <DialogFooter className="gap-2 sm:gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={positionSaving}
+                onClick={() => setPositionDialogOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="button" disabled={positionSaving} onClick={() => void savePositionSettings()}>
+                {positionSaving ? "Saving…" : "Save"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );

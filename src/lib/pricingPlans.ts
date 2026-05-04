@@ -21,6 +21,9 @@ export function planKeyToBrokerPlanKey(plan: PlanKey): BrokerPlanKey {
 
 export const PLAN_ORDER: PlanKey[] = ["core", "growth", "pro"];
 
+/** Listed add-on seat rate (USD / seat / month), aligned with subscriptions UI copy. */
+export const LIST_PRICE_SEAT_PER_USER_MONTH_USD = 20;
+
 export const PLAN_DETAILS: Record<
   PlanKey,
   { label: string; pricePerMonth: number; tagline: string }

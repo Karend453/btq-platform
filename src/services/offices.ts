@@ -204,9 +204,8 @@ export async function getOfficeForSettingsTabs(
 }
 
 /**
- * Back Office: full office list **only** via `list_offices_for_back_office` (no client `select` on
- * `public.offices` for the list). The RPC enforces a BTQ Back Office gate in the DB (`btq_admin`,
- * plus legacy `admin`); aligns with `canAccessBtqBackOffice` in `auth.ts`.
+ * Back Office: row shape returned by `list_offices_for_back_office` (v1) and `list_offices_for_back_office_v2`.
+ * V1 callers fill extended columns with null via {@link mapBackOfficeListRowFromV1Rpc}.
  */
 export type BackOfficeListOfficeRow = {
   id: string;
@@ -230,6 +229,12 @@ export type BackOfficeListOfficeRow = {
   display_plan_label: string | null;
   /** Active `office_memberships` rows for this office. */
   active_member_count: number;
+  /** Present when loaded via {@link listOfficesForBackOfficeV2}; otherwise null (v1 RPC). */
+  signup_billing_cycle: string | null;
+  /** Present when loaded via {@link listOfficesForBackOfficeV2}; otherwise null (v1 RPC). */
+  billing_seat_quantity: number | null;
+  /** Present when loaded via {@link listOfficesForBackOfficeV2}; otherwise null (v1 RPC). */
+  app_access_status: string | null;
 };
 
 function coerceInt(v: unknown): number | null {
@@ -247,7 +252,7 @@ function coerceMemberCount(v: unknown): number {
   return n != null && n >= 0 ? n : 0;
 }
 
-function mapBackOfficeListRow(raw: Record<string, unknown>): BackOfficeListOfficeRow {
+function mapBackOfficeListRowFromV1Rpc(raw: Record<string, unknown>): BackOfficeListOfficeRow {
   return {
     id: String(raw.id ?? ""),
     name: String(raw.name ?? ""),
@@ -269,9 +274,24 @@ function mapBackOfficeListRow(raw: Record<string, unknown>): BackOfficeListOffic
     billing_plan_tier: (raw.billing_plan_tier as string | null) ?? null,
     display_plan_label: (raw.display_plan_label as string | null) ?? null,
     active_member_count: coerceMemberCount(raw.active_member_count),
+    signup_billing_cycle: null,
+    billing_seat_quantity: null,
+    app_access_status: null,
   };
 }
 
+function mapBackOfficeListRowFromV2Rpc(raw: Record<string, unknown>): BackOfficeListOfficeRow {
+  return {
+    ...mapBackOfficeListRowFromV1Rpc(raw),
+    signup_billing_cycle: (raw.signup_billing_cycle as string | null) ?? null,
+    billing_seat_quantity: coerceInt(raw.billing_seat_quantity),
+    app_access_status: (raw.app_access_status as string | null) ?? null,
+  };
+}
+
+/**
+ * Back Office list via legacy RPC `list_offices_for_back_office` (production-stable return shape).
+ */
 export async function listOfficesForBackOffice(): Promise<{
   offices: BackOfficeListOfficeRow[];
   error: string | null;
@@ -284,7 +304,26 @@ export async function listOfficesForBackOffice(): Promise<{
   }
 
   const rows = (data ?? []) as Record<string, unknown>[];
-  return { offices: rows.map(mapBackOfficeListRow), error: null };
+  return { offices: rows.map(mapBackOfficeListRowFromV1Rpc), error: null };
+}
+
+/**
+ * Back Office list via `list_offices_for_back_office_v2`: same columns as v1 plus signup cadence,
+ * seat quantity, and app access status (Business Overview revenue modeling).
+ */
+export async function listOfficesForBackOfficeV2(): Promise<{
+  offices: BackOfficeListOfficeRow[];
+  error: string | null;
+}> {
+  const { data, error } = await supabase.rpc("list_offices_for_back_office_v2");
+
+  if (error) {
+    console.warn("[listOfficesForBackOfficeV2]", error.message);
+    return { offices: [], error: error.message };
+  }
+
+  const rows = (data ?? []) as Record<string, unknown>[];
+  return { offices: rows.map(mapBackOfficeListRowFromV2Rpc), error: null };
 }
 
 export type CreateOfficeForBackOfficeInput = {
