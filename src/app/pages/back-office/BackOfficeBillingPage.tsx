@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { CreditCard, ExternalLink } from "lucide-react";
-import { listOfficesForBackOffice, type BackOfficeListOfficeRow } from "../../../services/offices";
+import { listOfficesForBackOfficeV2, type BackOfficeListOfficeRow } from "../../../services/offices";
 import {
   stripeCustomerDashboardUrl,
   stripeSubscriptionDashboardUrl,
@@ -247,7 +247,7 @@ export function BackOfficeBillingPage() {
 
   useEffect(() => {
     let cancelled = false;
-    listOfficesForBackOffice().then(({ offices, error: err }) => {
+    listOfficesForBackOfficeV2().then(({ offices, error: err }) => {
       if (cancelled) return;
       setRows(offices);
       setError(err);

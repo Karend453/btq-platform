@@ -291,6 +291,8 @@ function mapBackOfficeListRowFromV2Rpc(raw: Record<string, unknown>): BackOffice
 
 /**
  * Back Office list via legacy RPC `list_offices_for_back_office` (production-stable return shape).
+ * For dashboards that need billing-enrichment columns, prefer {@link listOfficesForBackOfficeV2}
+ * when `list_offices_for_back_office_v2` is deployed (v1 may be an older RETURNS TABLE on some DBs).
  */
 export async function listOfficesForBackOffice(): Promise<{
   offices: BackOfficeListOfficeRow[];
