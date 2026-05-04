@@ -302,6 +302,17 @@ export function BackOfficeBusinessOverviewPage() {
     return { sumUsd, hasContributors };
   }, [revenueModel.rows]);
 
+  /** Revenue table footer: modeled P/L = sum of Expected Amount column − monthly expense estimate (USD). */
+  const revenueModelPlUsd = useMemo((): number | null => {
+    if (settingsLoading || settingsError) return null;
+    return revenueTableExpectedAmountTotal.sumUsd - expenseEstimateCents / 100;
+  }, [
+    settingsLoading,
+    settingsError,
+    expenseEstimateCents,
+    revenueTableExpectedAmountTotal.sumUsd,
+  ]);
+
   function toggleRevenueSort(nextKey: RevenueSortKey) {
     if (nextKey === revenueSortKey) {
       setRevenueSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -640,7 +651,6 @@ export function BackOfficeBusinessOverviewPage() {
             {revenueModel.rows.length === 1 ? "" : "s"}).
           </p>
           <p className="mt-1 text-xs text-slate-500">
-            Expected Amount = normalized monthly value.
           </p>
 
           {officesLoading && <p className="mt-4 text-sm text-slate-500">Loading offices…</p>}
@@ -747,6 +757,26 @@ export function BackOfficeBusinessOverviewPage() {
                         formatUsd0Whole(revenueTableExpectedAmountTotal.sumUsd)
                       ) : (
                         <span className="font-normal text-slate-400">—</span>
+                      )}
+                    </td>
+                  </tr>
+                  <tr className="border-t border-slate-100 bg-slate-50">
+                    <td className="px-4 py-3 font-semibold text-slate-900">Model P/L</td>
+                    <td className="px-4 py-3" />
+                    <td className="px-4 py-3" />
+                    <td className="px-4 py-3" />
+                    <td className="px-4 py-3" />
+                    <td
+                      className={`px-4 py-3 text-right font-bold tabular-nums ${
+                        revenueModelPlUsd != null && revenueModelPlUsd < 0
+                          ? "text-red-600"
+                          : "text-slate-900"
+                      }`}
+                    >
+                      {revenueModelPlUsd == null ? (
+                        <span className="font-normal text-slate-400">—</span>
+                      ) : (
+                        formatUsd0Whole(revenueModelPlUsd)
                       )}
                     </td>
                   </tr>
