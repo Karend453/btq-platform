@@ -19,6 +19,7 @@ import { BackOfficeRouteGuard } from "./pages/back-office/BackOfficeRouteGuard";
 import { OrgManagementPage } from "./pages/back-office/OrgManagementPage";
 import { BackOfficeAddOfficePage } from "./pages/back-office/BackOfficeAddOfficePage";
 import { BackOfficeOfficeDetailPage } from "./pages/back-office/BackOfficeOfficeDetailPage";
+import { BackOfficeBillingPage } from "./pages/back-office/BackOfficeBillingPage";
 import { PricingPage } from "./pages/PricingPage";
 import { SignupPage } from "./pages/SignupPage";
 import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
@@ -77,6 +78,7 @@ export const router = createBrowserRouter([
         element: <BackOfficeRouteGuard />,
         children: [
           { path: "org", element: <OrgManagementPage /> },
+          { path: "billing", element: <BackOfficeBillingPage /> },
           { path: "org/new", element: <BackOfficeAddOfficePage /> },
           { path: "org/:officeId", element: <BackOfficeOfficeDetailPage /> },
         ],

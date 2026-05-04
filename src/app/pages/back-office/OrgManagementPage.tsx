@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Building2, Plus } from "lucide-react";
-import { listOfficesForBackOffice, type Office } from "../../../services/offices";
+import { listOfficesForBackOffice, type BackOfficeListOfficeRow } from "../../../services/offices";
 
-function formatAddress(o: Office): string {
+function formatAddress(o: BackOfficeListOfficeRow): string {
   const parts = [
     o.address_line1?.trim(),
     [o.city?.trim(), o.state?.trim()].filter(Boolean).join(", "),
@@ -13,7 +13,7 @@ function formatAddress(o: Office): string {
 }
 
 export function OrgManagementPage() {
-  const [offices, setOffices] = useState<Office[]>([]);
+  const [offices, setOffices] = useState<BackOfficeListOfficeRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 

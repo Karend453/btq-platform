@@ -208,8 +208,72 @@ export async function getOfficeForSettingsTabs(
  * `public.offices` for the list). The RPC enforces a BTQ Back Office gate in the DB (`btq_admin`,
  * plus legacy `admin`); aligns with `canAccessBtqBackOffice` in `auth.ts`.
  */
+export type BackOfficeListOfficeRow = {
+  id: string;
+  name: string;
+  display_name: string | null;
+  state: string | null;
+  address_line1: string | null;
+  city: string | null;
+  postal_code: string | null;
+  broker_name: string | null;
+  broker_email: string | null;
+  mls_name: string | null;
+  stripe_customer_id: string | null;
+  stripe_subscription_id: string | null;
+  billing_status: string | null;
+  billing_last_payment_failed_at: string | null;
+  billing_last_payment_succeeded_at: string | null;
+  billing_amount_due_cents: number | null;
+  plan_tier: string | null;
+  billing_plan_tier: string | null;
+  display_plan_label: string | null;
+  /** Active `office_memberships` rows for this office. */
+  active_member_count: number;
+};
+
+function coerceInt(v: unknown): number | null {
+  if (v == null) return null;
+  if (typeof v === "number" && Number.isFinite(v)) return Math.trunc(v);
+  if (typeof v === "string" && v.trim() !== "") {
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.trunc(n) : null;
+  }
+  return null;
+}
+
+function coerceMemberCount(v: unknown): number {
+  const n = coerceInt(v);
+  return n != null && n >= 0 ? n : 0;
+}
+
+function mapBackOfficeListRow(raw: Record<string, unknown>): BackOfficeListOfficeRow {
+  return {
+    id: String(raw.id ?? ""),
+    name: String(raw.name ?? ""),
+    display_name: (raw.display_name as string | null) ?? null,
+    state: (raw.state as string | null) ?? null,
+    address_line1: (raw.address_line1 as string | null) ?? null,
+    city: (raw.city as string | null) ?? null,
+    postal_code: (raw.postal_code as string | null) ?? null,
+    broker_name: (raw.broker_name as string | null) ?? null,
+    broker_email: (raw.broker_email as string | null) ?? null,
+    mls_name: (raw.mls_name as string | null) ?? null,
+    stripe_customer_id: (raw.stripe_customer_id as string | null) ?? null,
+    stripe_subscription_id: (raw.stripe_subscription_id as string | null) ?? null,
+    billing_status: (raw.billing_status as string | null) ?? null,
+    billing_last_payment_failed_at: (raw.billing_last_payment_failed_at as string | null) ?? null,
+    billing_last_payment_succeeded_at: (raw.billing_last_payment_succeeded_at as string | null) ?? null,
+    billing_amount_due_cents: coerceInt(raw.billing_amount_due_cents),
+    plan_tier: (raw.plan_tier as string | null) ?? null,
+    billing_plan_tier: (raw.billing_plan_tier as string | null) ?? null,
+    display_plan_label: (raw.display_plan_label as string | null) ?? null,
+    active_member_count: coerceMemberCount(raw.active_member_count),
+  };
+}
+
 export async function listOfficesForBackOffice(): Promise<{
-  offices: Office[];
+  offices: BackOfficeListOfficeRow[];
   error: string | null;
 }> {
   const { data, error } = await supabase.rpc("list_offices_for_back_office");
@@ -219,7 +283,8 @@ export async function listOfficesForBackOffice(): Promise<{
     return { offices: [], error: error.message };
   }
 
-  return { offices: (data ?? []) as Office[], error: null };
+  const rows = (data ?? []) as Record<string, unknown>[];
+  return { offices: rows.map(mapBackOfficeListRow), error: null };
 }
 
 export type CreateOfficeForBackOfficeInput = {
