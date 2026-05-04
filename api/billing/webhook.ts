@@ -8,6 +8,8 @@ import { getSupabaseServiceRole } from "../../src/lib/supabaseServer.js";
 type StripeSubscriptionWithLegacyPeriod = Stripe.Subscription & { current_period_end?: number };
 type StripeInvoiceWithLegacySubscription = Stripe.Invoice & {
   subscription?: string | Stripe.Subscription | null;
+  hosted_invoice_url?: string | null;
+  amount_due?: number | null;
 };
 
 const HANDLED_EVENT_TYPES = new Set<string>([
@@ -16,7 +18,20 @@ const HANDLED_EVENT_TYPES = new Set<string>([
   "customer.subscription.updated",
   "customer.subscription.deleted",
   "invoice.payment_failed",
+  "invoice.payment_succeeded",
 ]);
+
+function invoiceAmountDueCents(invoice: Stripe.Invoice): number | null {
+  const raw = (invoice as StripeInvoiceWithLegacySubscription).amount_due;
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return null;
+  return Math.trunc(raw);
+}
+
+function invoiceHostedUrl(invoice: Stripe.Invoice): string | null {
+  const u = (invoice as StripeInvoiceWithLegacySubscription).hosted_invoice_url;
+  if (typeof u !== "string" || !u.trim()) return null;
+  return u.trim();
+}
 
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
@@ -58,6 +73,23 @@ function appAccessFromSubscriptionStatus(
       return "active";
     default:
       return "suspended";
+  }
+}
+
+/** BTQ `billing_status` (enforcement), derived from Stripe subscription status — not a 1:1 copy. */
+function btqBillingStatusFromStripeSubscription(
+  status: Stripe.Subscription.Status
+): string {
+  switch (status) {
+    case "active":
+    case "trialing":
+      return "active";
+    case "canceled":
+      return "canceled";
+    case "unpaid":
+      return "unpaid";
+    default:
+      return status;
   }
 }
 
@@ -191,7 +223,8 @@ async function handleCheckoutSessionCompleted(
       stripe_customer_id: customerId,
       stripe_subscription_id: subscriptionId,
       stripe_checkout_session_id: session.id,
-      billing_status: subscription.status,
+      stripe_subscription_status: subscription.status,
+      billing_status: btqBillingStatusFromStripeSubscription(subscription.status),
       billing_plan_tier: planTier || null,
       billing_price_id: primaryPriceId(subscription),
       billing_seat_quantity: extractSeatQuantity(subscription),
@@ -290,7 +323,8 @@ async function handleSubscriptionEvent(
   const patch: Record<string, unknown> = {
     stripe_customer_id: customerId,
     stripe_subscription_id: subscriptionId,
-    billing_status: subscription.status,
+    stripe_subscription_status: subscription.status,
+    billing_status: btqBillingStatusFromStripeSubscription(subscription.status),
     billing_plan_tier: planTier,
     billing_price_id: primaryPriceId(subscription),
     billing_seat_quantity: extractSeatQuantity(subscription),
@@ -357,14 +391,26 @@ async function handleInvoicePaymentFailed(
   }
 
   const nowIso = new Date().toISOString();
+  const invCurrency =
+    typeof invoice.currency === "string" && invoice.currency.trim()
+      ? invoice.currency.trim().toLowerCase()
+      : null;
+
   const patch: Record<string, unknown> = {
     billing_last_invoice_id: invoice.id,
     billing_last_payment_status: invoice.status ?? "payment_failed",
+    stripe_latest_invoice_id: invoice.id ?? null,
+    stripe_latest_invoice_status: invoice.status ?? null,
+    stripe_latest_invoice_url: invoiceHostedUrl(invoice),
+    billing_amount_due_cents: invoiceAmountDueCents(invoice),
+    billing_currency: invCurrency,
+    billing_last_payment_failed_at: nowIso,
     billing_updated_at: nowIso,
+    billing_status: "past_due",
   };
 
   if (sub) {
-    patch.billing_status = sub.status;
+    patch.stripe_subscription_status = sub.status;
     patch.billing_plan_tier =
       sub.metadata?.plan_tier?.trim() ||
       sub.metadata?.broker_plan_key?.trim() ||
@@ -392,6 +438,77 @@ async function handleInvoicePaymentFailed(
   console.log("[billing/webhook] office updated", {
     officeId,
     event: "invoice.payment_failed",
+  });
+
+  return officeId;
+}
+
+async function handleInvoicePaymentSucceeded(
+  stripe: Stripe,
+  supabase: ReturnType<typeof getSupabaseServiceRole>,
+  invoice: Stripe.Invoice
+): Promise<string | null> {
+  const customerId = idFromExpandable(
+    invoice.customer as string | { id: string } | null
+  );
+  const subscriptionId = idFromExpandable(
+    (invoice as StripeInvoiceWithLegacySubscription).subscription as
+      | string
+      | { id: string }
+      | null
+  );
+
+  const { officeId, matchedBy } = await resolveOfficeId(
+    supabase,
+    invoice.metadata?.office_id,
+    subscriptionId,
+    customerId
+  );
+
+  if (!officeId) {
+    console.log("[billing/webhook] office matched", {
+      officeId: null,
+      matchedBy,
+      invoiceId: invoice.id,
+    });
+    throw new Error("office_not_found");
+  }
+
+  console.log("[billing/webhook] office matched", {
+    officeId,
+    matchedBy,
+    invoiceId: invoice.id,
+  });
+
+  let sub: Stripe.Subscription | null = null;
+  if (subscriptionId) {
+    sub = await stripe.subscriptions.retrieve(subscriptionId);
+  }
+
+  const nowIso = new Date().toISOString();
+  const patch: Record<string, unknown> = {
+    stripe_latest_invoice_id: invoice.id ?? null,
+    stripe_latest_invoice_status: invoice.status ?? null,
+    billing_last_payment_succeeded_at: nowIso,
+    billing_amount_due_cents: 0,
+    billing_updated_at: nowIso,
+    billing_last_invoice_id: invoice.id,
+    billing_last_payment_status: invoice.status ?? "paid",
+    billing_status: "active",
+  };
+
+  if (sub) {
+    patch.stripe_subscription_status = sub.status;
+    patch.app_access_status = appAccessFromSubscriptionStatus(sub.status);
+  }
+
+  const { error } = await supabase.from("offices").update(patch).eq("id", officeId);
+
+  if (error) throw error;
+
+  console.log("[billing/webhook] office updated", {
+    officeId,
+    event: "invoice.payment_succeeded",
   });
 
   return officeId;
@@ -505,6 +622,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       case "invoice.payment_failed": {
         const invoice = event.data.object as Stripe.Invoice;
         resolvedOfficeId = await handleInvoicePaymentFailed(
+          stripe,
+          supabase,
+          invoice
+        );
+        break;
+      }
+      case "invoice.payment_succeeded": {
+        const invoice = event.data.object as Stripe.Invoice;
+        resolvedOfficeId = await handleInvoicePaymentSucceeded(
           stripe,
           supabase,
           invoice

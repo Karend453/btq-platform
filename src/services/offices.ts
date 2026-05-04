@@ -11,6 +11,10 @@ import {
   type MembershipPickRow,
 } from "./officeMembershipOfficePick";
 
+/** Shared projection for `public.offices` reads (single-row fetches). */
+const OFFICE_DETAIL_SELECT =
+  "id, name, display_name, state, address_line1, city, postal_code, broker_name, broker_email, mls_name, plan_tier, signup_billing_cycle, stripe_customer_id, stripe_subscription_id, stripe_subscription_status, stripe_latest_invoice_status, billing_plan_tier, billing_status, billing_seat_quantity, billing_current_period_end, billing_cancel_at_period_end, billing_email, billing_last_invoice_id, billing_last_payment_status, billing_amount_due_cents, billing_currency, billing_last_payment_failed_at, billing_last_payment_succeeded_at, billing_grace_period_ends_at, billing_restricted_at, billing_locked_at, billing_admin_note, billing_updated_at, app_access_status, display_plan_label";
+
 /** Row from `public.offices`. Current office resolution prefers `office_memberships`, with legacy `user_profiles.office_id` fallback. */
 export type Office = {
   id: string;
@@ -33,13 +37,27 @@ export type Office = {
   signup_billing_cycle?: string | null;
   stripe_customer_id?: string | null;
   stripe_subscription_id?: string | null;
+  stripe_subscription_status?: string | null;
+  stripe_latest_invoice_status?: string | null;
   /** Last tier from Stripe metadata / webhook; overrides display when set. */
   billing_plan_tier?: string | null;
+  /** BTQ enforcement billing state (not raw Stripe status). */
   billing_status?: string | null;
   billing_seat_quantity?: number | null;
   billing_current_period_end?: string | null;
   billing_cancel_at_period_end?: boolean | null;
   billing_email?: string | null;
+  billing_last_invoice_id?: string | null;
+  billing_last_payment_status?: string | null;
+  billing_amount_due_cents?: number | null;
+  billing_currency?: string | null;
+  billing_last_payment_failed_at?: string | null;
+  billing_last_payment_succeeded_at?: string | null;
+  billing_grace_period_ends_at?: string | null;
+  billing_restricted_at?: string | null;
+  billing_locked_at?: string | null;
+  billing_admin_note?: string | null;
+  billing_updated_at?: string | null;
   app_access_status?: string | null;
   /** When set, My Subscriptions shows this as the plan name and hides list-price lines (display-only). */
   display_plan_label?: string | null;
@@ -123,9 +141,7 @@ export async function getCurrentOffice(): Promise<Office | null> {
 
   const { data: office, error: officeError } = await supabase
     .from("offices")
-    .select(
-      "id, name, display_name, state, address_line1, city, postal_code, broker_name, broker_email, mls_name, plan_tier, signup_billing_cycle, stripe_customer_id, stripe_subscription_id, billing_plan_tier, billing_status, billing_seat_quantity, billing_current_period_end, billing_cancel_at_period_end, billing_email, app_access_status, display_plan_label"
-    )
+    .select(OFFICE_DETAIL_SELECT)
     .eq("id", officeId)
     .maybeSingle();
 
@@ -147,9 +163,7 @@ export async function getOfficeById(officeId: string): Promise<Office | null> {
 
   const { data: office, error: officeError } = await supabase
     .from("offices")
-    .select(
-      "id, name, display_name, state, address_line1, city, postal_code, broker_name, broker_email, mls_name, plan_tier, signup_billing_cycle, stripe_customer_id, stripe_subscription_id, billing_plan_tier, billing_status, billing_seat_quantity, billing_current_period_end, billing_cancel_at_period_end, billing_email, app_access_status, display_plan_label"
-    )
+    .select(OFFICE_DETAIL_SELECT)
     .eq("id", id)
     .maybeSingle();
 
