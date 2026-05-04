@@ -129,57 +129,34 @@ function formatUsd0Whole(value: number | null): string {
   }).format(value);
 }
 
-/** Runway in months (balance ÷ monthly expense); null when expense is zero or non-finite. */
-function runwayMonthsFromCents(balanceCents: number, expenseCents: number): number | null {
-  if (expenseCents <= 0) return null;
-  const m = balanceCents / expenseCents;
-  return Number.isFinite(m) ? m : null;
-}
-
 function monthOptionLabel(month: number): string {
   const d = new Date(Date.UTC(2000, month - 1, 1));
   return d.toLocaleString("en-US", { month: "long", timeZone: "UTC" });
 }
 
-function billingRiskCounts(rows: BackOfficeListOfficeRow[]): {
-  pastDue: number;
-  unpaid: number;
-  canceled: number;
-} {
-  let pastDue = 0;
-  let unpaid = 0;
-  let canceled = 0;
-  for (const o of rows) {
-    const st = (o.billing_status ?? "").trim().toLowerCase();
-    if (st === "past_due") pastDue += 1;
-    else if (st === "unpaid") unpaid += 1;
-    else if (st === "canceled") canceled += 1;
-  }
-  return { pastDue, unpaid, canceled };
-}
-
-/** Sum catalog normalized monthly revenue for offices in billing risk (same row math as revenue table). */
-function monthlyRevenueAtRiskUsd(
-  offices: BackOfficeListOfficeRow[],
-  revenueRows: RevenueModelRowView[]
-): number | null {
-  const byOfficeId = new Map<string, number | null>();
-  for (const r of revenueRows) {
-    byOfficeId.set(r.officeId, r.monthlyEquivalentUsd);
-  }
-
-  let sum = 0;
-  for (const o of offices) {
-    const st = (o.billing_status ?? "").trim().toLowerCase();
-    if (st !== "past_due" && st !== "unpaid" && st !== "canceled") continue;
-
-    const monthlyEq = byOfficeId.get(o.id);
-    if (monthlyEq === undefined) continue;
-    if (monthlyEq == null || !Number.isFinite(monthlyEq)) return null;
-    sum += monthlyEq;
-  }
-
-  return sum;
+function KpiCard({
+  title,
+  hint,
+  editSlot,
+  children,
+}: {
+  title: string;
+  hint?: string;
+  editSlot?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-slate-700">{title}</div>
+          {hint ? <p className="mt-0.5 text-xs text-slate-400">{hint}</p> : null}
+        </div>
+        {editSlot}
+      </div>
+      <div className="mt-3">{children}</div>
+    </div>
+  );
 }
 
 export function BackOfficeBusinessOverviewPage() {
@@ -301,15 +278,7 @@ export function BackOfficeBusinessOverviewPage() {
     };
   }, [year, month]);
 
-  const risk = useMemo(() => billingRiskCounts(offices), [offices]);
-  const unpaidCanceledTotal = risk.unpaid + risk.canceled;
-
   const revenueModel = useMemo(() => buildBackOfficeRevenueModel(offices), [offices]);
-
-  const revenueAtRiskUsd = useMemo(
-    () => monthlyRevenueAtRiskUsd(offices, revenueModel.rows),
-    [offices, revenueModel.rows]
-  );
 
   const [revenueSortKey, setRevenueSortKey] = useState<RevenueSortKey>("office");
   const [revenueSortDir, setRevenueSortDir] = useState<"asc" | "desc">("asc");
@@ -319,6 +288,20 @@ export function BackOfficeBusinessOverviewPage() {
     [revenueModel.rows, revenueSortKey, revenueSortDir]
   );
 
+  /** Sum Expected Amount (monthly equivalent USD) for rows with a finite value; matches body rows regardless of sort order. */
+  const revenueTableExpectedAmountTotal = useMemo(() => {
+    let sumUsd = 0;
+    let hasContributors = false;
+    for (const row of revenueModel.rows) {
+      const v = row.monthlyEquivalentUsd;
+      if (v != null && Number.isFinite(v)) {
+        sumUsd += v;
+        hasContributors = true;
+      }
+    }
+    return { sumUsd, hasContributors };
+  }, [revenueModel.rows]);
+
   function toggleRevenueSort(nextKey: RevenueSortKey) {
     if (nextKey === revenueSortKey) {
       setRevenueSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -327,27 +310,6 @@ export function BackOfficeBusinessOverviewPage() {
       setRevenueSortDir("asc");
     }
   }
-
-  const expectedMonthlyIncomeUsd = useMemo(() => {
-    if (officesLoading || officesError || revenueModel.rows.length === 0) return null;
-    const v = revenueModel.totalMonthlyEquivalentUsd;
-    return Number.isFinite(v) ? v : null;
-  }, [
-    officesLoading,
-    officesError,
-    revenueModel.rows.length,
-    revenueModel.totalMonthlyEquivalentUsd,
-  ]);
-
-  const expectedMonthlyExpenseUsd = useMemo(() => {
-    if (settingsLoading || settingsError) return null;
-    return expenseEstimateCents / 100;
-  }, [settingsLoading, settingsError, expenseEstimateCents]);
-
-  const expectedPlUsd = useMemo(() => {
-    if (expectedMonthlyIncomeUsd == null || expectedMonthlyExpenseUsd == null) return null;
-    return expectedMonthlyIncomeUsd - expectedMonthlyExpenseUsd;
-  }, [expectedMonthlyIncomeUsd, expectedMonthlyExpenseUsd]);
 
   const resetExpenseDialogDraft = useCallback(() => {
     setExpenseDraftDollars((expenseEstimateCents / 100).toFixed(2));
@@ -471,14 +433,12 @@ export function BackOfficeBusinessOverviewPage() {
       sumNetChangeYtd += ytdPayoutsByMonth[i].amount_paid_out_cents - expenseEstimateCents;
     }
     const projectedBalanceCents = startingBalanceCents + sumNetChangeYtd;
-    const runwayMonths = runwayMonthsFromCents(projectedBalanceCents, expenseEstimateCents);
     const goalProgressRatio =
       annualGoalCents > 0 ? projectedBalanceCents / annualGoalCents : null;
     return {
       payoutCents: payoutCentsSelected,
       netChangeCents,
       projectedBalanceCents,
-      runwayMonths,
       goalProgressRatio,
     };
   }, [
@@ -539,233 +499,138 @@ export function BackOfficeBusinessOverviewPage() {
             className="mt-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
             role="alert"
           >
-            Business Position payouts (year-to-date): {ytdPayoutsError}
+            Stripe payouts ({year}, January–{monthOptionLabel(month)}): {ytdPayoutsError} Values that
+            depend on Stripe payouts are unavailable; the revenue model table below still loads from
+            offices.
           </p>
         )}
 
-        <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:col-span-1">
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <div className="text-sm font-medium text-slate-900">Business Position</div>
-                <p className="mt-0.5 text-xs text-slate-400">Selected month</p>
-              </div>
+        <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <KpiCard
+            title="Starting Cash"
+            editSlot={
               <button
                 type="button"
                 className="shrink-0 text-xs font-medium text-slate-600 underline-offset-2 hover:text-slate-900 hover:underline disabled:cursor-not-allowed disabled:opacity-50 disabled:no-underline"
                 disabled={settingsLoading || Boolean(settingsError)}
-                aria-label="Edit starting cash balance and annual goal"
+                aria-label="Edit starting cash and annual goal"
                 onClick={openPositionDialog}
               >
                 Edit
               </button>
+            }
+          >
+            <div className="text-xl font-semibold tracking-tight tabular-nums text-slate-900">
+              {settingsLoading ? (
+                <span className="text-sm font-normal text-slate-500">Loading…</span>
+              ) : settingsError ? (
+                <span className="text-sm font-normal text-slate-400">—</span>
+              ) : startingBalanceCents === 0 ? (
+                <span className="text-sm font-normal text-slate-500">Set starting cash balance</span>
+              ) : (
+                formatUsdFromCents(startingBalanceCents)
+              )}
             </div>
-            <dl className="mt-4 space-y-3 text-sm">
-              <div className="flex justify-between gap-4 border-b border-slate-100 pb-3">
-                <dt className="shrink-0 text-slate-500">Starting Cash Balance</dt>
-                <dd className="text-right font-semibold tabular-nums text-slate-900">
-                  {settingsLoading ? (
-                    <span className="font-normal text-slate-500">Loading…</span>
-                  ) : settingsError ? (
-                    <span className="font-normal text-slate-400">—</span>
-                  ) : startingBalanceCents === 0 ? (
-                    <span className="font-normal text-slate-500">Set starting cash balance</span>
-                  ) : (
-                    formatUsdFromCents(startingBalanceCents)
-                  )}
-                </dd>
-              </div>
-              <div className="flex justify-between gap-4 border-b border-slate-100 pb-3">
-                <dt className="text-slate-500">Stripe Payouts This Month</dt>
-                <dd className="text-right font-semibold tabular-nums text-slate-900">
-                  {ytdPayoutsLoading ? (
-                    <span className="font-normal text-slate-500">Loading…</span>
-                  ) : ytdPayoutsByMonth && ytdPayoutsByMonth[month - 1] ? (
-                    formatUsdFromCents(ytdPayoutsByMonth[month - 1].amount_paid_out_cents)
-                  ) : (
-                    <span className="font-normal text-slate-400">—</span>
-                  )}
-                </dd>
-              </div>
-              <div className="flex justify-between gap-4 border-b border-slate-100 pb-3">
-                <dt className="text-slate-500">Monthly Expenses</dt>
-                <dd className="text-right font-semibold tabular-nums text-slate-900">
-                  {settingsLoading ? (
-                    <span className="font-normal text-slate-500">Loading…</span>
-                  ) : settingsError ? (
-                    <span className="font-normal text-slate-400">—</span>
-                  ) : expenseEstimateCents === 0 ? (
-                    <span className="font-normal text-slate-500">Set expense estimate</span>
-                  ) : (
-                    formatUsdFromCents(expenseEstimateCents)
-                  )}
-                </dd>
-              </div>
-              <div className="flex justify-between gap-4 border-b border-slate-100 pb-3">
-                <dt className="text-slate-500">Net Change</dt>
-                <dd
-                  className={`text-right font-semibold tabular-nums ${
-                    positionDerived && positionDerived.netChangeCents < 0
-                      ? "text-red-600"
-                      : "text-slate-900"
-                  }`}
-                >
-                  {!positionDerived ? (
-                    <span className="font-normal text-slate-400">—</span>
-                  ) : (
-                    formatUsdFromCents(positionDerived.netChangeCents)
-                  )}
-                </dd>
-              </div>
-              <div className="flex justify-between gap-4 border-b border-slate-100 pb-3">
-                <dt className="text-slate-500">Projected Balance</dt>
-                <dd className="text-right font-semibold tabular-nums text-slate-900">
-                  {!positionDerived ? (
-                    <span className="font-normal text-slate-400">—</span>
-                  ) : (
-                    <>
-                      <div>{formatUsdFromCents(positionDerived.projectedBalanceCents)}</div>
-                      <div className="mt-0.5 text-xs font-normal text-slate-400">
-                        Through selected month.
-                      </div>
-                    </>
-                  )}
-                </dd>
-              </div>
-              <div className="border-b border-slate-100 pb-3">
-                <div className="flex justify-between gap-4">
-                  <dt className="text-slate-500">Goal Progress</dt>
-                  <dd className="text-right">
-                    {annualGoalCents <= 0 ? (
-                      <span className="text-sm font-medium text-slate-500">Set annual goal</span>
-                    ) : !positionDerived ? (
-                      <span className="text-slate-400">—</span>
-                    ) : (
-                      <span className="font-semibold tabular-nums text-slate-900">
-                        {`${formatUsd0Whole(positionDerived.projectedBalanceCents / 100)} / ${formatUsd0Whole(annualGoalCents / 100)} (${Math.round((positionDerived.goalProgressRatio ?? 0) * 100)}%)`}
-                      </span>
-                    )}
-                  </dd>
-                </div>
-                {annualGoalCents > 0 && positionDerived ? (
-                  <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-100">
-                    <div
-                      className="h-full rounded-full bg-emerald-600"
-                      style={{
-                        width: `${Math.min(
-                          100,
-                          Math.max(0, (positionDerived.goalProgressRatio ?? 0) * 100)
-                        )}%`,
-                      }}
-                    />
-                  </div>
-                ) : null}
-              </div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-slate-500">Cash Runway</dt>
-                <dd className="text-right font-semibold tabular-nums text-slate-900">
-                  {!positionDerived || expenseEstimateCents <= 0 ? (
-                    <span className="font-normal text-slate-400">—</span>
-                  ) : positionDerived.runwayMonths == null ? (
-                    <span className="font-normal text-slate-400">—</span>
-                  ) : (
-                    `${positionDerived.runwayMonths.toFixed(1)} mo`
-                  )}
-                </dd>
-              </div>
-            </dl>
-          </div>
+          </KpiCard>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="text-sm font-medium text-slate-900">Expected Monthly Model</div>
-            <dl className="mt-4 space-y-3 text-sm">
-              <div className="flex justify-between gap-4 border-b border-slate-100 pb-3">
-                <dt className="text-slate-500">Expected Monthly Income</dt>
-                <dd className="font-semibold tabular-nums text-slate-900">
-                  {officesLoading ? (
-                    <span className="font-normal text-slate-500">Loading…</span>
-                  ) : officesError ? (
-                    <span className="font-normal text-slate-400">—</span>
-                  ) : revenueModel.rows.length === 0 ? (
-                    <span className="font-normal text-slate-400">—</span>
-                  ) : (
-                    formatUsd0Whole(expectedMonthlyIncomeUsd)
-                  )}
-                </dd>
-              </div>
-              <div className="flex justify-between gap-4 border-b border-slate-100 pb-3 items-start">
-                <dt className="text-slate-500 shrink-0 pt-0.5">Expected Monthly Expenses</dt>
-                <dd className="flex flex-col items-end gap-1.5 text-right">
-                  <div className="min-h-[1.25rem] font-semibold tabular-nums text-slate-900">
-                    {settingsLoading ? (
-                      <span className="font-normal text-slate-500">Loading…</span>
-                    ) : settingsError ? (
-                      <span className="font-normal text-slate-400">—</span>
-                    ) : expenseEstimateCents === 0 ? (
-                      <span className="font-normal text-slate-500">Set expense estimate</span>
-                    ) : (
-                      formatUsdFromCents(expenseEstimateCents)
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    className="text-xs font-medium text-slate-600 underline-offset-2 hover:text-slate-900 hover:underline disabled:cursor-not-allowed disabled:opacity-50 disabled:no-underline"
-                    disabled={settingsLoading}
-                    onClick={openExpenseDialog}
-                  >
-                    Edit
-                  </button>
-                </dd>
-              </div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-slate-500">Expected P/L</dt>
-                <dd className="font-semibold tabular-nums text-slate-900">
-                  {expectedPlUsd == null ? (
-                    <span className="font-normal text-slate-400">—</span>
-                  ) : (
-                    formatUsd0Whole(expectedPlUsd)
-                  )}
-                </dd>
-              </div>
-            </dl>
-          </div>
+          <KpiCard
+            title="Expenses"
+            hint="Monthly estimate"
+            editSlot={
+              <button
+                type="button"
+                className="shrink-0 text-xs font-medium text-slate-600 underline-offset-2 hover:text-slate-900 hover:underline disabled:cursor-not-allowed disabled:opacity-50 disabled:no-underline"
+                disabled={settingsLoading || Boolean(settingsError)}
+                aria-label="Edit monthly expenses"
+                onClick={openExpenseDialog}
+              >
+                Edit
+              </button>
+            }
+          >
+            <div className="text-xl font-semibold tracking-tight tabular-nums text-slate-900">
+              {settingsLoading ? (
+                <span className="text-sm font-normal text-slate-500">Loading…</span>
+              ) : settingsError ? (
+                <span className="text-sm font-normal text-slate-400">—</span>
+              ) : expenseEstimateCents === 0 ? (
+                <span className="text-sm font-normal text-slate-500">Set expense estimate</span>
+              ) : (
+                formatUsdFromCents(expenseEstimateCents)
+              )}
+            </div>
+          </KpiCard>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="text-sm font-medium text-slate-900">Billing Risk</div>
-            {officesLoading ? (
-              <p className="mt-4 text-sm text-slate-500">Loading office billing…</p>
-            ) : officesError ? (
-              <p className="mt-4 text-sm text-amber-800">
-                Could not load office billing ({officesError}). Counts unavailable.
-              </p>
-            ) : (
-              <dl className="mt-4 space-y-3 text-sm">
-                <div className="flex justify-between gap-4">
-                  <dt className="text-slate-500">Past due accounts</dt>
-                  <dd className="font-semibold tabular-nums text-slate-900">{risk.pastDue}</dd>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <dt className="text-slate-500">Unpaid / canceled accounts</dt>
-                  <dd className="font-semibold tabular-nums text-slate-900">
-                    {unpaidCanceledTotal}
-                    <span className="ml-2 font-normal text-slate-400">
-                      ({risk.unpaid} unpaid · {risk.canceled} canceled)
-                    </span>
-                  </dd>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <dt className="text-slate-500">Monthly revenue at risk</dt>
-                  <dd className="font-semibold tabular-nums text-slate-900">
-                    {revenueAtRiskUsd == null ? (
-                      <span className="font-normal text-slate-400">—</span>
-                    ) : (
-                      formatUsd0Whole(revenueAtRiskUsd)
-                    )}
-                  </dd>
-                </div>
-              </dl>
-            )}
+          <KpiCard title="Income" hint="Stripe · selected month">
+            <div className="text-xl font-semibold tracking-tight tabular-nums text-slate-900">
+              {ytdPayoutsLoading ? (
+                <span className="text-sm font-normal text-slate-500">Loading…</span>
+              ) : ytdPayoutsByMonth && ytdPayoutsByMonth[month - 1] ? (
+                formatUsdFromCents(ytdPayoutsByMonth[month - 1].amount_paid_out_cents)
+              ) : (
+                <span className="text-sm font-normal text-slate-400">—</span>
+              )}
+            </div>
+          </KpiCard>
+
+          <KpiCard title="Monthly P/L" hint="Selected month">
+            <div
+              className={`text-xl font-semibold tracking-tight tabular-nums ${
+                positionDerived && positionDerived.netChangeCents < 0
+                  ? "text-red-600"
+                  : "text-slate-900"
+              }`}
+            >
+              {!positionDerived ? (
+                <span className="text-sm font-normal text-slate-400">—</span>
+              ) : (
+                formatUsdFromCents(positionDerived.netChangeCents)
+              )}
+            </div>
+          </KpiCard>
+
+          <KpiCard title="Running Balance" hint="Through selected month">
+            <div className="text-xl font-semibold tracking-tight tabular-nums text-slate-900">
+              {!positionDerived ? (
+                <span className="text-sm font-normal text-slate-400">—</span>
+              ) : (
+                formatUsdFromCents(positionDerived.projectedBalanceCents)
+              )}
+            </div>
+          </KpiCard>
+        </div>
+
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="text-sm font-medium text-slate-900">Annual goal progress</div>
+          <p className="mt-0.5 text-xs text-slate-500">
+            Running Balance ÷ Annual Goal (same period as KPI row).
+          </p>
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-sm text-slate-600">
+              {annualGoalCents <= 0 ? (
+                <span className="font-medium text-slate-500">Set annual goal</span>
+              ) : !positionDerived ? (
+                <span className="text-slate-400">—</span>
+              ) : (
+                <span className="font-semibold tabular-nums text-slate-900">
+                  {`${formatUsd0Whole(positionDerived.projectedBalanceCents / 100)} / ${formatUsd0Whole(annualGoalCents / 100)} (${Math.round((positionDerived.goalProgressRatio ?? 0) * 100)}%)`}
+                </span>
+              )}
+            </div>
           </div>
+          {annualGoalCents > 0 && positionDerived ? (
+            <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-100">
+              <div
+                className="h-full rounded-full bg-emerald-600"
+                style={{
+                  width: `${Math.min(
+                    100,
+                    Math.max(0, (positionDerived.goalProgressRatio ?? 0) * 100)
+                  )}%`,
+                }}
+              />
+            </div>
+          ) : null}
         </div>
 
         <div className="mt-8">
@@ -775,6 +640,7 @@ export function BackOfficeBusinessOverviewPage() {
             {revenueModel.rows.length === 1 ? "" : "s"}).
           </p>
           <p className="mt-1 text-xs text-slate-500">
+            Expected Amount = normalized monthly value.
           </p>
 
           {officesLoading && <p className="mt-4 text-sm text-slate-500">Loading offices…</p>}
@@ -869,6 +735,22 @@ export function BackOfficeBusinessOverviewPage() {
                     </tr>
                   ))}
                 </tbody>
+                <tfoot>
+                  <tr className="border-t border-slate-200 bg-slate-50">
+                    <td className="px-4 py-3 font-semibold text-slate-900">Total</td>
+                    <td className="px-4 py-3" />
+                    <td className="px-4 py-3" />
+                    <td className="px-4 py-3" />
+                    <td className="px-4 py-3" />
+                    <td className="px-4 py-3 text-right font-bold tabular-nums text-slate-900">
+                      {revenueTableExpectedAmountTotal.hasContributors ? (
+                        formatUsd0Whole(revenueTableExpectedAmountTotal.sumUsd)
+                      ) : (
+                        <span className="font-normal text-slate-400">—</span>
+                      )}
+                    </td>
+                  </tr>
+                </tfoot>
               </table>
             </div>
           )}
@@ -888,7 +770,7 @@ export function BackOfficeBusinessOverviewPage() {
             <DialogHeader>
               <DialogTitle className="text-slate-900">Monthly expense estimate</DialogTitle>
               <DialogDescription className="text-slate-600">
-                Manual monthly total used in the Expected Monthly Model (USD).
+                Used for Business Overview KPIs (USD). Does not change Stripe or office billing data.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-2">
@@ -943,8 +825,8 @@ export function BackOfficeBusinessOverviewPage() {
             <DialogHeader>
               <DialogTitle className="text-slate-900">Edit Business Position</DialogTitle>
               <DialogDescription className="text-slate-600">
-                Starting Cash Balance and Annual Goal are saved for this dashboard (USD). Stripe
-                totals are unchanged.
+                Starting Cash Balance and Annual Goal feed KPIs on this page (USD). Stripe totals are
+                unchanged.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
