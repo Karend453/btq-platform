@@ -19,6 +19,7 @@ import {
   ClipboardList,
   Shield,
   CreditCard,
+  Briefcase,
 } from "lucide-react";
 
 /** Default (admin / agent): full management + insights. */
@@ -237,6 +238,11 @@ export function RootLayout() {
             label: "Back Office",
             href: "/back-office/org",
             icon: Shield,
+          },
+          {
+            label: "Business Overview",
+            href: "/back-office/business-overview",
+            icon: Briefcase,
           },
           {
             label: "Billing",
