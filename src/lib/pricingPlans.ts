@@ -64,3 +64,36 @@ export function resolvePlanKeyFromOfficeFields(raw: string | null | undefined): 
   if (k === "broker_pro_monthly") return "pro";
   return null;
 }
+
+/**
+ * Human-readable plan label for back-office tables. Prefer `display_plan_label` when set;
+ * otherwise resolve `billing_plan_tier` / `plan_tier` / Stripe plan keys (e.g. `broker_core_monthly`)
+ * via {@link PLAN_DETAILS}, or `"Custom"` when a tier string is present but unmapped.
+ */
+export function displayOfficePlanLabel(office: {
+  display_plan_label?: string | null;
+  billing_plan_tier?: string | null;
+  plan_tier?: string | null;
+}): string {
+  const labeled = office.display_plan_label?.trim();
+  if (labeled) return labeled;
+
+  const billingTier = office.billing_plan_tier?.trim() || "";
+  const planTier = office.plan_tier?.trim() || "";
+
+  const fromRaw = (raw: string): string | null => {
+    if (!raw) return null;
+    const pk = resolvePlanKeyFromOfficeFields(raw);
+    return pk ? PLAN_DETAILS[pk].label : null;
+  };
+
+  const fromBilling = fromRaw(billingTier);
+  if (fromBilling) return fromBilling;
+
+  const fromPlan = fromRaw(planTier);
+  if (fromPlan) return fromPlan;
+
+  if (billingTier || planTier) return "Custom";
+
+  return "";
+}

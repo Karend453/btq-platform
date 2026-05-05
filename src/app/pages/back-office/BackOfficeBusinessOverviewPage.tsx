@@ -699,20 +699,20 @@ export function BackOfficeBusinessOverviewPage() {
                         <SortCaret active={revenueSortKey === "plan"} dir={revenueSortDir} />
                       </button>
                     </th>
-                    <th className="px-4 py-3" aria-sort={revenueSortKey === "billingCycle" ? (revenueSortDir === "asc" ? "ascending" : "descending") : "none"}>
+                    <th className="px-4 py-3 text-center" aria-sort={revenueSortKey === "billingCycle" ? (revenueSortDir === "asc" ? "ascending" : "descending") : "none"}>
                       <button
                         type="button"
-                        className="inline-flex items-center gap-1 rounded-sm text-left hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2"
+                        className="inline-flex w-full items-center justify-center gap-1 rounded-sm hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2"
                         onClick={() => toggleRevenueSort("billingCycle")}
                       >
                         Billing Cycle
                         <SortCaret active={revenueSortKey === "billingCycle"} dir={revenueSortDir} />
                       </button>
                     </th>
-                    <th className="px-4 py-3 text-right" aria-sort={revenueSortKey === "subAgents" ? (revenueSortDir === "asc" ? "ascending" : "descending") : "none"}>
+                    <th className="px-4 py-3 text-center" aria-sort={revenueSortKey === "subAgents" ? (revenueSortDir === "asc" ? "ascending" : "descending") : "none"}>
                       <button
                         type="button"
-                        className="inline-flex w-full items-center justify-end gap-1 rounded-sm hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2"
+                        className="inline-flex w-full items-center justify-center gap-1 rounded-sm hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2"
                         onClick={() => toggleRevenueSort("subAgents")}
                       >
                         SubAgents
@@ -737,8 +737,8 @@ export function BackOfficeBusinessOverviewPage() {
                       <td className="px-4 py-3 font-medium text-slate-900">{row.officeLabel}</td>
                       <td className="px-4 py-3 text-slate-700">{row.brokerPrimaryLabel}</td>
                       <td className="px-4 py-3 text-slate-700">{row.planLabel}</td>
-                      <td className="px-4 py-3 text-slate-700">{row.billingCycleLabel}</td>
-                      <td className="px-4 py-3 text-right tabular-nums text-slate-900">{row.subAgentsLabel}</td>
+                      <td className="px-4 py-3 text-center text-slate-700">{row.billingCycleLabel}</td>
+                      <td className="px-4 py-3 text-center tabular-nums text-slate-900">{row.subAgentsLabel}</td>
                       <td className="px-4 py-3 text-right tabular-nums text-slate-900">
                         {formatUsd0Whole(row.monthlyEquivalentUsd)}
                       </td>

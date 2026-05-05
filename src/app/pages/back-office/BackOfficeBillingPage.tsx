@@ -6,6 +6,7 @@ import {
   stripeCustomerDashboardUrl,
   stripeSubscriptionDashboardUrl,
 } from "../../../lib/stripeDashboardUrls";
+import { displayOfficePlanLabel } from "../../../lib/pricingPlans";
 
 type BillingFilter =
   | "all"
@@ -48,15 +49,6 @@ function brokerLabel(o: BackOfficeListOfficeRow): string {
   return (o.broker_name ?? "").trim();
 }
 
-function planDisplay(o: BackOfficeListOfficeRow): string {
-  return (
-    o.display_plan_label?.trim() ||
-    o.billing_plan_tier?.trim() ||
-    o.plan_tier?.trim() ||
-    ""
-  );
-}
-
 /** Case-insensitive substring match on trimmed office name(s), broker, email, id. */
 function officeMatchesSearch(o: BackOfficeListOfficeRow, rawQuery: string): boolean {
   const q = rawQuery.trim().toLowerCase();
@@ -90,32 +82,19 @@ function billingStatusBadgeClass(status: string | null | undefined): string {
   return `${base} bg-slate-100 text-slate-700 ring-slate-500/15`;
 }
 
-/** Display + sort tie-break helpers for Days late cells. */
-type DaysLateCell =
-  | { kind: "dash"; text: string; emphasize: boolean }
-  | { kind: "days"; text: string; emphasize: boolean }
-  | { kind: "unknown"; text: string; emphasize: boolean };
-
-function daysLateCell(
+/** Small muted line under billing status badge; omitted for active subscriptions. */
+function billingStatusDaysLateMutedLine(
   billingStatus: string | null | undefined,
   failedAt: string | null | undefined
-): DaysLateCell {
+): string | null {
   const st = (billingStatus ?? "").trim().toLowerCase();
-  if (st === "active") {
-    return { kind: "dash", text: "—", emphasize: false };
-  }
-  if (!failedAt?.trim()) {
-    return { kind: "unknown", text: "Unknown", emphasize: false };
-  }
+  if (st === "active") return null;
+  if (!failedAt?.trim()) return "Unknown";
   const t = new Date(failedAt.trim()).getTime();
-  if (Number.isNaN(t)) {
-    return { kind: "unknown", text: "Unknown", emphasize: false };
-  }
+  if (Number.isNaN(t)) return "Unknown";
   const days = Math.floor((Date.now() - t) / 86400000);
-  if (days < 0) {
-    return { kind: "unknown", text: "Unknown", emphasize: false };
-  }
-  return { kind: "days", text: String(days), emphasize: days >= 7 };
+  if (days < 0) return "Unknown";
+  return days === 1 ? "1 day late" : `${days} days late`;
 }
 
 /** Sort key: bucket 0 = non-active with known days late, 1 = non-active unknown late, 2 = active. */
@@ -372,19 +351,20 @@ export function BackOfficeBillingPage() {
                   <th className="whitespace-nowrap px-3 py-2">Office</th>
                   <th className="whitespace-nowrap px-3 py-2">Broker / Primary</th>
                   <th className="whitespace-nowrap px-3 py-2">Plan</th>
-                  <th className="whitespace-nowrap px-3 py-2 text-right">Agents</th>
-                  <th className="whitespace-nowrap px-3 py-2">Billing status</th>
-                  <th className="whitespace-nowrap px-3 py-2 text-right">Days late</th>
+                  <th className="whitespace-nowrap px-3 py-2 text-center">Billing status</th>
                   <th className="whitespace-nowrap px-3 py-2 text-right">Amount due</th>
                   <th className="whitespace-nowrap px-3 py-2">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {sortedFiltered.map((o) => {
-                  const late = daysLateCell(o.billing_status, o.billing_last_payment_failed_at);
+                  const daysLateMuted = billingStatusDaysLateMutedLine(
+                    o.billing_status,
+                    o.billing_last_payment_failed_at
+                  );
                   const custId = o.stripe_customer_id?.trim();
                   const subId = o.stripe_subscription_id?.trim();
-                  const plan = planDisplay(o);
+                  const plan = displayOfficePlanLabel(o);
                   const due = formatAmountDueUsd(o.billing_amount_due_cents);
                   return (
                     <tr key={o.id} className="align-top">
@@ -405,24 +385,17 @@ export function BackOfficeBillingPage() {
                       <td className="max-w-[9rem] px-3 py-2 text-slate-800">
                         {plan || "—"}
                       </td>
-                      <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-slate-800">
-                        {o.active_member_count}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2">
-                        <span className={billingStatusBadgeClass(o.billing_status)}>
-                          {(o.billing_status ?? "").trim() || "—"}
-                        </span>
-                      </td>
-                      <td
-                        className={`whitespace-nowrap px-3 py-2 text-right tabular-nums ${
-                          late.kind === "unknown"
-                            ? "text-xs font-normal italic text-amber-800/85"
-                            : late.kind === "days" && late.emphasize
-                              ? "font-semibold text-red-700"
-                              : "text-slate-800"
-                        }`}
-                      >
-                        {late.text}
+                      <td className="px-3 py-2 align-top">
+                        <div className="flex flex-col items-center">
+                          <span className={billingStatusBadgeClass(o.billing_status)}>
+                            {(o.billing_status ?? "").trim() || "—"}
+                          </span>
+                          {daysLateMuted != null ? (
+                            <div className="mt-0.5 whitespace-normal text-center text-xs text-slate-500">
+                              {daysLateMuted}
+                            </div>
+                          ) : null}
+                        </div>
                       </td>
                       <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-slate-800">
                         {due ?? "—"}

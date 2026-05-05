@@ -2,6 +2,7 @@ import type { BackOfficeListOfficeRow } from "../services/offices";
 import {
   LIST_PRICE_SEAT_PER_USER_MONTH_USD,
   PLAN_DETAILS,
+  displayOfficePlanLabel,
   resolvePlanKeyFromOfficeFields,
   type PlanKey,
 } from "./pricingPlans";
@@ -92,14 +93,6 @@ function subAgentsColumnDisplay(o: BackOfficeListOfficeRow): {
 
 function officeDisplayName(o: BackOfficeListOfficeRow): string {
   return o.display_name?.trim() || o.name?.trim() || "—";
-}
-
-function planLabelForOffice(o: BackOfficeListOfficeRow, planKey: PlanKey | null): string {
-  const custom = o.display_plan_label?.trim();
-  if (custom) return custom;
-  if (planKey) return PLAN_DETAILS[planKey].label;
-  const tier = o.billing_plan_tier?.trim() || o.plan_tier?.trim();
-  return tier || "—";
 }
 
 function monthlyCatalogRecurringUsd(planKey: PlanKey, subagentSeatCount: number): number {
@@ -200,7 +193,7 @@ export function buildBackOfficeRevenueModel(offices: BackOfficeListOfficeRow[]):
       brokerPrimaryLabel: brokerPrimaryDisplay(o),
       subAgentsLabel,
       subAgentsSortValue,
-      planLabel: planLabelForOffice(o, planKey),
+      planLabel: displayOfficePlanLabel(o) || "—",
       billingCycleLabel: cadenceLabel,
       expectedPeriodAmountUsd,
       monthlyEquivalentUsd,
