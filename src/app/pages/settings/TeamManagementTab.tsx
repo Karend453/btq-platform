@@ -526,8 +526,8 @@ export function TeamManagementTab() {
                 {pendingAddRole === "admin" ? "Add an admin" : pendingAddRole === "agent" ? "Add an agent" : "Add member"}
               </DialogTitle>
               <DialogDescription className="text-slate-600 text-base">
-                New people receive an email to activate their account. If this email already has a BTQ account, they are
-                attached to your office without a new signup.
+              ​Enter a new user to add them to your account. <br />
+              Enter an existing user to update their role.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-3 py-2">
@@ -577,7 +577,6 @@ export function TeamManagementTab() {
                 />
                 {pendingAddRole === "agent" || pendingAddRole === "admin" ? (
                   <p className="text-sm text-slate-600">
-                    Seats are billed at $20/month per user.
                   </p>
                 ) : null}
               </div>

@@ -9,6 +9,7 @@ import { Analytics } from "./pages/Analytics";
 import { Offices } from "./pages/Offices";
 import { SettingsPage } from "./pages/SettingsPage";
 import { OfficeChecklistTemplatesPage } from "./pages/OfficeChecklistTemplatesPage";
+import { ResourceCenter } from "./pages/ResourceCenter";
 import TransactionDetail from "./transactions/TransactionDetailsPage";
 import SplitAssignDocumentsPage from "./transactions/SplitAssignDocumentsPage";
 import DocumentSplitWorkspacePage from "./transactions/DocumentSplitWorkspacePage";
@@ -69,6 +70,7 @@ export const router = createBrowserRouter([
       { path: "analytics", element: <Analytics /> },
       { path: "offices", element: <Offices /> },
       { path: "office/checklist-templates", element: <OfficeChecklistTemplatesPage /> },
+      { path: "resources", element: <ResourceCenter /> },
       { path: "settings/billing/success", element: <BillingCheckoutSuccessPage /> },
       { path: "settings/billing/cancelled", element: <BillingCheckoutCancelledPage /> },
       { path: "settings/billing/cancel", element: <BillingCheckoutCancelledPage /> },

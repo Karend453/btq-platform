@@ -33,7 +33,7 @@ const BASE_TAB_CONFIG = [
 
 const TEMPLATES_TAB = {
   value: "templates",
-  label: "Office Templates",
+  label: "Office Checklist",
   icon: ClipboardList,
 } as const;
 

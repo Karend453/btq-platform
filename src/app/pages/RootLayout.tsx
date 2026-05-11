@@ -20,6 +20,7 @@ import {
   Shield,
   CreditCard,
   Briefcase,
+  BookOpen,
 } from "lucide-react";
 
 /** Default (admin / agent): full management + insights. */
@@ -68,6 +69,11 @@ const navSectionsDefault: NavSection[] = [
     title: "System",
     items: [
       {
+        label: "Resource Center",
+        href: "/resources",
+        icon: BookOpen,
+      },
+      {
         label: "Settings",
         href: "/settings",
         icon: Settings,
@@ -115,6 +121,11 @@ const navSectionsBroker: NavSection[] = [
   {
     title: "System",
     items: [
+      {
+        label: "Resource Center",
+        href: "/resources",
+        icon: BookOpen,
+      },
       {
         label: "Settings",
         href: "/settings",
