@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import {
   getUserProfileRoleKey,
@@ -321,10 +321,13 @@ export function Dashboard() {
               <p className="mt-1 text-sm text-emerald-900">Your account is active</p>
               <div className="mt-4 flex flex-wrap gap-3">
                 <Button asChild>
-                  <Link to="/settings">Complete setup</Link>
-                </Button>
-                <Button variant="outline" asChild>
-                  <Link to="/settings?tab=subagents">Add your first agent</Link>
+                  <a
+                    href="https://youtu.be/79fuo7ZcnPs"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Get Started
+                  </a>
                 </Button>
               </div>
             </div>
