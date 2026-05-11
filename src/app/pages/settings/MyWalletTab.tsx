@@ -241,13 +241,7 @@ export function MyWalletTab() {
                     label="Monthly total"
                     value={`${formatMoney(wallet.monthlyTotal, wallet.currency)}/mo`}
                   />
-                  <div className="sm:col-span-2">
-                    <ReadonlyField label="Billable seats" value={String(wallet.seatCount)} />
-                  </div>
                 </dl>
-                <p className="text-xs text-slate-500 leading-relaxed">
-                  Seat changes apply to your next billing cycle.
-                </p>
                 {!isBtqAdmin ? (
                   <div className="pt-1">
                     <Button
