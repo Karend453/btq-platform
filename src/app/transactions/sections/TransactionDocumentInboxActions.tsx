@@ -1,81 +1,30 @@
-import React, { useRef, useState } from "react";
-import { Inbox, Upload } from "lucide-react";
-import { toast } from "sonner";
+import React from "react";
+import { Inbox } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
-import { uploadDocument } from "../../../services/transactionDocuments";
 import type { InboxDocument } from "./TransactionInbox";
 
 export type TransactionDocumentInboxActionsProps = {
-  transactionId?: string;
   inboxDocuments: InboxDocument[];
-  onInboxDocumentsChange: (docs: InboxDocument[]) => void;
-  /** Activity logger; mirrors `TransactionInbox` upload behavior. */
-  addActivityEntry?: (entry: {
-    actor: "System" | "Agent" | "Admin" | "Broker";
-    category: "docs" | "forms" | "system";
-    type: string;
-    message: string;
-    meta?: Record<string, unknown>;
-    documentId?: string | null;
-    checklistItemId?: string | null;
-  }) => void;
-  currentUserRole?: "Admin" | "Agent" | "Broker";
-  /** Disables Upload (and matches the rest of the page when archived). Open inbox stays usable. */
-  isReadOnly?: boolean;
   /** Called when the user clicks "Open inbox" — page wires this to the existing Attach Sheet. */
   onOpenInbox: () => void;
 };
 
 /**
- * Compact "Document Inbox" row used inside the Transaction card header. Replaces the standalone
- * Document Inbox card. Renders:
+ * Compact "Document Inbox" row used inside the Transaction card header. Renders:
  *
- *     Document Inbox · {n} unattached · [Upload] [Open inbox]
+ *     Document Inbox · {n} unattached · [Open inbox]
  *
- * Upload reuses the same `uploadDocument` service + activity-log call as the previous card so
- * behavior is identical; "Open inbox" delegates to a parent-supplied handler that opens the
- * existing Attach Sheet (which still lives in `TransactionInbox`).
+ * Intentionally status/summary only — uploads live inside the inbox itself (Attach Sheet in
+ * `TransactionInbox`) so the user has one obvious place to add and manage documents. Putting
+ * Upload in this header was confusing because the resulting file landed in the inbox but the
+ * user still had to click "Open inbox" to see/manage it.
  */
 export function TransactionDocumentInboxActions({
-  transactionId,
   inboxDocuments,
-  onInboxDocumentsChange,
-  addActivityEntry,
-  currentUserRole = "Admin",
-  isReadOnly = false,
   onOpenInbox,
 }: TransactionDocumentInboxActionsProps) {
-  const [isUploading, setIsUploading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
   const unattachedCount = inboxDocuments.filter((d) => !d.isAttached).length;
-
-  async function handleUploadFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file || !transactionId) return;
-
-    setIsUploading(true);
-    try {
-      const doc = await uploadDocument(transactionId, file);
-      if (doc) {
-        onInboxDocumentsChange([doc, ...inboxDocuments]);
-        addActivityEntry?.({
-          actor: currentUserRole,
-          category: "docs",
-          type: "document_uploaded",
-          message: `Document uploaded: ${doc.filename}`,
-          documentId: doc.id,
-        });
-        toast.success(`Uploaded "${file.name}"`);
-      } else {
-        toast.error("Upload failed");
-      }
-    } finally {
-      setIsUploading(false);
-    }
-  }
 
   return (
     <div className="inline-flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
@@ -95,30 +44,12 @@ export function TransactionDocumentInboxActions({
       <span className="text-slate-300" aria-hidden>
         ·
       </span>
-      <input
-        ref={fileInputRef}
-        type="file"
-        className="hidden"
-        accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif"
-        onChange={(e) => void handleUploadFile(e)}
-      />
-      <Button
-        variant="outline"
-        size="sm"
-        className="h-7 gap-1.5 border-slate-200 px-2.5 text-xs"
-        disabled={!transactionId || isUploading || isReadOnly}
-        onClick={() => fileInputRef.current?.click()}
-        title={isReadOnly ? "Archived transaction — uploads disabled" : "Upload a document"}
-      >
-        <Upload className="h-3.5 w-3.5" aria-hidden />
-        {isUploading ? "Uploading…" : "Upload"}
-      </Button>
       <Button
         variant="outline"
         size="sm"
         className="h-7 gap-1.5 border-slate-200 px-2.5 text-xs"
         onClick={onOpenInbox}
-        title="Browse and attach inbox documents"
+        title="Browse, upload, and attach inbox documents"
       >
         <Inbox className="h-3.5 w-3.5" aria-hidden />
         Open inbox

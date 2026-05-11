@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
+  ChevronDown,
+  ChevronRight,
   ExternalLink,
   FileText,
   Inbox,
@@ -24,13 +26,6 @@ import {
 } from "../../components/ui/sheet";
 import { Label } from "../../components/ui/label";
 import { Input } from "../../components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "../../components/ui/select";
 import { ChecklistItemSearchPicker } from "./ChecklistItemSearchPicker";
 import {
   Dialog,
@@ -108,8 +103,6 @@ export interface ChecklistItem {
   archiveGroupCreatedAt?: string | null;
 }
 
-type InboxFilter = "all" | "unattached" | "recent";
-
 export type TransactionInboxProps = {
   transactionId?: string;
   inboxDocuments: InboxDocument[];
@@ -186,9 +179,10 @@ export default function TransactionInbox({
   const [internalAttachDrawerOpen, setInternalAttachDrawerOpen] = useState(false);
   const [internalAttachTargetItem, setInternalAttachTargetItem] = useState<ChecklistItem | null>(null);
   const [selectedDocumentForAttach, setSelectedDocumentForAttach] = useState<string | null>(null);
-  // Default to "unattached" — the Attach Drawer's main job is to attach NEW docs, so showing
-  // already-attached docs first is noisy. Users can switch via the subtle filter dropdown.
-  const [inboxFilter, setInboxFilter] = useState<InboxFilter>("unattached");
+  // Attached docs are segregated into a collapsible section at the bottom of the Attach
+  // Drawer so the primary list stays focused on actionable (unattached) docs. Collapsed by
+  // default; reset to collapsed every time the drawer reopens.
+  const [attachedSectionExpanded, setAttachedSectionExpanded] = useState(false);
   const [renameDocId, setRenameDocId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [renameSaving, setRenameSaving] = useState(false);
@@ -249,14 +243,14 @@ export default function TransactionInbox({
   useEffect(() => {
     if (isControlled && controlledAttachDrawerOpen && controlledAttachTargetItem) {
       setSelectedDocumentForAttach(null);
-      setInboxFilter("unattached");
+      setAttachedSectionExpanded(false);
     }
   }, [isControlled, controlledAttachDrawerOpen, controlledAttachTargetItem]);
 
   const handleOpenAttachDrawer = (fromItem?: ChecklistItem) => {
     setAttachTargetItem(fromItem || null);
     setSelectedDocumentForAttach(null);
-    setInboxFilter("unattached");
+    setAttachedSectionExpanded(false);
     setAttachDrawerOpen(true);
   };
 
@@ -546,24 +540,127 @@ export default function TransactionInbox({
     toast.success(`Labeled as “${trimmed}” — still in inbox`);
   }
 
-  const getFilteredInboxDocuments = () => {
-    let filtered = inboxDocuments;
-
-    if (inboxFilter === "unattached") {
-      filtered = filtered.filter((doc) => !doc.isAttached);
-    } else if (inboxFilter === "recent") {
-      const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
-      filtered = filtered.filter((doc) => doc.receivedAt >= twoDaysAgo);
-    }
-
-    return filtered;
-  };
-
-  const filteredInboxDocuments = getFilteredInboxDocuments();
-
   const selectedInboxDocForAttach = selectedDocumentForAttach
     ? inboxDocuments.find((d) => d.id === selectedDocumentForAttach) ?? null
     : null;
+
+  // Split inbox into the primary actionable list (unattached/staging) and a secondary list of
+  // docs that are already on the checklist. The latter renders inside a collapsible section at
+  // the bottom of the Attach Drawer so users aren't forced to scroll past processed docs.
+  const unattachedInboxDocs = useMemo(
+    () => inboxDocuments.filter((d) => !d.isAttached),
+    [inboxDocuments]
+  );
+  const attachedInboxDocs = useMemo(
+    () => inboxDocuments.filter((d) => d.isAttached),
+    [inboxDocuments]
+  );
+
+  // Single card renderer reused by both inbox sections so they stay visually identical.
+  // Closes over selection / role / handler state from the component.
+  const renderInboxDocCard = (doc: InboxDocument) => (
+    <div
+      key={doc.id}
+      className={`flex w-full items-start gap-2 rounded-lg border p-3 transition-colors ${
+        selectedDocumentForAttach === doc.id
+          ? "border-blue-500 bg-blue-50/80"
+          : "border-slate-200 bg-white hover:border-slate-300"
+      }`}
+    >
+      <button
+        type="button"
+        onClick={() => setSelectedDocumentForAttach(doc.id)}
+        className="flex min-w-0 flex-1 items-start gap-2.5 text-left"
+      >
+        <FileText
+          className={`mt-0.5 h-4 w-4 shrink-0 ${
+            selectedDocumentForAttach === doc.id ? "text-blue-600" : "text-slate-500"
+          }`}
+          aria-hidden
+        />
+        <div className="min-w-0 flex-1">
+          <div
+            className={`text-sm font-medium leading-snug ${
+              selectedDocumentForAttach === doc.id ? "text-blue-950" : "text-slate-900"
+            }`}
+          >
+            {doc.filename}
+          </div>
+          <div className="mt-0.5 text-[11px] text-slate-500">
+            {formatRelativeTime(doc.receivedAt)}
+          </div>
+          {doc.isAttached && (
+            <Badge
+              variant="outline"
+              className="mt-2 border-slate-200 bg-slate-50 text-[10px] font-normal text-slate-600"
+            >
+              On checklist
+            </Badge>
+          )}
+        </div>
+      </button>
+      <div className="flex shrink-0 gap-1">
+        {!isReadOnly && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-slate-600"
+            title="Rename"
+            onClick={(e) => {
+              e.stopPropagation();
+              openRenameDialog(doc);
+            }}
+          >
+            <Pencil className="h-4 w-4" />
+            <span className="sr-only">Rename</span>
+          </Button>
+        )}
+        {transactionId && (
+          <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-slate-600" asChild>
+            <Link
+              to={`/transactions/${transactionId}/documents/${doc.id}/split`}
+              title="Split document"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <Scissors className="h-4 w-4" aria-hidden />
+              <span className="sr-only">Split document</span>
+            </Link>
+          </Button>
+        )}
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 text-slate-600"
+          title="View"
+          onClick={(e) => {
+            e.stopPropagation();
+            void handleViewDocument(doc);
+          }}
+        >
+          <Eye className="h-4 w-4" />
+          <span className="sr-only">View</span>
+        </Button>
+        {!isReadOnly && !doc.isAttached && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-slate-600 hover:text-red-700"
+            title="Permanently delete inbox copy"
+            onClick={(e) => {
+              e.stopPropagation();
+              openDeleteConfirm(doc);
+            }}
+          >
+            <Trash2 className="h-4 w-4" />
+            <span className="sr-only">Delete permanently</span>
+          </Button>
+        )}
+      </div>
+    </div>
+  );
 
   return (
     <>
@@ -596,8 +693,10 @@ export default function TransactionInbox({
 
           <div className="space-y-5 py-5">
             {/*
-              Action bar replaces the previous All/Unattached/Recent filter chips. Two intent-based
-              primary actions; the filter survives only as a subtle dropdown on the far right.
+              Action bar: two intent-based primary actions (upload + open forms provider). The
+              previous Unattached/All/Recent filter dropdown was removed because the inbox now
+              only contains unattached/staging documents (attached docs are removed once
+              processed), so the filter no longer represents meaningful state differences.
             */}
             <div className="flex flex-wrap items-center gap-2">
               <input
@@ -655,27 +754,6 @@ export default function TransactionInbox({
                   {attachDrawerFormsButtonLabel}
                 </Button>
               )}
-              <div className="ml-auto flex items-center gap-1.5">
-                <Label htmlFor="inbox-filter" className="text-xs font-normal text-slate-500">
-                  Show
-                </Label>
-                <Select
-                  value={inboxFilter}
-                  onValueChange={(v) => setInboxFilter(v as InboxFilter)}
-                >
-                  <SelectTrigger
-                    id="inbox-filter"
-                    className="h-8 w-[8.5rem] gap-1.5 border-slate-200 bg-transparent text-xs"
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent align="end">
-                    <SelectItem value="unattached">Unattached</SelectItem>
-                    <SelectItem value="all">All</SelectItem>
-                    <SelectItem value="recent">Recent (2d)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
             </div>
 
             {/* Attach To (when launched from inbox) */}
@@ -714,123 +792,52 @@ export default function TransactionInbox({
               </div>
             )}
 
-            {/* Document List */}
+            {/* Document List — unattached (primary) on top; attached (secondary) collapsed below. */}
             <div>
               <Label className="mb-2 block text-sm font-medium text-slate-700">
-                Documents ({filteredInboxDocuments.length})
+                Documents ({unattachedInboxDocs.length})
               </Label>
               <div className="max-h-[min(400px,50vh)] space-y-2 overflow-y-auto pr-0.5">
-                {filteredInboxDocuments.length === 0 ? (
+                {unattachedInboxDocs.length === 0 ? (
                   <div className="rounded-lg border border-dashed border-slate-200 py-8 text-center text-slate-500">
                     <Inbox className="mx-auto mb-2 h-10 w-10 text-slate-300" />
-                    <p className="text-sm">No documents match this filter</p>
+                    <p className="text-sm">
+                      {attachedInboxDocs.length > 0 ? "No unattached documents" : "Inbox is empty"}
+                    </p>
                   </div>
                 ) : (
-                  filteredInboxDocuments.map((doc) => (
-                    <div
-                      key={doc.id}
-                      className={`flex w-full items-start gap-2 rounded-lg border p-3 transition-colors ${
-                        selectedDocumentForAttach === doc.id
-                          ? "border-blue-500 bg-blue-50/80"
-                          : "border-slate-200 bg-white hover:border-slate-300"
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => setSelectedDocumentForAttach(doc.id)}
-                        className="flex min-w-0 flex-1 items-start gap-2.5 text-left"
-                      >
-                        <FileText
-                          className={`mt-0.5 h-4 w-4 shrink-0 ${
-                            selectedDocumentForAttach === doc.id ? "text-blue-600" : "text-slate-500"
-                          }`}
-                          aria-hidden
-                        />
-                        <div className="min-w-0 flex-1">
-                          <div
-                            className={`text-sm font-medium leading-snug ${
-                              selectedDocumentForAttach === doc.id ? "text-blue-950" : "text-slate-900"
-                            }`}
-                          >
-                            {doc.filename}
-                          </div>
-                          <div className="mt-0.5 text-[11px] text-slate-500">
-                            {formatRelativeTime(doc.receivedAt)}
-                          </div>
-                          {doc.isAttached && (
-                            <Badge
-                              variant="outline"
-                              className="mt-2 border-slate-200 bg-slate-50 text-[10px] font-normal text-slate-600"
-                            >
-                              On checklist
-                            </Badge>
-                          )}
-                        </div>
-                      </button>
-                      <div className="flex shrink-0 gap-1">
-                        {!isReadOnly && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-slate-600"
-                            title="Rename"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openRenameDialog(doc);
-                            }}
-                          >
-                            <Pencil className="h-4 w-4" />
-                            <span className="sr-only">Rename</span>
-                          </Button>
-                        )}
-                        {transactionId && (
-                          <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-slate-600" asChild>
-                            <Link
-                              to={`/transactions/${transactionId}/documents/${doc.id}/split`}
-                              title="Split document"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <Scissors className="h-4 w-4" aria-hidden />
-                              <span className="sr-only">Split document</span>
-                            </Link>
-                          </Button>
-                        )}
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-slate-600"
-                          title="View"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void handleViewDocument(doc);
-                          }}
-                        >
-                          <Eye className="h-4 w-4" />
-                          <span className="sr-only">View</span>
-                        </Button>
-                        {!isReadOnly && !doc.isAttached && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-slate-600 hover:text-red-700"
-                            title="Permanently delete inbox copy"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openDeleteConfirm(doc);
-                            }}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                            <span className="sr-only">Delete permanently</span>
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  ))
+                  unattachedInboxDocs.map(renderInboxDocCard)
                 )}
               </div>
+
+              {attachedInboxDocs.length > 0 && (
+                <div className="mt-3 overflow-hidden rounded-lg border border-slate-200 bg-slate-50/60">
+                  <button
+                    type="button"
+                    onClick={() => setAttachedSectionExpanded((v) => !v)}
+                    aria-expanded={attachedSectionExpanded}
+                    aria-controls="attached-docs-panel"
+                    className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-slate-700 transition-colors hover:bg-slate-100/70"
+                  >
+                    <span className="text-sm font-medium">
+                      Attached Documents ({attachedInboxDocs.length})
+                    </span>
+                    {attachedSectionExpanded ? (
+                      <ChevronDown className="h-4 w-4 text-slate-500" aria-hidden />
+                    ) : (
+                      <ChevronRight className="h-4 w-4 text-slate-500" aria-hidden />
+                    )}
+                  </button>
+                  {attachedSectionExpanded && (
+                    <div
+                      id="attached-docs-panel"
+                      className="max-h-[min(320px,40vh)] space-y-2 overflow-y-auto border-t border-slate-200 bg-white p-2"
+                    >
+                      {attachedInboxDocs.map(renderInboxDocCard)}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 

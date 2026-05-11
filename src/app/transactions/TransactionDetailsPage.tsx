@@ -1713,12 +1713,7 @@ export default function TransactionDetailsPage() {
           onClosingDateChange={handleClosingDateChange}
           documentInboxActions={
             <TransactionDocumentInboxActions
-              transactionId={id}
               inboxDocuments={inboxDocuments}
-              onInboxDocumentsChange={setInboxDocuments}
-              addActivityEntry={addActivityEntry}
-              currentUserRole={currentUserRole}
-              isReadOnly={isReadOnly}
               onOpenInbox={() => {
                 setAttachTargetItem(null);
                 setAttachDrawerOpen(true);
