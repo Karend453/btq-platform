@@ -376,6 +376,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             role,
             status: "pending",
             invite_email: email.toLowerCase(),
+            invite_name: displayName || null,
             updated_at: new Date().toISOString(),
           },
           { onConflict: "office_id,user_id" }

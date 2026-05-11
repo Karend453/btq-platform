@@ -112,7 +112,7 @@ const navSectionsBroker: NavSection[] = [
         icon: BarChart3,
       },
       {
-        label: "Office Templates",
+        label: "Office Checklist",
         href: "/office/checklist-templates",
         icon: ClipboardList,
       },
@@ -234,7 +234,7 @@ export function RootLayout() {
         items: [
           ...management.items,
           {
-            label: "Office Templates",
+            label: "Office Checklist",
             href: "/office/checklist-templates",
             icon: ClipboardList,
           },

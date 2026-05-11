@@ -17,6 +17,13 @@ export type OfficeRosterMember = {
   display_name: string | null;
   created_at: string;
   invite_email?: string | null;
+  /**
+   * Display name entered by the broker/admin at invite time (stored on
+   * `office_memberships.invite_name`). Used as the primary Name source for
+   * pending invites because user_profiles RLS hides display_name from the
+   * inviting broker until the invitee accepts.
+   */
+  invite_name?: string | null;
   /** `office_memberships.status` when loaded (e.g. `active`, `pending`). */
   status?: string | null;
 };
@@ -47,9 +54,18 @@ export function isVisibleCustomerRosterRole(role: string | null | undefined): bo
   return r === "broker" || r === "admin" || r === "agent";
 }
 
+/**
+ * Roster Name fallback (Team Management, back office). Prefers the name the
+ * broker/admin entered at invite time so pending invites no longer collapse to
+ * the email address. Order: invite_name → profile display_name → email →
+ * invite_email → "—". The Email column is rendered separately and is not
+ * affected by this helper.
+ */
 export function memberDisplayName(
-  m: Pick<OfficeRosterMember, "display_name" | "email" | "invite_email">,
+  m: Pick<OfficeRosterMember, "display_name" | "email" | "invite_email" | "invite_name">,
 ): string {
+  const invited = m.invite_name?.trim();
+  if (invited) return invited;
   const name = m.display_name?.trim();
   if (name) return name;
   const email = m.email?.trim();
@@ -130,6 +146,7 @@ type OfficeMembershipQueryRow = {
   status: string;
   created_at: string;
   invite_email: string | null;
+  invite_name: string | null;
   user_profiles: MembershipProfileJoin | MembershipProfileJoin[] | null;
 };
 
@@ -152,6 +169,7 @@ function mapOfficeMembershipToRosterMember(row: OfficeMembershipQueryRow): Offic
     display_name: p?.display_name ?? null,
     created_at: row.created_at,
     invite_email: row.invite_email ?? null,
+    invite_name: row.invite_name ?? null,
     status: row.status ?? null,
   };
 }
@@ -201,6 +219,7 @@ export async function listOfficeRoster(officeId: string): Promise<{
       status,
       created_at,
       invite_email,
+      invite_name,
       user_profiles (
         display_name,
         email
@@ -244,6 +263,7 @@ export async function listOfficePendingRoster(officeId: string): Promise<{
       status,
       created_at,
       invite_email,
+      invite_name,
       user_profiles (
         display_name,
         email
