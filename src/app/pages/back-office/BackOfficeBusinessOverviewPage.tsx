@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Briefcase, ChevronDown, ChevronUp, ChevronsUpDown } from "lucide-react";
+import { Briefcase, ChevronDown, ChevronUp, ChevronsUpDown, RefreshCw } from "lucide-react";
 import {
   listOfficesForBackOfficeV3,
   type BackOfficeListOfficeRow,
@@ -16,6 +16,7 @@ import {
   buildBackOfficeRevenueModel,
   type RevenueModelRowView,
 } from "../../../lib/backOfficeExpectedMonthlyIncome";
+import { syncBackOfficeStripeSnapshots } from "../../../services/backOfficeStripeSync";
 import { Button } from "../../components/ui/button";
 import {
   Dialog,
@@ -174,6 +175,11 @@ export function BackOfficeBusinessOverviewPage() {
   const [officesError, setOfficesError] = useState<string | null>(null);
   const [offices, setOffices] = useState<BackOfficeListOfficeRow[]>([]);
 
+  const [stripeSyncBusy, setStripeSyncBusy] = useState(false);
+  const [stripeSyncMessage, setStripeSyncMessage] = useState<string | null>(null);
+  /** Distinguishes a styling-positive notice (synced N) from a styling-negative one (errors). */
+  const [stripeSyncTone, setStripeSyncTone] = useState<"info" | "success" | "error">("info");
+
   const [settingsLoading, setSettingsLoading] = useState(true);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [expenseEstimateCents, setExpenseEstimateCents] = useState(0);
@@ -196,20 +202,72 @@ export function BackOfficeBusinessOverviewPage() {
     return out;
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
+  const reloadOffices = useCallback(async () => {
     setOfficesLoading(true);
     setOfficesError(null);
-    listOfficesForBackOfficeV3().then(({ offices: rows, error: err }) => {
+    const { offices: rows, error: err } = await listOfficesForBackOfficeV3();
+    setOffices(rows);
+    setOfficesError(err);
+    setOfficesLoading(false);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setOfficesLoading(true);
+      setOfficesError(null);
+      const { offices: rows, error: err } = await listOfficesForBackOfficeV3();
       if (cancelled) return;
       setOffices(rows);
       setOfficesError(err);
       setOfficesLoading(false);
-    });
+    })();
     return () => {
       cancelled = true;
     };
   }, []);
+
+  /**
+   * One-click backfill: POSTs `/api/billing/sync-subscription-snapshot` (btq_admin only) which
+   * iterates every office with a `stripe_subscription_id`, retrieves the live Stripe subscription
+   * with `items.data.price` expanded, and writes `billing_monthly_amount_cents` + `billing_currency`
+   * onto `offices`. Then refreshes the table so the new values land in the Revenue column.
+   *
+   * Webhooks normally keep this snapshot fresh going forward; this button is for recovery + the
+   * one-time backfill of offices whose subscription pre-dates the snapshot column.
+   */
+  const handleSyncFromStripe = useCallback(async () => {
+    if (stripeSyncBusy) return;
+    setStripeSyncBusy(true);
+    setStripeSyncMessage(null);
+    setStripeSyncTone("info");
+    const result = await syncBackOfficeStripeSnapshots();
+    if (!result.ok) {
+      setStripeSyncTone("error");
+      setStripeSyncMessage(result.error);
+      setStripeSyncBusy(false);
+      return;
+    }
+    const { failed } = result.data;
+    if (failed > 0) {
+      setStripeSyncTone("error");
+      setStripeSyncMessage(
+        `Some offices could not be refreshed (${failed} failed).`
+      );
+    } else {
+      setStripeSyncTone("success");
+      setStripeSyncMessage("Revenue updated.");
+    }
+    await reloadOffices();
+    setStripeSyncBusy(false);
+  }, [stripeSyncBusy, reloadOffices]);
+
+  /** Auto-hide the post-sync status line after a few seconds so the section stays clean. */
+  useEffect(() => {
+    if (!stripeSyncMessage) return;
+    const id = window.setTimeout(() => setStripeSyncMessage(null), 5000);
+    return () => window.clearTimeout(id);
+  }, [stripeSyncMessage]);
 
   useEffect(() => {
     let cancelled = false;
@@ -640,11 +698,44 @@ export function BackOfficeBusinessOverviewPage() {
         </div>
 
         <div className="mt-8">
-          <h2 className="text-lg font-semibold text-slate-900">Revenue</h2>
-          <p className="mt-1 text-sm text-slate-500">
-            Active-access offices only ({revenueModel.rows.length} row
-            {revenueModel.rows.length === 1 ? "" : "s"}).
-          </p>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Revenue</h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Active-access offices only ({revenueModel.rows.length} row
+                {revenueModel.rows.length === 1 ? "" : "s"}).
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void handleSyncFromStripe()}
+              disabled={stripeSyncBusy || officesLoading}
+              aria-busy={stripeSyncBusy}
+              className="shrink-0"
+            >
+              <RefreshCw
+                className={`mr-1.5 h-3.5 w-3.5 ${stripeSyncBusy ? "animate-spin" : ""}`}
+                aria-hidden
+              />
+              {stripeSyncBusy ? "Refreshing…" : "Refresh Revenue"}
+            </Button>
+          </div>
+          {stripeSyncMessage ? (
+            <p
+              className={`mt-2 text-xs ${
+                stripeSyncTone === "error"
+                  ? "text-red-700"
+                  : stripeSyncTone === "success"
+                    ? "text-emerald-700"
+                    : "text-slate-500"
+              }`}
+              role="status"
+            >
+              {stripeSyncMessage}
+            </p>
+          ) : null}
 
           {officesLoading && <p className="mt-4 text-sm text-slate-500">Loading offices…</p>}
           {!officesLoading && officesError && (
