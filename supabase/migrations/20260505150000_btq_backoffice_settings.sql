@@ -1,6 +1,12 @@
 -- Global BTQ Back Office settings (manual estimates). Single row id `default`; btq_admin only via RLS.
+--
+-- Idempotency: this migration uses IF NOT EXISTS / DROP-IF-EXISTS-then-CREATE / ON CONFLICT
+-- throughout so `supabase db push` can re-run it safely after a partial failure (the original
+-- bare `CREATE TABLE` raised "relation already exists" once the table was created but a later
+-- statement failed). Re-running now should leave the schema in the same final state as a
+-- successful first run.
 
-CREATE TABLE public.btq_backoffice_settings (
+CREATE TABLE IF NOT EXISTS public.btq_backoffice_settings (
   id text PRIMARY KEY DEFAULT 'default',
   monthly_expense_estimate_cents integer NOT NULL DEFAULT 0,
   updated_at timestamptz NOT NULL DEFAULT now(),

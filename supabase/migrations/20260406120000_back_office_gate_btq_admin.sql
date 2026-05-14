@@ -1,7 +1,15 @@
 -- Align Back Office SECURITY DEFINER gates with app `canAccessBtqBackOffice` (btq_admin).
 -- Legacy `admin` profile rows remain allowed for existing deployments.
+--
+-- DROP-then-CREATE: this migration adds two columns (`stripe_customer_id`,
+-- `stripe_subscription_id`) to the v1 function's RETURNS TABLE, which Postgres rejects on
+-- `CREATE OR REPLACE` (SQLSTATE 42P13 — "cannot change return type of existing function").
+-- Dropping first makes this migration idempotent across fresh DBs, DBs already running the
+-- 10-column v1 from 20250329110000, and DBs with any partial earlier shape from a failed run.
 
-CREATE OR REPLACE FUNCTION public.list_offices_for_back_office ()
+DROP FUNCTION IF EXISTS public.list_offices_for_back_office ();
+
+CREATE FUNCTION public.list_offices_for_back_office ()
 RETURNS TABLE (
   id uuid,
   name text,

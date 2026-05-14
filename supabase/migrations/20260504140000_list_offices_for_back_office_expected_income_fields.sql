@@ -1,7 +1,14 @@
 -- Extended Back Office list for revenue modeling UI.
 -- Does NOT alter list_offices_for_back_office() (Postgres forbids changing RETURNS TABLE on replace).
+--
+-- DROP-then-CREATE: although v2 is a brand-new function name on initial install, we use the same
+-- pattern as v1 / v3 so this migration is idempotent across replays — including the case where an
+-- earlier partial run left behind a v2 stub with a slightly different RETURNS TABLE shape, which
+-- would otherwise raise SQLSTATE 42P13 ("cannot change return type of existing function").
 
-CREATE OR REPLACE FUNCTION public.list_offices_for_back_office_v2 ()
+DROP FUNCTION IF EXISTS public.list_offices_for_back_office_v2 ();
+
+CREATE FUNCTION public.list_offices_for_back_office_v2 ()
 RETURNS TABLE (
   id uuid,
   name text,

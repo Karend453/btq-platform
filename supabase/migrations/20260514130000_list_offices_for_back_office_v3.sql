@@ -3,8 +3,17 @@
 --
 -- v2 is left intact (Postgres forbids changing RETURNS TABLE on REPLACE). Frontend will
 -- migrate to v3 in the same change; v1/v2 remain for any back-compat callers.
+--
+-- DROP-then-CREATE: Postgres rejects CREATE OR REPLACE on an existing function whose
+-- RETURNS TABLE shape differs (SQLSTATE 42P13 — "cannot change return type of existing
+-- function"). Dropping first makes this migration idempotent across:
+--   * fresh databases (no-op drop),
+--   * databases with a partial earlier v3 from a failed run, and
+--   * future edits to the column list (just bump the migration timestamp + re-push).
 
-CREATE OR REPLACE FUNCTION public.list_offices_for_back_office_v3 ()
+DROP FUNCTION IF EXISTS public.list_offices_for_back_office_v3 ();
+
+CREATE FUNCTION public.list_offices_for_back_office_v3 ()
 RETURNS TABLE (
   id uuid,
   name text,

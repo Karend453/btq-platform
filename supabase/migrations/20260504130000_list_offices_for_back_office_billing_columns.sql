@@ -1,6 +1,15 @@
 -- Back Office list RPC: add billing snapshot + active membership count for billing dashboard (visibility only).
+--
+-- DROP-then-CREATE: this migration grows the v1 function's RETURNS TABLE from 12 → 21 columns
+-- (adds billing_*, plan_tier, billing_plan_tier, display_plan_label, active_member_count).
+-- Postgres rejects `CREATE OR REPLACE` when the RETURNS TABLE shape changes (SQLSTATE 42P13 —
+-- "cannot change return type of existing function" / "Row type defined by OUT parameters is
+-- different"). Dropping first makes the migration idempotent for fresh DBs, DBs running the
+-- 12-column shape from 20260406120000, and DBs left in a partial state by a failed earlier run.
 
-CREATE OR REPLACE FUNCTION public.list_offices_for_back_office ()
+DROP FUNCTION IF EXISTS public.list_offices_for_back_office ();
+
+CREATE FUNCTION public.list_offices_for_back_office ()
 RETURNS TABLE (
   id uuid,
   name text,
