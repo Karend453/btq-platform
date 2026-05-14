@@ -32,7 +32,7 @@ type RevenueSortKey =
   | "plan"
   | "billingCycle"
   | "subAgents"
-  | "monthlyRevenue";
+  | "revenue";
 
 function isMissingCellText(s: string): boolean {
   return s.trim() === "" || s === "—";
@@ -79,10 +79,10 @@ function sortRevenueRows(
         return compareStringsMissingLast(ra.billingCycleLabel, rb.billingCycleLabel, dir);
       case "subAgents":
         return compareNullableNumbersMissingLast(ra.subAgentsSortValue, rb.subAgentsSortValue, dir);
-      case "monthlyRevenue":
+      case "revenue":
         return compareNullableNumbersMissingLast(
-          ra.monthlyEquivalentUsd,
-          rb.monthlyEquivalentUsd,
+          ra.monthlyRevenueUsd,
+          rb.monthlyRevenueUsd,
           dir
         );
       default:
@@ -288,12 +288,12 @@ export function BackOfficeBusinessOverviewPage() {
     [revenueModel.rows, revenueSortKey, revenueSortDir]
   );
 
-  /** Sum Monthly Revenue (USD) for rows with a finite value; matches body rows regardless of sort order. */
-  const revenueTableMonthlyTotal = useMemo(() => {
+  /** Sum Revenue (USD) for rows with a Stripe-derived amount; matches body rows regardless of sort order. */
+  const revenueTableTotal = useMemo(() => {
     let sumUsd = 0;
     let hasContributors = false;
     for (const row of revenueModel.rows) {
-      const v = row.monthlyEquivalentUsd;
+      const v = row.monthlyRevenueUsd;
       if (v != null && Number.isFinite(v)) {
         sumUsd += v;
         hasContributors = true;
@@ -302,16 +302,11 @@ export function BackOfficeBusinessOverviewPage() {
     return { sumUsd, hasContributors };
   }, [revenueModel.rows]);
 
-  /** Revenue table footer: modeled P/L = sum of Monthly Revenue column − monthly expense estimate (USD). */
-  const revenueModelPlUsd = useMemo((): number | null => {
+  /** Revenue table footer: P/L = sum of Revenue column − monthly expense estimate (USD). */
+  const revenuePlUsd = useMemo((): number | null => {
     if (settingsLoading || settingsError) return null;
-    return revenueTableMonthlyTotal.sumUsd - expenseEstimateCents / 100;
-  }, [
-    settingsLoading,
-    settingsError,
-    expenseEstimateCents,
-    revenueTableMonthlyTotal.sumUsd,
-  ]);
+    return revenueTableTotal.sumUsd - expenseEstimateCents / 100;
+  }, [settingsLoading, settingsError, expenseEstimateCents, revenueTableTotal.sumUsd]);
 
   function toggleRevenueSort(nextKey: RevenueSortKey) {
     if (nextKey === revenueSortKey) {
@@ -645,20 +640,11 @@ export function BackOfficeBusinessOverviewPage() {
         </div>
 
         <div className="mt-8">
-          <h2 className="text-lg font-semibold text-slate-900">Monthly revenue</h2>
+          <h2 className="text-lg font-semibold text-slate-900">Revenue</h2>
           <p className="mt-1 text-sm text-slate-500">
             Active-access offices only ({revenueModel.rows.length} row
-            {revenueModel.rows.length === 1 ? "" : "s"}). Stripe-derived amounts (same source as
-            Settings → My Wallet) are authoritative; offices with no Stripe subscription fall back
-            to a list-price model where possible.
+            {revenueModel.rows.length === 1 ? "" : "s"}).
           </p>
-          {revenueModel.notes.length > 0 ? (
-            <ul className="mt-2 list-disc space-y-0.5 pl-5 text-xs text-slate-500">
-              {revenueModel.notes.map((n) => (
-                <li key={n}>{n}</li>
-              ))}
-            </ul>
-          ) : null}
 
           {officesLoading && <p className="mt-4 text-sm text-slate-500">Loading offices…</p>}
           {!officesLoading && officesError && (
@@ -729,24 +715,20 @@ export function BackOfficeBusinessOverviewPage() {
                     <th
                       className="px-4 py-3 text-right"
                       aria-sort={
-                        revenueSortKey === "monthlyRevenue"
+                        revenueSortKey === "revenue"
                           ? revenueSortDir === "asc"
                             ? "ascending"
                             : "descending"
                           : "none"
                       }
-                      title="Stripe-derived recurring monthly amount when available; otherwise modeled from list price."
                     >
                       <button
                         type="button"
                         className="inline-flex w-full items-center justify-end gap-1 rounded-sm hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2"
-                        onClick={() => toggleRevenueSort("monthlyRevenue")}
+                        onClick={() => toggleRevenueSort("revenue")}
                       >
-                        Monthly Revenue
-                        <SortCaret
-                          active={revenueSortKey === "monthlyRevenue"}
-                          dir={revenueSortDir}
-                        />
+                        Revenue
+                        <SortCaret active={revenueSortKey === "revenue"} dir={revenueSortDir} />
                       </button>
                     </th>
                   </tr>
@@ -760,17 +742,7 @@ export function BackOfficeBusinessOverviewPage() {
                       <td className="px-4 py-3 text-center text-slate-700">{row.billingCycleLabel}</td>
                       <td className="px-4 py-3 text-center tabular-nums text-slate-900">{row.subAgentsLabel}</td>
                       <td className="px-4 py-3 text-right tabular-nums text-slate-900">
-                        <div className="flex flex-col items-end leading-tight">
-                          <span>{formatUsd0Whole(row.monthlyEquivalentUsd)}</span>
-                          {row.monthlyEquivalentSource === "catalog_model" ? (
-                            <span
-                              className="text-[10px] font-normal uppercase tracking-wide text-amber-700"
-                              title="No Stripe subscription data — value is modeled from list price."
-                            >
-                              modeled
-                            </span>
-                          ) : null}
-                        </div>
+                        {formatUsd0Whole(row.monthlyRevenueUsd)}
                       </td>
                     </tr>
                   ))}
@@ -783,30 +755,28 @@ export function BackOfficeBusinessOverviewPage() {
                     <td className="px-4 py-3" />
                     <td className="px-4 py-3" />
                     <td className="px-4 py-3 text-right font-bold tabular-nums text-slate-900">
-                      {revenueTableMonthlyTotal.hasContributors ? (
-                        formatUsd0Whole(revenueTableMonthlyTotal.sumUsd)
+                      {revenueTableTotal.hasContributors ? (
+                        formatUsd0Whole(revenueTableTotal.sumUsd)
                       ) : (
                         <span className="font-normal text-slate-400">—</span>
                       )}
                     </td>
                   </tr>
                   <tr className="border-t border-slate-100 bg-slate-50">
-                    <td className="px-4 py-3 font-semibold text-slate-900">Model P/L</td>
+                    <td className="px-4 py-3 font-semibold text-slate-900">P/L</td>
                     <td className="px-4 py-3" />
                     <td className="px-4 py-3" />
                     <td className="px-4 py-3" />
                     <td className="px-4 py-3" />
                     <td
                       className={`px-4 py-3 text-right font-bold tabular-nums ${
-                        revenueModelPlUsd != null && revenueModelPlUsd < 0
-                          ? "text-red-600"
-                          : "text-slate-900"
+                        revenuePlUsd != null && revenuePlUsd < 0 ? "text-red-600" : "text-slate-900"
                       }`}
                     >
-                      {revenueModelPlUsd == null ? (
+                      {revenuePlUsd == null ? (
                         <span className="font-normal text-slate-400">—</span>
                       ) : (
-                        formatUsd0Whole(revenueModelPlUsd)
+                        formatUsd0Whole(revenuePlUsd)
                       )}
                     </td>
                   </tr>
