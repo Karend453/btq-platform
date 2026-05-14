@@ -1,8 +1,12 @@
 import { type FormsProviderValue, isFormsProviderValue } from "../services/auth";
 
 const SKYSLOPE_FALLBACK_URL = "https://forms.skyslope.com/";
-/** Matches placeholder used in forms dialogs (zipForm / Zillow ecosystem). */
-const ZIPFORMS_FALLBACK_URL = "https://www.zipformplus.com/";
+/**
+ * Lone Wolf Transact (zipForm) default landing for an authenticated agent's
+ * transactions list. The `#transact` fragment is required by the SPA router;
+ * do NOT change it to `#zip`.
+ */
+const ZIPFORMS_FALLBACK_URL = "https://transact-workflow.lwolf.com/transactions#transact";
 const DOTLOOP_FALLBACK_URL = "https://www.dotloop.com/";
 
 export type FormsWorkspaceLaunchResolution =
@@ -74,3 +78,77 @@ export function resolveFormsWorkspaceLaunch(
 export const FORMS_WORKSPACE_TRANSACTION_LAUNCH_LABEL = "Open Forms";
 
 export const FORMS_WORKSPACE_ADD_LINK_LABEL = "Add Forms Workspace Link";
+
+/** Providers we can render a context label for. Excludes "other"/"none". */
+export type RecognizedFormsProvider = "skyslope" | "dotloop" | "zipforms";
+
+const RECOGNIZED_PROVIDER_LABELS: Record<RecognizedFormsProvider, string> = {
+  skyslope: "SkySlope",
+  dotloop: "Dotloop",
+  zipforms: "ZipForms",
+};
+
+export type FormsProviderDisplay = {
+  providerKey: RecognizedFormsProvider;
+  providerLabel: string;
+  /**
+   * `linked` means the pasted URL itself was recognized as belonging to this provider
+   * (e.g. forms.skyslope.com). `using` means we only know the user's preferred provider.
+   */
+  mode: "linked" | "using";
+};
+
+/**
+ * Future extension point: classify a pasted forms URL by hostname.
+ * Returns `null` today; intentionally structured so callers (e.g. the New Transaction
+ * wizard) can switch to "{Provider} transaction linked" copy once detection lands.
+ */
+export function detectFormsProviderFromUrl(
+  externalFormsUrl: string | null | undefined
+): RecognizedFormsProvider | null {
+  void externalFormsUrl;
+  return null;
+}
+
+/**
+ * Resolves the lightweight provider-context label shown near the "Open Forms" button.
+ * - Prefers URL-derived detection (mode `linked`) when available.
+ * - Falls back to the user's preferred provider (mode `using`).
+ * - Returns `null` for `other` / `none` / unset / unrecognized providers so the UI
+ *   can hide the hint entirely.
+ */
+export function resolveFormsProviderDisplay(
+  externalFormsUrl: string | null | undefined,
+  preferredProvider: FormsProviderValue | null | undefined
+): FormsProviderDisplay | null {
+  const detected = detectFormsProviderFromUrl(externalFormsUrl);
+  if (detected) {
+    return {
+      providerKey: detected,
+      providerLabel: RECOGNIZED_PROVIDER_LABELS[detected],
+      mode: "linked",
+    };
+  }
+
+  if (
+    preferredProvider &&
+    isFormsProviderValue(preferredProvider) &&
+    preferredProvider !== "other" &&
+    preferredProvider !== "none"
+  ) {
+    return {
+      providerKey: preferredProvider,
+      providerLabel: RECOGNIZED_PROVIDER_LABELS[preferredProvider],
+      mode: "using",
+    };
+  }
+
+  return null;
+}
+
+/** Human-readable text for the context hint, matching the design copy. */
+export function formatFormsProviderDisplay(display: FormsProviderDisplay): string {
+  return display.mode === "linked"
+    ? `${display.providerLabel} transaction linked`
+    : `Using ${display.providerLabel}`;
+}

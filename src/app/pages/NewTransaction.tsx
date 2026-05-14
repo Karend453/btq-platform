@@ -24,6 +24,8 @@ import { Label } from "../components/ui/label";
 import { type FormsProviderValue, getCurrentUserProfileSnapshot } from "../../services/auth";
 import {
   FORMS_WORKSPACE_TRANSACTION_LAUNCH_LABEL,
+  formatFormsProviderDisplay,
+  resolveFormsProviderDisplay,
   resolveFormsWorkspaceLaunch,
 } from "../../lib/formsWorkspaceLaunch";
 
@@ -199,6 +201,12 @@ export function NewTransaction() {
   const formsWorkspaceLaunchResolution = useMemo(
     () =>
       resolveFormsWorkspaceLaunch(transactionData.formsWorkspaceUrl, preferredFormsProvider ?? null),
+    [transactionData.formsWorkspaceUrl, preferredFormsProvider]
+  );
+
+  const formsProviderDisplay = useMemo(
+    () =>
+      resolveFormsProviderDisplay(transactionData.formsWorkspaceUrl, preferredFormsProvider ?? null),
     [transactionData.formsWorkspaceUrl, preferredFormsProvider]
   );
 
@@ -411,7 +419,7 @@ export function NewTransaction() {
               </div>
             )}
 
-            {/* Step 2: Identifier */}
+            {/* Step 2: Address / Identifier */}
             {currentStep === 2 && (
               <div className="space-y-4">
                 <div>
@@ -432,108 +440,118 @@ export function NewTransaction() {
                     This will be used as the transaction file name.
                   </p>
                 </div>
+
+                <div>
+                  <div className="grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                    <Label htmlFor="formsWorkspaceUrl" className="min-w-0">
+                      Linked Forms Transaction
+                    </Label>
+                    <div className="flex flex-col items-stretch gap-1 justify-self-end sm:items-end sm:justify-self-auto">
+                      {formsProviderDisplay ? (
+                        <span
+                          className="text-xs font-medium text-slate-500"
+                          data-provider={formsProviderDisplay.providerKey}
+                          data-provider-mode={formsProviderDisplay.mode}
+                        >
+                          {formatFormsProviderDisplay(formsProviderDisplay)}
+                        </span>
+                      ) : null}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 shrink-0 border-slate-200 px-2.5 text-xs font-medium gap-1.5 has-[>svg]:px-2 [&_svg]:size-3.5 [&_svg]:shrink-0"
+                        onClick={handleOpenFormsWorkspace}
+                        disabled={preferredFormsProvider === undefined}
+                        title={
+                          preferredFormsProvider === undefined
+                            ? "Loading forms preferences…"
+                            : formsWorkspaceLaunchResolution.type === "add_link"
+                              ? preferredFormsProvider == null
+                                ? "Choose your forms provider in Settings"
+                                : "Paste a workspace URL above or update your preferred provider in Settings"
+                              : formsWorkspaceLaunchResolution.type === "invalid_transaction_url"
+                                ? "Fix the URL above to open it in a new tab"
+                                : "Open forms in a new tab"
+                        }
+                      >
+                        <ExternalLink className="shrink-0" aria-hidden />
+                        {FORMS_WORKSPACE_TRANSACTION_LAUNCH_LABEL}
+                      </Button>
+                    </div>
+                  </div>
+                  <Input
+                    id="formsWorkspaceUrl"
+                    type="url"
+                    inputMode="url"
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder="https://your-forms-transaction-link..."
+                    value={transactionData.formsWorkspaceUrl}
+                    onChange={(e) =>
+                      setTransactionData({
+                        ...transactionData,
+                        formsWorkspaceUrl: e.target.value,
+                      })
+                    }
+                    className="mt-1.5"
+                    aria-invalid={formsWorkspaceUrlInvalid || undefined}
+                  />
+                  {formsWorkspaceUrlInvalid ? (
+                    <p className="text-sm text-red-600 mt-[7px]" role="alert">
+                      Enter a valid URL starting with http:// or https://
+                    </p>
+                  ) : (
+                    <p className="text-sm text-slate-500 mt-[7px]">
+                      Paste the matching forms transaction link.
+                    </p>
+                  )}
+                </div>
               </div>
             )}
 
             {/* Step 3: Client & Office */}
-{currentStep === 3 && (
-  <div className="space-y-4">
-    <div>
-      <Label htmlFor="clientName">Client Name</Label>
-      <Input
-        id="clientName"
-        placeholder="e.g., John Smith"
-        value={transactionData.clientName}
-        onChange={(e) =>
-          setTransactionData({
-            ...transactionData,
-            clientName: e.target.value,
-          })
-        }
-        className="mt-1.5"
-      />
-    </div>
+            {currentStep === 3 && (
+              <div className="space-y-4">
+                <div>
+                  <Label htmlFor="clientName">Client Name</Label>
+                  <Input
+                    id="clientName"
+                    placeholder="e.g., John Smith"
+                    value={transactionData.clientName}
+                    onChange={(e) =>
+                      setTransactionData({
+                        ...transactionData,
+                        clientName: e.target.value,
+                      })
+                    }
+                    className="mt-1.5"
+                  />
+                </div>
 
-    <div>
-      <Label htmlFor="officeId">Office</Label>
-      <select
-        id="officeId"
-        value={transactionData.officeId}
-        onChange={(e) =>
-          setTransactionData({
-            ...transactionData,
-            officeId: e.target.value,
-          })
-        }
-        className="mt-1.5 flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-      >
-        <option value="">Select an office</option>
-        {officeOptions.map((office) => (
-          <option key={office.id} value={office.id}>
-            {office.name}
-          </option>
-        ))}
-      </select>
-    </div>
-
-    <div>
-      <div className="grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-baseline">
-        <Label htmlFor="formsWorkspaceUrl" className="min-w-0">
-          Forms Workspace URL
-        </Label>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="h-7 shrink-0 border-slate-200 px-2.5 text-xs font-medium gap-1.5 has-[>svg]:px-2 justify-self-end sm:justify-self-auto [&_svg]:size-3.5 [&_svg]:shrink-0"
-          onClick={handleOpenFormsWorkspace}
-          disabled={preferredFormsProvider === undefined}
-          title={
-            preferredFormsProvider === undefined
-              ? "Loading forms preferences…"
-              : formsWorkspaceLaunchResolution.type === "add_link"
-                ? preferredFormsProvider == null
-                  ? "Choose your forms provider in Settings"
-                  : "Paste a workspace URL above or update your preferred provider in Settings"
-                : formsWorkspaceLaunchResolution.type === "invalid_transaction_url"
-                  ? "Fix the URL above to open it in a new tab"
-                  : "Open forms in a new tab"
-          }
-        >
-          <ExternalLink className="shrink-0" aria-hidden />
-          {FORMS_WORKSPACE_TRANSACTION_LAUNCH_LABEL}
-        </Button>
-      </div>
-      <Input
-        id="formsWorkspaceUrl"
-        type="url"
-        inputMode="url"
-        autoComplete="off"
-        spellCheck={false}
-        placeholder="https://forms.skyslope.com/..."
-        value={transactionData.formsWorkspaceUrl}
-        onChange={(e) =>
-          setTransactionData({
-            ...transactionData,
-            formsWorkspaceUrl: e.target.value,
-          })
-        }
-        className="mt-1.5"
-        aria-invalid={formsWorkspaceUrlInvalid || undefined}
-      />
-      {formsWorkspaceUrlInvalid ? (
-        <p className="text-sm text-red-600 mt-[7px]" role="alert">
-          Enter a valid URL starting with http:// or https://
-        </p>
-      ) : (
-        <p className="text-sm text-slate-500 mt-[7px]">
-          Paste forms workspace URL if you&apos;ve already started the file.
-        </p>
-      )}
-    </div>
-
-  </div>
-)}
+                <div>
+                  <Label htmlFor="officeId">Office</Label>
+                  <select
+                    id="officeId"
+                    value={transactionData.officeId}
+                    onChange={(e) =>
+                      setTransactionData({
+                        ...transactionData,
+                        officeId: e.target.value,
+                      })
+                    }
+                    className="mt-1.5 flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  >
+                    <option value="">Select an office</option>
+                    {officeOptions.map((office) => (
+                      <option key={office.id} value={office.id}>
+                        {office.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
             {/* Step 4: Review & Confirm */}
             {currentStep === 4 && (
               <div className="space-y-6">
@@ -588,7 +606,7 @@ export function NewTransaction() {
                   </div>
 
                   <div className="border-t border-slate-200 pt-4">
-                    <div className="text-sm text-slate-600 mb-1">Forms Workspace URL</div>
+                    <div className="text-sm text-slate-600 mb-1">Linked Forms Transaction</div>
                     <div className="font-medium text-slate-900 break-all">
                       {formsWorkspaceUrlTrimmed || "—"}
                     </div>
