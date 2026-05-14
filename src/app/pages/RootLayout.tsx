@@ -22,118 +22,132 @@ import {
   Briefcase,
   BookOpen,
 } from "lucide-react";
+import {
+  getTransactionsNavLabel,
+  usePartnerDemoMode,
+  usePartnerDemoUrlBootstrap,
+} from "../../lib/partnerDemoMode";
 
-/** Default (admin / agent): full management + insights. */
-const navSectionsDefault: NavSection[] = [
-  {
-    items: [
-      {
-        label: "Dashboard",
-        href: "/",
-        icon: LayoutDashboard,
-      },
-    ],
-  },
-  {
-    title: "Management",
-    items: [
-      {
-        label: "Agents",
-        href: "/settings?tab=subagents",
-        icon: Users,
-      },
-      {
-        label: "Transactions",
-        href: "/transactions",
-        icon: FileText,
-        badge: 8,
-      },
-      {
-        label: "Offices",
-        href: "/offices",
-        icon: Building2,
-      },
-    ],
-  },
-  {
-    title: "Insights",
-    items: [
-      {
-        label: "Analytics",
-        href: "/analytics",
-        icon: BarChart3,
-      },
-    ],
-  },
-  {
-    title: "System",
-    items: [
-      {
-        label: "Resource Center",
-        href: "/resources",
-        icon: BookOpen,
-      },
-      {
-        label: "Settings",
-        href: "/settings",
-        icon: Settings,
-      },
-    ],
-  },
-];
+/**
+ * Default (admin / agent) nav: full management + insights. The Transactions
+ * entry's label and badge are demo-mode aware — demo mode relabels it to
+ * "Operations" (per `getTransactionsNavLabel`) and drops the mock badge so
+ * the sidebar reads as ops/analytics-focused during partner demos.
+ */
+function buildDefaultNavSections(demoMode: boolean): NavSection[] {
+  return [
+    {
+      items: [
+        {
+          label: "Dashboard",
+          href: "/",
+          icon: LayoutDashboard,
+        },
+      ],
+    },
+    {
+      title: "Management",
+      items: [
+        {
+          label: "Agents",
+          href: "/settings?tab=subagents",
+          icon: Users,
+        },
+        {
+          label: getTransactionsNavLabel(demoMode),
+          href: "/transactions",
+          icon: FileText,
+          ...(demoMode ? {} : { badge: 8 }),
+        },
+        {
+          label: "Offices",
+          href: "/offices",
+          icon: Building2,
+        },
+      ],
+    },
+    {
+      title: "Insights",
+      items: [
+        {
+          label: "Analytics",
+          href: "/analytics",
+          icon: BarChart3,
+        },
+      ],
+    },
+    {
+      title: "System",
+      items: [
+        {
+          label: "Resource Center",
+          href: "/resources",
+          icon: BookOpen,
+        },
+        {
+          label: "Settings",
+          href: "/settings",
+          icon: Settings,
+        },
+      ],
+    },
+  ];
+}
 
 /** Broker: oversight-focused nav (no placeholder management pages; no mock transaction badge). */
-const navSectionsBroker: NavSection[] = [
-  {
-    items: [
-      {
-        label: "Dashboard",
-        href: "/",
-        icon: LayoutDashboard,
-      },
-    ],
-  },
-  {
-    title: "Oversight",
-    items: [
-      {
-        label: "Agents",
-        href: "/settings?tab=subagents",
-        icon: Users,
-      },
-      {
-        label: "Transactions",
-        href: "/transactions",
-        icon: FileText,
-      },
-      {
-        label: "Analytics",
-        href: "/analytics",
-        icon: BarChart3,
-      },
-      {
-        label: "Office Checklist",
-        href: "/office/checklist-templates",
-        icon: ClipboardList,
-      },
-    ],
-  },
-  {
-    title: "System",
-    items: [
-      {
-        label: "Resource Center",
-        href: "/resources",
-        icon: BookOpen,
-      },
-      {
-        label: "Settings",
-        href: "/settings",
-        icon: Settings,
-      },
-    ],
-  },
-];
+function buildBrokerNavSections(demoMode: boolean): NavSection[] {
+  return [
+    {
+      items: [
+        {
+          label: "Dashboard",
+          href: "/",
+          icon: LayoutDashboard,
+        },
+      ],
+    },
+    {
+      title: "Oversight",
+      items: [
+        {
+          label: "Agents",
+          href: "/settings?tab=subagents",
+          icon: Users,
+        },
+        {
+          label: getTransactionsNavLabel(demoMode),
+          href: "/transactions",
+          icon: FileText,
+        },
+        {
+          label: "Analytics",
+          href: "/analytics",
+          icon: BarChart3,
+        },
+        {
+          label: "Office Checklist",
+          href: "/office/checklist-templates",
+          icon: ClipboardList,
+        },
+      ],
+    },
+    {
+      title: "System",
+      items: [
+        {
+          label: "Resource Center",
+          href: "/resources",
+          icon: BookOpen,
+        },
+        {
+          label: "Settings",
+          href: "/settings",
+          icon: Settings,
+        },
+      ],
+    },
+  ];
+}
 
 /**
  * Post-login billing gate state for broker signups that confirmed email but never finished
@@ -147,6 +161,11 @@ type BillingGateState = "idle" | "loading" | "ok" | "unpaid";
 export function RootLayout() {
   const location = useLocation();
   const { user, loading } = useAuth();
+  // Pick up `?partner_demo=1|0` once per app load and strip it from the URL so
+  // partners-facing engineers can toggle demo mode by visiting a link without
+  // leaving the query param dangling.
+  usePartnerDemoUrlBootstrap();
+  const partnerDemoMode = usePartnerDemoMode();
   const [profileRoleKey, setProfileRoleKey] = useState<
     "admin" | "agent" | "broker" | "btq_admin" | null | undefined
   >(undefined);
@@ -221,8 +240,9 @@ export function RootLayout() {
   }, [user?.id, profileRoleKey]);
 
   const navSections = useMemo(() => {
-    if (profileRoleKey === "broker") return navSectionsBroker;
+    if (profileRoleKey === "broker") return buildBrokerNavSections(partnerDemoMode);
 
+    const navSectionsDefault = buildDefaultNavSections(partnerDemoMode);
     if (!canAccessBtqBackOffice(profileRoleKey ?? null)) return navSectionsDefault;
 
     const management = navSectionsDefault[1];
@@ -263,7 +283,7 @@ export function RootLayout() {
         ],
       },
     ];
-  }, [profileRoleKey]);
+  }, [profileRoleKey, partnerDemoMode]);
 
   const isBroker = profileRoleKey === "broker";
   const isBtqAdmin = profileRoleKey === "btq_admin";

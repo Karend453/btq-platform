@@ -204,8 +204,9 @@ export async function getOfficeForSettingsTabs(
 }
 
 /**
- * Back Office: row shape returned by `list_offices_for_back_office` (v1) and `list_offices_for_back_office_v2`.
- * V1 callers fill extended columns with null via {@link mapBackOfficeListRowFromV1Rpc}.
+ * Back Office: row shape returned by `list_offices_for_back_office` (v1),
+ * `list_offices_for_back_office_v2`, and `list_offices_for_back_office_v3`.
+ * Older RPC callers fill newer columns with null via the V1/V2 mappers.
  */
 export type BackOfficeListOfficeRow = {
   id: string;
@@ -229,12 +230,20 @@ export type BackOfficeListOfficeRow = {
   display_plan_label: string | null;
   /** Active `office_memberships` rows for this office. */
   active_member_count: number;
-  /** Present when loaded via {@link listOfficesForBackOfficeV2}; otherwise null (v1 RPC). */
+  /** Present when loaded via {@link listOfficesForBackOfficeV2} or v3; otherwise null. */
   signup_billing_cycle: string | null;
-  /** Present when loaded via {@link listOfficesForBackOfficeV2}; otherwise null (v1 RPC). */
+  /** Present when loaded via {@link listOfficesForBackOfficeV2} or v3; otherwise null. */
   billing_seat_quantity: number | null;
-  /** Present when loaded via {@link listOfficesForBackOfficeV2}; otherwise null (v1 RPC). */
+  /** Present when loaded via {@link listOfficesForBackOfficeV2} or v3; otherwise null. */
   app_access_status: string | null;
+  /**
+   * Stripe-derived recurring monthly amount in minor units of {@link billing_currency}.
+   * Authoritative for "monthly revenue" displays (Wallet, Billing, Business Overview).
+   * Present when loaded via {@link listOfficesForBackOfficeV3}; otherwise null.
+   */
+  billing_monthly_amount_cents: number | null;
+  /** ISO currency code for `billing_monthly_amount_cents` (e.g. "usd"). v3 only. */
+  billing_currency: string | null;
 };
 
 function coerceInt(v: unknown): number | null {
@@ -277,6 +286,8 @@ function mapBackOfficeListRowFromV1Rpc(raw: Record<string, unknown>): BackOffice
     signup_billing_cycle: null,
     billing_seat_quantity: null,
     app_access_status: null,
+    billing_monthly_amount_cents: null,
+    billing_currency: null,
   };
 }
 
@@ -286,6 +297,14 @@ function mapBackOfficeListRowFromV2Rpc(raw: Record<string, unknown>): BackOffice
     signup_billing_cycle: (raw.signup_billing_cycle as string | null) ?? null,
     billing_seat_quantity: coerceInt(raw.billing_seat_quantity),
     app_access_status: (raw.app_access_status as string | null) ?? null,
+  };
+}
+
+function mapBackOfficeListRowFromV3Rpc(raw: Record<string, unknown>): BackOfficeListOfficeRow {
+  return {
+    ...mapBackOfficeListRowFromV2Rpc(raw),
+    billing_monthly_amount_cents: coerceInt(raw.billing_monthly_amount_cents),
+    billing_currency: (raw.billing_currency as string | null) ?? null,
   };
 }
 
@@ -326,6 +345,26 @@ export async function listOfficesForBackOfficeV2(): Promise<{
 
   const rows = (data ?? []) as Record<string, unknown>[];
   return { offices: rows.map(mapBackOfficeListRowFromV2Rpc), error: null };
+}
+
+/**
+ * Back Office list via `list_offices_for_back_office_v3`: same columns as v2 plus the
+ * Stripe-derived `billing_monthly_amount_cents` + `billing_currency`. This is the read
+ * path Business Overview and Billing should use for ACTUAL monthly revenue.
+ */
+export async function listOfficesForBackOfficeV3(): Promise<{
+  offices: BackOfficeListOfficeRow[];
+  error: string | null;
+}> {
+  const { data, error } = await supabase.rpc("list_offices_for_back_office_v3");
+
+  if (error) {
+    console.warn("[listOfficesForBackOfficeV3]", error.message);
+    return { offices: [], error: error.message };
+  }
+
+  const rows = (data ?? []) as Record<string, unknown>[];
+  return { offices: rows.map(mapBackOfficeListRowFromV3Rpc), error: null };
 }
 
 export type CreateOfficeForBackOfficeInput = {

@@ -33,6 +33,7 @@ import { StatusBadge } from "../components/dashboard/StatusBadge";
 import { DashboardModal } from "../components/dashboard/DashboardModal";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
+import { usePartnerDemoMode } from "../../lib/partnerDemoMode";
 
 function formatUsdCompact(n: number): string {
   return new Intl.NumberFormat("en-US", {
@@ -87,6 +88,10 @@ export function Dashboard() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [welcomeFromCheckout, setWelcomeFromCheckout] = useState(false);
   const { user } = useAuth();
+  // Presentation-layer-only: when on, hides compliance counters, finalize CTAs,
+  // and the Compliance Overview widget. Data is still fetched; we just don't
+  // surface the transaction-management chrome during partner demos.
+  const partnerDemoMode = usePartnerDemoMode();
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
   const [complianceOverview, setComplianceOverview] = useState<ComplianceOverviewData | null>(null);
   const [complianceLoading, setComplianceLoading] = useState(true);
@@ -338,21 +343,26 @@ export function Dashboard() {
             <h1 className="text-3xl font-semibold text-slate-900">
               {!dashboardDataReady
                 ? "Dashboard"
-                : isBroker
-                  ? "Broker oversight"
-                  : "Dashboard Overview"}
+                : partnerDemoMode
+                  ? "Office Operations"
+                  : isBroker
+                    ? "Broker oversight"
+                    : "Dashboard Overview"}
             </h1>
             <p className="text-slate-600 mt-1">
             Welcome back, {displayName}! Here's what's happening today.
 </p>
           </div>
 
-          {/* Action required (scoped compliance — same payload as Compliance Overview) */}
-          <AlertBanner
-            type={actionRequiredBanner.type}
-            title={actionRequiredBanner.title}
-            message={actionRequiredBanner.message}
-          />
+          {/* Action required (scoped compliance — same payload as Compliance Overview).
+              Hidden in Partner Demo Mode so the dashboard reads as ops/orchestration. */}
+          {!partnerDemoMode && (
+            <AlertBanner
+              type={actionRequiredBanner.type}
+              title={actionRequiredBanner.title}
+              message={actionRequiredBanner.message}
+            />
+          )}
 
           {/* Platform SSO Tiles */}
           <div>
@@ -381,8 +391,14 @@ export function Dashboard() {
             </div>
           </div>
 
-          {/* Key Metrics — same scope as Compliance Overview (`fetchComplianceOverviewData` kpis) */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+          {/* Key Metrics — same scope as Compliance Overview (`fetchComplianceOverviewData` kpis).
+              In Partner Demo Mode the Compliance Queue tile is omitted; remaining tiles
+              re-flow into a 3-up grid so the row still looks intentional. */}
+          <div
+            className={`grid grid-cols-1 md:grid-cols-2 gap-3 ${
+              partnerDemoMode ? "lg:grid-cols-3" : "lg:grid-cols-4"
+            }`}
+          >
             <DataCard title="Active Transactions" value={activeTxValue} icon={FileText} />
             <DataCard
               title="Active Agents"
@@ -390,12 +406,14 @@ export function Dashboard() {
               icon={Users}
               subtitle={agentsOfficesSubtitle}
             />
-            <DataCard
-              title="Compliance Queue"
-              value={complianceQueueValue}
-              icon={Clock}
-              subtitle="Required checklist documents submitted and awaiting compliance review"
-            />
+            {!partnerDemoMode && (
+              <DataCard
+                title="Compliance Queue"
+                value={complianceQueueValue}
+                icon={Clock}
+                subtitle="Required checklist documents submitted and awaiting compliance review"
+              />
+            )}
             <DataCard
               title="Total Volume"
               value={volumeValue}
@@ -404,44 +422,56 @@ export function Dashboard() {
             />
           </div>
 
-          {/* Compliance Overview */}
+          {/* Pipeline / Compliance Overview. In Partner Demo Mode the table itself stays —
+              we want the dashboard to read as an active operational platform — but the title,
+              subtitle, and the rejected/pending-review legend get neutralized so compliance
+              workflow mechanics aren't surfaced. Column-level hiding (Status / Documents /
+              Actions / Finalize) lives in `TransactionTable` and also keys off the same flag. */}
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
-                  <CardTitle>Compliance Overview</CardTitle>
+                  <CardTitle>
+                    {partnerDemoMode ? "Active Pipeline" : "Compliance Overview"}
+                  </CardTitle>
                   <p className="text-sm text-slate-600 mt-1">
-                    Transactions requiring document attention
+                    {partnerDemoMode
+                      ? "Current transactions across your portfolio"
+                      : "Transactions requiring document attention"}
                   </p>
                 </div>
-                <div className="flex flex-wrap items-center gap-4 text-sm">
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-red-600" />
-                    <span className="text-slate-600">
-                      Rejected (
-                      {complianceLoading ? "…" : complianceOverview?.legend.rejected ?? 0})
-                    </span>
+                {!partnerDemoMode && (
+                  <div className="flex flex-wrap items-center gap-4 text-sm">
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-red-600" />
+                      <span className="text-slate-600">
+                        Rejected (
+                        {complianceLoading ? "…" : complianceOverview?.legend.rejected ?? 0})
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-amber-500" />
+                      <span className="text-slate-600">
+                        Pending Review (
+                        {complianceLoading ? "…" : complianceOverview?.legend.pendingReview ?? 0})
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-slate-400" />
+                      <span className="text-slate-600">
+                        No status (
+                        {complianceLoading ? "…" : complianceOverview?.legend.noAction ?? 0})
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-amber-500" />
-                    <span className="text-slate-600">
-                      Pending Review (
-                      {complianceLoading ? "…" : complianceOverview?.legend.pendingReview ?? 0})
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-slate-400" />
-                    <span className="text-slate-600">
-                      No status (
-                      {complianceLoading ? "…" : complianceOverview?.legend.noAction ?? 0})
-                    </span>
-                  </div>
-                </div>
+                )}
               </div>
             </CardHeader>
             <CardContent>
               {complianceLoading ? (
-                <p className="text-sm text-slate-600 py-6">Loading compliance data…</p>
+                <p className="text-sm text-slate-600 py-6">
+                  {partnerDemoMode ? "Loading pipeline…" : "Loading compliance data…"}
+                </p>
               ) : (
                 <TransactionTable
                   transactions={complianceOverview?.tableRows ?? []}
@@ -455,9 +485,16 @@ export function Dashboard() {
             </CardContent>
           </Card>
 
-          {/* Agent Activity: only when user_profiles.role is broker (getUserProfileRoleKey); hidden for admin/agent */}
+          {/* Agent Activity: only when user_profiles.role is broker (getUserProfileRoleKey); hidden for admin/agent.
+              The companion "Needs Attention" card surfaces rejected / pending-review compliance counters and is
+              suppressed in Partner Demo Mode. The whole grid is skipped when demo mode hides both children. */}
+          {!(partnerDemoMode && !(dashboardDataReady && isBroker)) && (
           <div
-            className={`grid gap-6 ${dashboardDataReady && isBroker ? "grid-cols-1 lg:grid-cols-2" : "grid-cols-1"}`}
+            className={`grid gap-6 ${
+              dashboardDataReady && isBroker && !partnerDemoMode
+                ? "grid-cols-1 lg:grid-cols-2"
+                : "grid-cols-1"
+            }`}
           >
             {dashboardDataReady && isBroker && (
               <Card>
@@ -469,6 +506,7 @@ export function Dashboard() {
               </Card>
             )}
 
+            {!partnerDemoMode && (
             <Card>
               <CardHeader>
                 <CardTitle>Needs Attention</CardTitle>
@@ -529,7 +567,9 @@ export function Dashboard() {
                 )}
               </CardContent>
             </Card>
+            )}
           </div>
+          )}
         </div>
       </main>
 
@@ -562,30 +602,34 @@ export function Dashboard() {
                   {selectedTransaction.closingDate}
                 </div>
               </div>
-              <div>
-                <div className="text-sm text-slate-600">Status</div>
-                <div className="mt-1">
-                  {selectedTransaction.statusLabel ? (
-                    <StatusBadge
-                      status={selectedTransaction.status}
-                      label={selectedTransaction.statusLabel}
-                    />
-                  ) : (
-                    <span className="text-slate-500">—</span>
-                  )}
+              {!partnerDemoMode && (
+                <div>
+                  <div className="text-sm text-slate-600">Status</div>
+                  <div className="mt-1">
+                    {selectedTransaction.statusLabel ? (
+                      <StatusBadge
+                        status={selectedTransaction.status}
+                        label={selectedTransaction.statusLabel}
+                      />
+                    ) : (
+                      <span className="text-slate-500">—</span>
+                    )}
+                  </div>
                 </div>
-              </div>
-              <div>
-                <div className="text-sm text-slate-600">Documents</div>
-                <div className="font-medium mt-1">
-                  {selectedTransaction.missingDocs
-                    ? `${selectedTransaction.missingDocs} missing`
-                    : `${selectedTransaction.documents ?? 0} accepted (required)`}
+              )}
+              {!partnerDemoMode && (
+                <div>
+                  <div className="text-sm text-slate-600">Documents</div>
+                  <div className="font-medium mt-1">
+                    {selectedTransaction.missingDocs
+                      ? `${selectedTransaction.missingDocs} missing`
+                      : `${selectedTransaction.documents ?? 0} accepted (required)`}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
 
-            {selectedTransaction.statusLabel === "Rejected" && (
+            {!partnerDemoMode && selectedTransaction.statusLabel === "Rejected" && (
               <AlertBanner
                 type="error"
                 title="Rejected documents"
@@ -593,7 +637,7 @@ export function Dashboard() {
               />
             )}
 
-            {selectedTransaction.statusLabel === "Pending Review" && (
+            {!partnerDemoMode && selectedTransaction.statusLabel === "Pending Review" && (
               <AlertBanner
                 type="warning"
                 title="Pending review"

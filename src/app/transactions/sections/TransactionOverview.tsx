@@ -17,6 +17,7 @@ import type {
   TransactionExportSnapshot,
 } from "../../../services/clientPortfolio";
 import TransactionExportPackageHeaderAction from "./TransactionExportPackageHeaderAction";
+import { usePartnerDemoMode } from "../../../lib/partnerDemoMode";
 
 function formatPortfolioClosingDate(value: string | null | undefined): string {
   if (!value) return "—";
@@ -91,6 +92,10 @@ export default function TransactionOverviewSection({
   intakeEmail,
   onCopyIntakeEmail,
 }: TransactionOverviewSectionProps) {
+  // Partner Demo Mode hides the Finalize Closing CTA from the overview header
+  // because "finalize" is transaction-management-specific workflow language.
+  // The button is still wired and reappears the moment the flag is off.
+  const partnerDemoMode = usePartnerDemoMode();
   const trimmedIntakeEmail = (intakeEmail ?? "").trim();
   const hasIntakeEmail = trimmedIntakeEmail !== "";
   const portfolioStage = portfolioSnapshot?.portfolio_stage;
@@ -269,7 +274,7 @@ export default function TransactionOverviewSection({
             latestExport={latestExport}
             exportBusy={finalizeInProgress}
           />
-          {onFinalizeClosingClick ? (() => {
+          {onFinalizeClosingClick && !partnerDemoMode ? (() => {
             const finalizeButtonDisabled = !!finalizeClosingDisabled || isFinalized;
             // Three-state hover helper, mirroring the Export Package tooltip pattern. Disabled
             // buttons don't fire pointer events, so wrap them in a span when disabled.

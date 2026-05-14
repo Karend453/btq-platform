@@ -56,6 +56,7 @@ import {
 } from "../../../lib/documents/adapter";
 import { uiTransactionRoleToEngineRole } from "../../../services/auth";
 import type { DocumentStatus } from "../../../lib/documents/types";
+import { usePartnerDemoMode } from "../../../lib/partnerDemoMode";
 
 /** `btq:ui:checklist-collapse:{transactionId}:{sectionId}` — sectionId is template section id or `__other__` / `__archived__`. */
 const CHECKLIST_COLLAPSE_STORAGE_PREFIX = "btq:ui:checklist-collapse";
@@ -297,6 +298,10 @@ export default function Checklist({
   onRestoreChecklistItem,
   formsLinkShortcut,
 }: ChecklistProps) {
+  // Demo-mode hides the per-item "Complete / Pending Review / Rejected / Not
+  // Submitted / Waived" review-status badges in the checklist. The Required /
+  // Optional requirement badge stays; only review state is suppressed.
+  const partnerDemoMode = usePartnerDemoMode();
   const [renameTarget, setRenameTarget] = useState<ChecklistItem | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [renameSaving, setRenameSaving] = useState(false);
@@ -644,7 +649,7 @@ export default function Checklist({
         </div>
         <div className="flex shrink-0 flex-nowrap items-center gap-1.5">
           {getRequirementBadge(item.requirement)}
-          {getChecklistRowReviewBadge(item, docState.status)}
+          {!partnerDemoMode && getChecklistRowReviewBadge(item, docState.status)}
           {item.suggestedDocument && !isArchivedRow && !isReadOnly && (
             <Button
               type="button"
@@ -914,7 +919,7 @@ export default function Checklist({
             {formsLinkShortcut ? (
               <div className="inline-flex items-center">{formsLinkShortcut}</div>
             ) : null}
-            {hasChecklist && (
+            {hasChecklist && !partnerDemoMode && (
               <div className="text-sm text-slate-600">
                 {completedCount} of {totalCount} complete
               </div>
@@ -955,7 +960,7 @@ export default function Checklist({
             )}
           </div>
         </div>
-        {hasChecklist && (
+        {hasChecklist && !partnerDemoMode && (
           <div className="mt-3 w-full bg-slate-200 rounded-full h-2">
             <div
               className="bg-emerald-600 h-2 rounded-full transition-all"

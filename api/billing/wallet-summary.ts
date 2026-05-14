@@ -6,32 +6,10 @@ import { getPlanPriceId, getSeatPriceId } from "../../src/lib/stripePrices.js";
 import { getSupabaseServiceRole } from "../../src/lib/supabaseServer.js";
 import { getUserIdFromAuthHeader } from "./billingAuth.js";
 import { resolveWalletReadOfficeId } from "./billingOfficeContext.js";
-
-/** Stripe minor-unit amounts use 100 per major unit except zero-decimal currencies. */
-const ZERO_DECIMAL_CURRENCIES = new Set([
-  "bif",
-  "clp",
-  "djf",
-  "gnf",
-  "jpy",
-  "kmf",
-  "krw",
-  "mga",
-  "pyg",
-  "rwf",
-  "ugx",
-  "vnd",
-  "vuv",
-  "xaf",
-  "xof",
-  "xpf",
-]);
-
-function minorUnitsToMajorAmount(minor: number, currency: string): number {
-  const c = currency.trim().toLowerCase();
-  if (ZERO_DECIMAL_CURRENCIES.has(c)) return minor;
-  return minor / 100;
-}
+import {
+  minorUnitsToMajorAmount,
+  sumSubscriptionLineItemsMinor,
+} from "./stripeSubscriptionAmount.js";
 
 function priceIdFromItem(item: Stripe.SubscriptionItem): string | null {
   const p = item.price;
@@ -70,19 +48,6 @@ function planLabelFromPriceId(priceId: string | null): string | null {
     return null;
   }
   return null;
-}
-
-function sumSubscriptionLineItemsMinor(sub: Stripe.Subscription): number {
-  let total = 0;
-  for (const item of sub.items.data) {
-    const price = item.price;
-    if (price == null || typeof price === "string") continue;
-    const ua = price.unit_amount;
-    if (ua == null) continue;
-    const qty = item.quantity ?? 1;
-    total += ua * qty;
-  }
-  return total;
 }
 
 function seatQuantityFromSubscription(

@@ -37,6 +37,7 @@ import type {
   ExportPackageListState,
   WorkItem,
 } from "../../types/workItem";
+import { usePartnerDemoMode } from "../../lib/partnerDemoMode";
 
 type StatusFilter = "all" | StatusType;
 type SortBy = "closingDate" | "agentName" | "address";
@@ -124,6 +125,9 @@ export default function TransactionsPage() {
   const { terms } = useTerminology();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  // Demo-mode suppresses the compliance-flavoured summary badges (needs
+  // attention / pending review / rejected) and per-row Finalize CTAs.
+  const partnerDemoMode = usePartnerDemoMode();
 
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<WorkItem[]>([]);
@@ -252,7 +256,11 @@ export default function TransactionsPage() {
       >
         <div>
           <h2 style={{ fontSize: 22, fontWeight: 700 }}>
-            {terms ? terms.record_label_plural : "Transactions"}
+            {partnerDemoMode
+              ? "Operations"
+              : terms
+                ? terms.record_label_plural
+                : "Transactions"}
           </h2>
           <div
             style={{
@@ -264,7 +272,7 @@ export default function TransactionsPage() {
           >
             <Badge variant="secondary">{filteredRows.length} showing</Badge>
 
-            {complianceFilter != null && (
+            {!partnerDemoMode && complianceFilter != null && (
               <Badge
                 variant="outline"
                 style={{ cursor: "pointer" }}
@@ -283,20 +291,26 @@ export default function TransactionsPage() {
               </Badge>
             )}
 
-            <Badge variant="secondary">
-              <AlertCircle style={{ width: 14, height: 14, marginRight: 6 }} />
-              {summary.needsAttention} need attention
-            </Badge>
+            {!partnerDemoMode && (
+              <Badge variant="secondary">
+                <AlertCircle style={{ width: 14, height: 14, marginRight: 6 }} />
+                {summary.needsAttention} need attention
+              </Badge>
+            )}
 
-            <Badge variant="secondary">
-              <FileX style={{ width: 14, height: 14, marginRight: 6 }} />
-              {summary.totalPendingReview} pending review
-            </Badge>
+            {!partnerDemoMode && (
+              <Badge variant="secondary">
+                <FileX style={{ width: 14, height: 14, marginRight: 6 }} />
+                {summary.totalPendingReview} pending review
+              </Badge>
+            )}
 
-            <Badge variant="secondary">
-              <FileX style={{ width: 14, height: 14, marginRight: 6 }} />
-              {summary.totalRejected} rejected
-            </Badge>
+            {!partnerDemoMode && (
+              <Badge variant="secondary">
+                <FileX style={{ width: 14, height: 14, marginRight: 6 }} />
+                {summary.totalRejected} rejected
+              </Badge>
+            )}
           </div>
         </div>
 
@@ -491,7 +505,7 @@ export default function TransactionsPage() {
                             </TooltipContent>
                           </Tooltip>
                         </TooltipProvider>
-                      ) : canOfferFinalizeClosing(t) ? (
+                      ) : !partnerDemoMode && canOfferFinalizeClosing(t) ? (
                         <button
                           type="button"
                           className="text-sm text-slate-500 hover:text-slate-800 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2 rounded-sm px-1.5 py-1 -mr-0.5"

@@ -7,6 +7,12 @@ import {
   type PlanKey,
 } from "./pricingPlans";
 
+/**
+ * Source the `monthlyEquivalentUsd` value resolved from for a row. Stripe is authoritative;
+ * the catalog source is only used as a modeled fallback for offices without a Stripe-derived amount.
+ */
+export type MonthlyRevenueSource = "stripe" | "catalog_model" | "none";
+
 export type RevenueModelRowView = {
   officeId: string;
   officeLabel: string;
@@ -19,6 +25,13 @@ export type RevenueModelRowView = {
   billingCycleLabel: string;
   expectedPeriodAmountUsd: number | null;
   monthlyEquivalentUsd: number | null;
+  /** Where {@link monthlyEquivalentUsd} came from. UI may show a small marker for "catalog_model". */
+  monthlyEquivalentSource: MonthlyRevenueSource;
+  /**
+   * Catalog-derived monthly value for audit/comparison even when Stripe drives the display.
+   * Null when no plan/cadence is resolvable (e.g. custom plans). Not summed into table totals.
+   */
+  catalogModeledMonthlyUsd: number | null;
 };
 
 type ParsedCadence = "monthly" | "annual" | "quarterly";
@@ -118,10 +131,21 @@ function periodFromCadence(
   }
 }
 
+/** USD assumption: convert minor units (cents) → major dollars. Currency mixing is out of scope. */
+function centsToUsdMajor(cents: number): number {
+  return cents / 100;
+}
+
 /**
- * Catalog-based expected subscription revenue for active-access offices (see {@link isActiveAccessOffice}).
- * Uses {@link PLAN_DETAILS} base prices + {@link LIST_PRICE_SEAT_PER_USER_MONTH_USD} on **sub-agent**
- * seats only (`billing_seat_quantity` is treated as broker-inclusive).
+ * Builds the Back Office revenue table. **Stripe is the source of truth** for the
+ * displayed monthly amount whenever an office has `billing_monthly_amount_cents` from a
+ * Stripe subscription (webhook-maintained). The catalog model (`PLAN_DETAILS` +
+ * `LIST_PRICE_SEAT_PER_USER_MONTH_USD`) is only used:
+ *   - as a `monthlyEquivalentUsd` *fallback* for legacy/non-Stripe offices, and
+ *   - as a separate `catalogModeledMonthlyUsd` for admin audit/comparison (never summed).
+ *
+ * Custom plans (those with `display_plan_label`) now display their real Stripe-derived
+ * amount when a subscription exists. They only render `—` when there is no Stripe linkage.
  */
 export function buildBackOfficeRevenueModel(offices: BackOfficeListOfficeRow[]): {
   rows: RevenueModelRowView[];
@@ -131,6 +155,8 @@ export function buildBackOfficeRevenueModel(offices: BackOfficeListOfficeRow[]):
 } {
   const notes: string[] = [];
   let defaultedCadence = false;
+  let anyCatalogFallbackUsed = false;
+  let anyStripeUsed = false;
 
   const activeRows = offices.filter(isActiveAccessOffice);
 
@@ -143,10 +169,6 @@ export function buildBackOfficeRevenueModel(offices: BackOfficeListOfficeRow[]):
     };
   }
 
-  notes.push(
-    "Expected amounts use published list prices plus the add-on seat rate on SubAgents only (Stripe seat total includes the broker/base seat; one seat is excluded from add-on pricing). Annual and quarterly columns assume catalog-linear billing. If billing_seat_quantity is missing, revenue math assumes one broker seat only (0 SubAgents).",
-  );
-
   const views: RevenueModelRowView[] = [];
   let totalMonthlyEquivalentUsd = 0;
   let missingPricingActiveCount = 0;
@@ -154,7 +176,6 @@ export function buildBackOfficeRevenueModel(offices: BackOfficeListOfficeRow[]):
   for (const o of activeRows) {
     const tierSource = o.billing_plan_tier?.trim() || o.plan_tier?.trim() || "";
     const planKey = resolvePlanKeyFromOfficeFields(tierSource);
-    const customPlan = Boolean(o.display_plan_label?.trim());
 
     const rawCycle = (o.signup_billing_cycle ?? "").trim();
     let cadenceParsed = parseSignupCadence(o.signup_billing_cycle);
@@ -168,21 +189,69 @@ export function buildBackOfficeRevenueModel(offices: BackOfficeListOfficeRow[]):
 
     const hasStripeSub = Boolean(o.stripe_subscription_id?.trim());
 
-    let expectedPeriodAmountUsd: number | null = null;
-    let monthlyEquivalentUsd: number | null = null;
+    /**
+     * Catalog-modeled monthly amount (audit value). Computed independently of display:
+     * always present for resolvable plan+cadence combinations, regardless of plan-label.
+     */
+    let catalogModeledMonthlyUsd: number | null = null;
+    if (planKey != null && cadenceParsed != null) {
+      const subagents = subagentSeatCountForPricing(o.billing_seat_quantity);
+      const monthlyRecurring = monthlyCatalogRecurringUsd(planKey, subagents);
+      const { monthlyEq } = periodFromCadence(cadenceParsed, monthlyRecurring);
+      catalogModeledMonthlyUsd = monthlyEq;
+    }
 
-    const canPrice =
-      !customPlan && planKey != null && cadenceParsed != null && hasStripeSub;
+    /**
+     * Stripe-derived monthly amount in USD (authoritative). Requires the office to have:
+     *   - an attached Stripe subscription (linkage check),
+     *   - a webhook-populated `billing_monthly_amount_cents`,
+     *   - currency consistent with USD aggregation (we only sum USD into the table total).
+     */
+    const stripeUsdMonthly: number | null = (() => {
+      if (!hasStripeSub) return null;
+      const cents = o.billing_monthly_amount_cents;
+      if (cents == null || !Number.isFinite(cents)) return null;
+      const currency = (o.billing_currency ?? "usd").trim().toLowerCase();
+      if (currency !== "usd") return null;
+      return centsToUsdMajor(cents);
+    })();
 
     const { label: subAgentsLabel, sortValue: subAgentsSortValue } = subAgentsColumnDisplay(o);
 
-    if (canPrice) {
-      const subagents = subagentSeatCountForPricing(o.billing_seat_quantity);
-      const monthlyRecurring = monthlyCatalogRecurringUsd(planKey, subagents);
-      const { period, monthlyEq } = periodFromCadence(cadenceParsed, monthlyRecurring);
-      expectedPeriodAmountUsd = period;
+    let monthlyEquivalentUsd: number | null = null;
+    let monthlyEquivalentSource: MonthlyRevenueSource = "none";
+    let expectedPeriodAmountUsd: number | null = null;
+
+    if (stripeUsdMonthly != null) {
+      monthlyEquivalentUsd = stripeUsdMonthly;
+      monthlyEquivalentSource = "stripe";
+      /**
+       * Period column reflects cadence-billed amount: monthly → monthly, annual → ×12, etc.
+       * We compute it from the Stripe-actual monthly so it stays consistent with display.
+       */
+      if (cadenceParsed != null) {
+        expectedPeriodAmountUsd = periodFromCadence(cadenceParsed, stripeUsdMonthly).period;
+      } else {
+        expectedPeriodAmountUsd = stripeUsdMonthly;
+      }
+      totalMonthlyEquivalentUsd += stripeUsdMonthly;
+      anyStripeUsed = true;
+    } else if (
+      catalogModeledMonthlyUsd != null &&
+      cadenceParsed != null &&
+      !o.display_plan_label?.trim()
+    ) {
+      /**
+       * Modeled fallback: only used when Stripe is unavailable AND the office is on a
+       * named plan (not a `display_plan_label` custom arrangement). We refuse to invent
+       * a number for custom-plan offices that have no Stripe linkage.
+       */
+      const { period, monthlyEq } = periodFromCadence(cadenceParsed, catalogModeledMonthlyUsd);
       monthlyEquivalentUsd = monthlyEq;
+      monthlyEquivalentSource = "catalog_model";
+      expectedPeriodAmountUsd = period;
       totalMonthlyEquivalentUsd += monthlyEq;
+      anyCatalogFallbackUsed = true;
     } else {
       missingPricingActiveCount += 1;
     }
@@ -197,7 +266,25 @@ export function buildBackOfficeRevenueModel(offices: BackOfficeListOfficeRow[]):
       billingCycleLabel: cadenceLabel,
       expectedPeriodAmountUsd,
       monthlyEquivalentUsd,
+      monthlyEquivalentSource,
+      catalogModeledMonthlyUsd,
     });
+  }
+
+  if (anyStripeUsed) {
+    notes.push(
+      "Monthly Revenue uses Stripe-derived recurring totals (sum of subscription line items) " +
+        "as the source of truth — same value Settings → My Wallet displays for each office.",
+    );
+  }
+
+  if (anyCatalogFallbackUsed) {
+    notes.push(
+      "Offices without Stripe-derived amounts fall back to a catalog model (published plan price " +
+        "+ $" +
+        LIST_PRICE_SEAT_PER_USER_MONTH_USD +
+        "/SubAgent/mo). These rows are an estimate, not an actual bill.",
+    );
   }
 
   if (defaultedCadence) {
@@ -208,7 +295,8 @@ export function buildBackOfficeRevenueModel(offices: BackOfficeListOfficeRow[]):
 
   if (missingPricingActiveCount > 0) {
     notes.push(
-      "Some offices missing pricing data — rows show — and are excluded from the income total (custom plans, unknown tiers/cadence, or no Stripe subscription).",
+      "Some offices have no Stripe subscription and no resolvable catalog plan — those rows " +
+        "show — and are excluded from the total.",
     );
   }
 

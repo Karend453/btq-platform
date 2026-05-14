@@ -3,6 +3,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import type Stripe from "stripe";
 import { getStripeServer } from "../../src/lib/stripeServer.js";
 import { getSupabaseServiceRole } from "../../src/lib/supabaseServer.js";
+import { subscriptionMonthlyAmountSnapshot } from "./stripeSubscriptionAmount.js";
 
 /** Stripe v21 typings omit fields still present on subscription/invoice objects from the API. */
 type StripeSubscriptionWithLegacyPeriod = Stripe.Subscription & { current_period_end?: number };
@@ -197,13 +198,17 @@ async function handleCheckoutSessionCompleted(
   }
 
 
-  const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+  const subscription = await stripe.subscriptions.retrieve(subscriptionId, {
+    expand: ["items.data.price"],
+  });
   const planTier =
     session.metadata?.plan_tier?.trim() ||
     session.metadata?.broker_plan_key?.trim() ||
     subscription.metadata?.plan_tier?.trim() ||
     subscription.metadata?.broker_plan_key?.trim() ||
     "";
+
+  const monthlySnapshot = subscriptionMonthlyAmountSnapshot(subscription);
 
   const billingEmail =
     session.customer_email?.trim() ||
@@ -231,6 +236,8 @@ async function handleCheckoutSessionCompleted(
       billing_current_period_end: periodEnd,
       billing_cancel_at_period_end: subscription.cancel_at_period_end ?? false,
       billing_email: billingEmail,
+      billing_monthly_amount_cents: monthlySnapshot.amountMinor,
+      billing_currency: monthlySnapshot.currency,
       billing_updated_at: nowIso,
       app_access_status: appAccessFromSubscriptionStatus(subscription.status),
     })
@@ -276,18 +283,19 @@ async function handleCheckoutSessionCompleted(
 }
 
 async function handleSubscriptionEvent(
+  stripe: Stripe,
   supabase: ReturnType<typeof getSupabaseServiceRole>,
-  subscription: Stripe.Subscription,
+  eventSubscription: Stripe.Subscription,
   eventType: string
 ): Promise<string | null> {
   const customerId = idFromExpandable(
-    subscription.customer as string | { id: string } | null
+    eventSubscription.customer as string | { id: string } | null
   );
-  const subscriptionId = subscription.id;
+  const subscriptionId = eventSubscription.id;
 
   const { officeId, matchedBy } = await resolveOfficeId(
     supabase,
-    subscription.metadata?.office_id,
+    eventSubscription.metadata?.office_id,
     subscriptionId,
     customerId
   );
@@ -308,6 +316,15 @@ async function handleSubscriptionEvent(
     subscriptionId,
     eventType,
   });
+
+  /**
+   * Webhook payloads sometimes include items[].price as just an id string. Re-retrieve with
+   * `items.data.price` expanded so `subscriptionMonthlyAmountSnapshot` can sum unit_amounts.
+   */
+  const subscription = await stripe.subscriptions.retrieve(subscriptionId, {
+    expand: ["items.data.price"],
+  });
+  const monthlySnapshot = subscriptionMonthlyAmountSnapshot(subscription);
 
   const nowIso = new Date().toISOString();
   const subPeriod = subscription as StripeSubscriptionWithLegacyPeriod;
@@ -330,6 +347,8 @@ async function handleSubscriptionEvent(
     billing_seat_quantity: extractSeatQuantity(subscription),
     billing_current_period_end: periodEnd,
     billing_cancel_at_period_end: subscription.cancel_at_period_end ?? false,
+    billing_monthly_amount_cents: monthlySnapshot.amountMinor,
+    billing_currency: monthlySnapshot.currency,
     billing_updated_at: nowIso,
     app_access_status: appAccessFromSubscriptionStatus(subscription.status),
   };
@@ -387,7 +406,9 @@ async function handleInvoicePaymentFailed(
 
   let sub: Stripe.Subscription | null = null;
   if (subscriptionId) {
-    sub = await stripe.subscriptions.retrieve(subscriptionId);
+    sub = await stripe.subscriptions.retrieve(subscriptionId, {
+      expand: ["items.data.price"],
+    });
   }
 
   const nowIso = new Date().toISOString();
@@ -427,6 +448,11 @@ async function handleInvoicePaymentFailed(
     );
     patch.stripe_subscription_id = sub.id;
     patch.app_access_status = appAccessFromSubscriptionStatus(sub.status);
+
+    const monthlySnapshot = subscriptionMonthlyAmountSnapshot(sub);
+    patch.billing_monthly_amount_cents = monthlySnapshot.amountMinor;
+    /** Subscription currency wins over invoice currency when both exist; they should match. */
+    patch.billing_currency = monthlySnapshot.currency;
   } else {
     patch.app_access_status = "active_grace";
   }
@@ -482,7 +508,9 @@ async function handleInvoicePaymentSucceeded(
 
   let sub: Stripe.Subscription | null = null;
   if (subscriptionId) {
-    sub = await stripe.subscriptions.retrieve(subscriptionId);
+    sub = await stripe.subscriptions.retrieve(subscriptionId, {
+      expand: ["items.data.price"],
+    });
   }
 
   const nowIso = new Date().toISOString();
@@ -500,6 +528,10 @@ async function handleInvoicePaymentSucceeded(
   if (sub) {
     patch.stripe_subscription_status = sub.status;
     patch.app_access_status = appAccessFromSubscriptionStatus(sub.status);
+
+    const monthlySnapshot = subscriptionMonthlyAmountSnapshot(sub);
+    patch.billing_monthly_amount_cents = monthlySnapshot.amountMinor;
+    patch.billing_currency = monthlySnapshot.currency;
   }
 
   const { error } = await supabase.from("offices").update(patch).eq("id", officeId);
@@ -613,6 +645,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       case "customer.subscription.deleted": {
         const subscription = event.data.object as Stripe.Subscription;
         resolvedOfficeId = await handleSubscriptionEvent(
+          stripe,
           supabase,
           subscription,
           event.type

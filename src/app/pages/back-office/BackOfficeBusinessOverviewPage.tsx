@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Briefcase, ChevronDown, ChevronUp, ChevronsUpDown } from "lucide-react";
 import {
-  listOfficesForBackOfficeV2,
+  listOfficesForBackOfficeV3,
   type BackOfficeListOfficeRow,
 } from "../../../services/offices";
 import {
@@ -32,7 +32,7 @@ type RevenueSortKey =
   | "plan"
   | "billingCycle"
   | "subAgents"
-  | "expected";
+  | "monthlyRevenue";
 
 function isMissingCellText(s: string): boolean {
   return s.trim() === "" || s === "—";
@@ -79,7 +79,7 @@ function sortRevenueRows(
         return compareStringsMissingLast(ra.billingCycleLabel, rb.billingCycleLabel, dir);
       case "subAgents":
         return compareNullableNumbersMissingLast(ra.subAgentsSortValue, rb.subAgentsSortValue, dir);
-      case "expected":
+      case "monthlyRevenue":
         return compareNullableNumbersMissingLast(
           ra.monthlyEquivalentUsd,
           rb.monthlyEquivalentUsd,
@@ -200,7 +200,7 @@ export function BackOfficeBusinessOverviewPage() {
     let cancelled = false;
     setOfficesLoading(true);
     setOfficesError(null);
-    listOfficesForBackOfficeV2().then(({ offices: rows, error: err }) => {
+    listOfficesForBackOfficeV3().then(({ offices: rows, error: err }) => {
       if (cancelled) return;
       setOffices(rows);
       setOfficesError(err);
@@ -288,8 +288,8 @@ export function BackOfficeBusinessOverviewPage() {
     [revenueModel.rows, revenueSortKey, revenueSortDir]
   );
 
-  /** Sum Expected Amount (monthly equivalent USD) for rows with a finite value; matches body rows regardless of sort order. */
-  const revenueTableExpectedAmountTotal = useMemo(() => {
+  /** Sum Monthly Revenue (USD) for rows with a finite value; matches body rows regardless of sort order. */
+  const revenueTableMonthlyTotal = useMemo(() => {
     let sumUsd = 0;
     let hasContributors = false;
     for (const row of revenueModel.rows) {
@@ -302,15 +302,15 @@ export function BackOfficeBusinessOverviewPage() {
     return { sumUsd, hasContributors };
   }, [revenueModel.rows]);
 
-  /** Revenue table footer: modeled P/L = sum of Expected Amount column − monthly expense estimate (USD). */
+  /** Revenue table footer: modeled P/L = sum of Monthly Revenue column − monthly expense estimate (USD). */
   const revenueModelPlUsd = useMemo((): number | null => {
     if (settingsLoading || settingsError) return null;
-    return revenueTableExpectedAmountTotal.sumUsd - expenseEstimateCents / 100;
+    return revenueTableMonthlyTotal.sumUsd - expenseEstimateCents / 100;
   }, [
     settingsLoading,
     settingsError,
     expenseEstimateCents,
-    revenueTableExpectedAmountTotal.sumUsd,
+    revenueTableMonthlyTotal.sumUsd,
   ]);
 
   function toggleRevenueSort(nextKey: RevenueSortKey) {
@@ -645,13 +645,20 @@ export function BackOfficeBusinessOverviewPage() {
         </div>
 
         <div className="mt-8">
-          <h2 className="text-lg font-semibold text-slate-900">Revenue model</h2>
+          <h2 className="text-lg font-semibold text-slate-900">Monthly revenue</h2>
           <p className="mt-1 text-sm text-slate-500">
             Active-access offices only ({revenueModel.rows.length} row
-            {revenueModel.rows.length === 1 ? "" : "s"}).
+            {revenueModel.rows.length === 1 ? "" : "s"}). Stripe-derived amounts (same source as
+            Settings → My Wallet) are authoritative; offices with no Stripe subscription fall back
+            to a list-price model where possible.
           </p>
-          <p className="mt-1 text-xs text-slate-500">
-          </p>
+          {revenueModel.notes.length > 0 ? (
+            <ul className="mt-2 list-disc space-y-0.5 pl-5 text-xs text-slate-500">
+              {revenueModel.notes.map((n) => (
+                <li key={n}>{n}</li>
+              ))}
+            </ul>
+          ) : null}
 
           {officesLoading && <p className="mt-4 text-sm text-slate-500">Loading offices…</p>}
           {!officesLoading && officesError && (
@@ -719,14 +726,27 @@ export function BackOfficeBusinessOverviewPage() {
                         <SortCaret active={revenueSortKey === "subAgents"} dir={revenueSortDir} />
                       </button>
                     </th>
-                    <th className="px-4 py-3 text-right" aria-sort={revenueSortKey === "expected" ? (revenueSortDir === "asc" ? "ascending" : "descending") : "none"}>
+                    <th
+                      className="px-4 py-3 text-right"
+                      aria-sort={
+                        revenueSortKey === "monthlyRevenue"
+                          ? revenueSortDir === "asc"
+                            ? "ascending"
+                            : "descending"
+                          : "none"
+                      }
+                      title="Stripe-derived recurring monthly amount when available; otherwise modeled from list price."
+                    >
                       <button
                         type="button"
                         className="inline-flex w-full items-center justify-end gap-1 rounded-sm hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2"
-                        onClick={() => toggleRevenueSort("expected")}
+                        onClick={() => toggleRevenueSort("monthlyRevenue")}
                       >
-                        Expected Amount
-                        <SortCaret active={revenueSortKey === "expected"} dir={revenueSortDir} />
+                        Monthly Revenue
+                        <SortCaret
+                          active={revenueSortKey === "monthlyRevenue"}
+                          dir={revenueSortDir}
+                        />
                       </button>
                     </th>
                   </tr>
@@ -740,7 +760,17 @@ export function BackOfficeBusinessOverviewPage() {
                       <td className="px-4 py-3 text-center text-slate-700">{row.billingCycleLabel}</td>
                       <td className="px-4 py-3 text-center tabular-nums text-slate-900">{row.subAgentsLabel}</td>
                       <td className="px-4 py-3 text-right tabular-nums text-slate-900">
-                        {formatUsd0Whole(row.monthlyEquivalentUsd)}
+                        <div className="flex flex-col items-end leading-tight">
+                          <span>{formatUsd0Whole(row.monthlyEquivalentUsd)}</span>
+                          {row.monthlyEquivalentSource === "catalog_model" ? (
+                            <span
+                              className="text-[10px] font-normal uppercase tracking-wide text-amber-700"
+                              title="No Stripe subscription data — value is modeled from list price."
+                            >
+                              modeled
+                            </span>
+                          ) : null}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -753,8 +783,8 @@ export function BackOfficeBusinessOverviewPage() {
                     <td className="px-4 py-3" />
                     <td className="px-4 py-3" />
                     <td className="px-4 py-3 text-right font-bold tabular-nums text-slate-900">
-                      {revenueTableExpectedAmountTotal.hasContributors ? (
-                        formatUsd0Whole(revenueTableExpectedAmountTotal.sumUsd)
+                      {revenueTableMonthlyTotal.hasContributors ? (
+                        formatUsd0Whole(revenueTableMonthlyTotal.sumUsd)
                       ) : (
                         <span className="font-normal text-slate-400">—</span>
                       )}

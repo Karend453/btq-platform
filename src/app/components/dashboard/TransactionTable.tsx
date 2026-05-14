@@ -17,6 +17,7 @@ import {
   TooltipTrigger,
 } from "../ui/tooltip";
 import type { ExportPackageListState } from "../../../types/workItem";
+import { usePartnerDemoMode } from "../../../lib/partnerDemoMode";
 
 export interface Transaction {
   id: string;
@@ -100,6 +101,10 @@ export function TransactionTable({
 }: TransactionTableProps) {
   const [sortField, setSortField] = useState<SortField>("closingDate");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  // Demo-mode hides workflow surface area: the Documents Complete column and
+  // Finalize CTA both go away. Hover/sort behaviour on remaining columns is
+  // unchanged.
+  const partnerDemoMode = usePartnerDemoMode();
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -158,7 +163,7 @@ export function TransactionTable({
               </Button>
             </TableHead>
             <TableHead>Type</TableHead>
-            <TableHead>Status</TableHead>
+            {!partnerDemoMode && <TableHead>Status</TableHead>}
             <TableHead>
               <Button
                 variant="ghost"
@@ -181,8 +186,8 @@ export function TransactionTable({
                 <ArrowUpDown className="ml-2 h-3 w-3" />
               </Button>
             </TableHead>
-            <TableHead>Documents</TableHead>
-            <TableHead className="text-right">Actions</TableHead>
+            {!partnerDemoMode && <TableHead>Documents</TableHead>}
+            {!partnerDemoMode && <TableHead className="text-right">Actions</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -200,20 +205,23 @@ export function TransactionTable({
               <TableCell className="text-slate-600">
                 {transaction.type}
               </TableCell>
-              <TableCell>
-                {transaction.statusLabel ? (
-                  <StatusBadge
-                    status={transaction.status}
-                    label={transaction.statusLabel}
-                  />
-                ) : (
-                  <span className="text-slate-400">—</span>
-                )}
-              </TableCell>
+              {!partnerDemoMode && (
+                <TableCell>
+                  {transaction.statusLabel ? (
+                    <StatusBadge
+                      status={transaction.status}
+                      label={transaction.statusLabel}
+                    />
+                  ) : (
+                    <span className="text-slate-400">—</span>
+                  )}
+                </TableCell>
+              )}
               <TableCell>{transaction.amount}</TableCell>
               <TableCell className="text-slate-600">
                 {transaction.closingDate}
               </TableCell>
+              {!partnerDemoMode && (
               <TableCell>
                 {transaction.missingDocs ? (
                   <span className="text-red-600 font-medium">
@@ -225,6 +233,8 @@ export function TransactionTable({
                   </span>
                 )}
               </TableCell>
+              )}
+              {!partnerDemoMode && (
               <TableCell className="text-right">
                 {transaction.closingFinalized ? (
                   <TooltipProvider delayDuration={200}>
@@ -263,6 +273,7 @@ export function TransactionTable({
                   </button>
                 ) : null}
               </TableCell>
+              )}
             </TableRow>
           ))}
         </TableBody>
