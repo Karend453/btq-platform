@@ -853,9 +853,8 @@ export function TeamManagementTab() {
             <div className="min-w-0 space-y-1">
               <CardTitle className="text-lg">Team Management</CardTitle>
               <CardDescription className="text-slate-700 text-base leading-relaxed">
-                All team members listed are included in billing. Invite status does not affect seat
-                count. Office retained commission is calculated automatically as 100% minus the
-                agent split.
+                Invite status does not affect seat
+                count.
               </CardDescription>
             </div>
           </div>

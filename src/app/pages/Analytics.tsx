@@ -591,7 +591,6 @@ export function Analytics() {
           <div>
             <h2 className="text-lg font-semibold text-slate-900">Portfolio Records</h2>
             <p className="mt-1 text-sm text-slate-500">
-              Closed production is highlighted; pipeline rows stay quieter.
             </p>
           </div>
           <label className="relative block w-full sm:w-72">
