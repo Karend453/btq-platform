@@ -26,6 +26,12 @@ export type OfficeRosterMember = {
   invite_name?: string | null;
   /** `office_memberships.status` when loaded (e.g. `active`, `pending`). */
   status?: string | null;
+  /**
+   * v1 commission split: agent's share of adjusted gross commission (0–100).
+   * Broker/admin controlled; agents see but cannot edit. Null falls back to
+   * 40% in calculations (see DEFAULT_AGENT_SPLIT_PERCENT).
+   */
+  agent_split_percent?: number | null;
 };
 
 export type OfficeRosterSummary = {
@@ -147,6 +153,8 @@ type OfficeMembershipQueryRow = {
   created_at: string;
   invite_email: string | null;
   invite_name: string | null;
+  /** Optional so the migration-fallback query (no split column) stays type-safe. */
+  agent_split_percent?: number | string | null;
   user_profiles: MembershipProfileJoin | MembershipProfileJoin[] | null;
 };
 
@@ -161,6 +169,11 @@ function unwrapJoinedProfile(
 function mapOfficeMembershipToRosterMember(row: OfficeMembershipQueryRow): OfficeRosterMember {
   const p = unwrapJoinedProfile(row.user_profiles);
   const userId = row.user_id?.trim();
+  const splitRaw = row.agent_split_percent;
+  const splitNum =
+    splitRaw == null || splitRaw === ""
+      ? null
+      : Number(splitRaw);
   return {
     id: userId ? userId : row.id,
     office_id: row.office_id,
@@ -171,6 +184,8 @@ function mapOfficeMembershipToRosterMember(row: OfficeMembershipQueryRow): Offic
     invite_email: row.invite_email ?? null,
     invite_name: row.invite_name ?? null,
     status: row.status ?? null,
+    agent_split_percent:
+      splitNum != null && Number.isFinite(splitNum) ? splitNum : null,
   };
 }
 
@@ -198,6 +213,53 @@ export function sortOfficeRosterMembers(members: OfficeRosterMember[]): OfficeRo
 }
 
 /**
+ * Postgres "undefined_column" (42703). Detected so the roster keeps loading in
+ * environments where the v1 commission split migration hasn't been applied yet
+ * — `agent_split_percent` is then treated as null and the column is omitted on
+ * a single retry. Apply `20260515110000_office_memberships_agent_split.sql` to
+ * the active Supabase environment to remove the fallback path entirely.
+ */
+function isUndefinedColumnError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const code = (error as { code?: unknown }).code;
+  if (typeof code === "string" && code === "42703") return true;
+  const message = (error as { message?: unknown }).message;
+  if (typeof message !== "string") return false;
+  return message.includes("agent_split_percent") && message.includes("does not exist");
+}
+
+const ROSTER_SELECT_WITH_SPLIT = `
+  id,
+  office_id,
+  user_id,
+  role,
+  status,
+  created_at,
+  invite_email,
+  invite_name,
+  agent_split_percent,
+  user_profiles (
+    display_name,
+    email
+  )
+`;
+
+const ROSTER_SELECT_WITHOUT_SPLIT = `
+  id,
+  office_id,
+  user_id,
+  role,
+  status,
+  created_at,
+  invite_email,
+  invite_name,
+  user_profiles (
+    display_name,
+    email
+  )
+`;
+
+/**
  * Office roster from `office_memberships` (active only), joined to `user_profiles` for identity fields.
  * Same office scope as {@link getCurrentOffice} when listing the broker’s office.
  */
@@ -207,28 +269,28 @@ export async function listOfficeRoster(officeId: string): Promise<{
 }> {
   const id = officeId.trim();
   if (!id) return { members: [], error: null };
+  if (!supabase) return { members: [], error: "Supabase client unavailable" };
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from("office_memberships")
-    .select(
-      `
-      id,
-      office_id,
-      user_id,
-      role,
-      status,
-      created_at,
-      invite_email,
-      invite_name,
-      user_profiles (
-        display_name,
-        email
-      )
-    `,
-    )
+    .select(ROSTER_SELECT_WITH_SPLIT)
     .eq("office_id", id)
     .eq("status", "active")
     .order("created_at", { ascending: true });
+
+  if (error && isUndefinedColumnError(error)) {
+    console.warn(
+      "[listOfficeRoster] agent_split_percent column missing — falling back. Apply migration 20260515110000_office_memberships_agent_split.sql.",
+    );
+    const retry = await supabase
+      .from("office_memberships")
+      .select(ROSTER_SELECT_WITHOUT_SPLIT)
+      .eq("office_id", id)
+      .eq("status", "active")
+      .order("created_at", { ascending: true });
+    data = retry.data;
+    error = retry.error;
+  }
 
   if (error) {
     return { members: [], error: error.message };
@@ -251,29 +313,30 @@ export async function listOfficePendingRoster(officeId: string): Promise<{
 }> {
   const id = officeId.trim();
   if (!id) return { members: [], error: null };
+  if (!supabase) return { members: [], error: "Supabase client unavailable" };
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from("office_memberships")
-    .select(
-      `
-      id,
-      office_id,
-      user_id,
-      role,
-      status,
-      created_at,
-      invite_email,
-      invite_name,
-      user_profiles (
-        display_name,
-        email
-      )
-    `,
-    )
+    .select(ROSTER_SELECT_WITH_SPLIT)
     .eq("office_id", id)
     .eq("status", "pending")
     .in("role", ["admin", "agent"])
     .order("created_at", { ascending: true });
+
+  if (error && isUndefinedColumnError(error)) {
+    console.warn(
+      "[listOfficePendingRoster] agent_split_percent column missing — falling back. Apply migration 20260515110000_office_memberships_agent_split.sql.",
+    );
+    const retry = await supabase
+      .from("office_memberships")
+      .select(ROSTER_SELECT_WITHOUT_SPLIT)
+      .eq("office_id", id)
+      .eq("status", "pending")
+      .in("role", ["admin", "agent"])
+      .order("created_at", { ascending: true });
+    data = retry.data;
+    error = retry.error;
+  }
 
   if (error) {
     return { members: [], error: error.message };
@@ -363,6 +426,39 @@ export async function getOfficeRosterForCurrentBroker(): Promise<OfficeRosterMem
 
 /** Roles a broker can assign when adding someone to the office (`broker_add_office_member`). */
 export type TeamAddableOfficeRole = "admin" | "agent";
+
+/**
+ * v1 commission split: persist an admin/agent membership's `agent_split_percent`
+ * via `broker_set_office_member_agent_split` (SECURITY DEFINER, broker/admin or
+ * btq_admin only). Validates 0–100 client-side so we surface a friendly error
+ * before the round trip; the server applies the same check.
+ *
+ * TODO: when transaction-level overrides land, surface them on a per-deal
+ * editor — this helper only sets the office-wide membership default.
+ */
+export async function setOfficeMemberAgentSplit(params: {
+  officeId: string;
+  userId: string;
+  agentSplitPercent: number;
+}): Promise<{ error: string | null }> {
+  if (!supabase) return { error: "Supabase client unavailable" };
+  const officeId = params.officeId.trim();
+  const userId = params.userId.trim();
+  if (!officeId || !userId) return { error: "Office and member are required." };
+
+  const pct = Number(params.agentSplitPercent);
+  if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
+    return { error: "Agent split must be a number between 0 and 100." };
+  }
+
+  const { error } = await supabase.rpc("broker_set_office_member_agent_split", {
+    p_office_id: officeId,
+    p_user_id: userId,
+    p_agent_split_percent: pct,
+  });
+  if (error) return { error: error.message };
+  return { error: null };
+}
 
 async function billingApiHeaders(): Promise<
   { ok: true; headers: Record<string, string> } | { ok: false; error: string }

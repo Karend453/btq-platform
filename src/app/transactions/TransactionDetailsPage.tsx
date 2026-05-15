@@ -117,7 +117,7 @@ function formatCurrency(value?: number | string | null) {
   }).format(numericValue);
 }
 
-/** Closing as a workflow status requires persisted financial fields (closing date, sale price, GCI). */
+/** Closing as a workflow status requires persisted financial fields (closing date, sale price, gross commission). */
 function isClosingFinancialsCompleteForClosed(
   txn: TransactionRow | null,
   closingDateForm: string | null
@@ -1337,7 +1337,7 @@ export default function TransactionDetailsPage() {
     const gciNum = Number(String(completeGci).replace(/[^0-9.-]/g, ""));
     const date = completeClosingDate.trim();
     if (!date || Number.isNaN(price) || Number.isNaN(gciNum)) {
-      toast.error("Enter valid closing date, sale price, and GCI.");
+      toast.error("Enter valid closing date, sale price, and gross commission.");
       return;
     }
     setCompleteClosingSubmitting(true);
@@ -1595,7 +1595,7 @@ export default function TransactionDetailsPage() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="complete-gci" className="text-sm font-medium text-slate-600">
-                  GCI <span className="text-red-600">*</span>
+                  Gross Commission <span className="text-red-600">*</span>
                 </Label>
                 <Input
                   id="complete-gci"

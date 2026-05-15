@@ -155,6 +155,96 @@ export function getActiveCommissionSide(row: TransactionRow): "list" | "buyer" {
   return "list";
 }
 
+/**
+ * v1 commission split fallback used everywhere the membership row is missing or
+ * has `agent_split_percent IS NULL`. Keep in sync with the SQL default on
+ * `office_memberships.agent_split_percent` and `resolve_agent_split_for_transaction`.
+ *
+ * TODO: transaction-level overrides (luxury caps, graduated splits, special
+ * exceptions) should layer in before this fallback applies — this constant is
+ * the bottom of the resolution chain, not a per-deal value.
+ */
+export const DEFAULT_AGENT_SPLIT_PERCENT = 40;
+
+/** Coerce a value to a finite number or null (`"" → null`, `null → null`, `"abc" → null`). */
+function toFiniteNumberOrNull(value: number | string | null | undefined): number | null {
+  if (value == null) return null;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  const t = value.trim();
+  if (t === "") return null;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Bounded agent-split resolver: null/blank/out-of-range → {@link DEFAULT_AGENT_SPLIT_PERCENT}. */
+export function resolveAgentSplitPercent(
+  raw: number | string | null | undefined,
+): number {
+  const n = toFiniteNumberOrNull(raw);
+  if (n == null || n < 0 || n > 100) return DEFAULT_AGENT_SPLIT_PERCENT;
+  return n;
+}
+
+export type CommissionBreakdown = {
+  grossCommission: number;
+  /** Referral fee deducted before split math; null/blank input treated as 0. */
+  referralFee: number;
+  adjustedGrossCommission: number;
+  agentNetCommission: number;
+  officeNetCommission: number;
+  agentSplitPercent: number;
+  officeRetainedPercent: number;
+};
+
+/**
+ * v1 commission math. Single source of truth for UI and analytics fallbacks:
+ *   grossCommission              = salePrice * commissionPercent / 100
+ *   adjustedGrossCommission      = grossCommission - referralFee   (clamped at 0)
+ *   agentNetCommission           = adjustedGrossCommission * agentSplitPercent / 100
+ *   officeNetCommission          = adjustedGrossCommission - agentNetCommission
+ *   officeRetainedPercent        = 100 - agentSplitPercent
+ *
+ * All inputs are tolerant: null / blank / non-numeric → 0 for amounts, fallback
+ * split for the percent. Negative results are floored at 0 so referral fees
+ * larger than the gross don't produce nonsense agent/office numbers in the UI.
+ */
+export function computeCommissionBreakdown(input: {
+  salePrice?: number | string | null;
+  commissionPercent?: number | string | null;
+  /** Pre-computed gross (e.g. portfolio snapshot). Used when sale price * pct cannot be derived. */
+  grossCommission?: number | string | null;
+  referralFee?: number | string | null;
+  agentSplitPercent?: number | string | null;
+}): CommissionBreakdown {
+  const salePrice = toFiniteNumberOrNull(input.salePrice);
+  const commissionPercent = toFiniteNumberOrNull(input.commissionPercent);
+  const explicitGross = toFiniteNumberOrNull(input.grossCommission);
+
+  let grossCommission = 0;
+  if (salePrice != null && commissionPercent != null) {
+    grossCommission = Math.max((salePrice * commissionPercent) / 100, 0);
+  } else if (explicitGross != null) {
+    grossCommission = Math.max(explicitGross, 0);
+  }
+
+  const referralFee = Math.max(toFiniteNumberOrNull(input.referralFee) ?? 0, 0);
+  const adjustedGrossCommission = Math.max(grossCommission - referralFee, 0);
+  const agentSplitPercent = resolveAgentSplitPercent(input.agentSplitPercent);
+  const officeRetainedPercent = 100 - agentSplitPercent;
+  const agentNetCommission = (adjustedGrossCommission * agentSplitPercent) / 100;
+  const officeNetCommission = adjustedGrossCommission - agentNetCommission;
+
+  return {
+    grossCommission,
+    referralFee,
+    adjustedGrossCommission,
+    agentNetCommission,
+    officeNetCommission,
+    agentSplitPercent,
+    officeRetainedPercent,
+  };
+}
+
 /** One commission % string for summary cards (active side only; empty → "—"). */
 export function formatUnifiedCommissionPercentDisplay(row: TransactionRow): string {
   const side = getActiveCommissionSide(row);
@@ -395,6 +485,40 @@ function toWorkItem(
     isArchived: row.isarchived ?? false,
     archivedBy: null,
   };
+}
+
+/**
+ * v1 commission split lookup: returns the active membership's
+ * `agent_split_percent` for the transaction's agent, or
+ * {@link DEFAULT_AGENT_SPLIT_PERCENT} when unset / out of range. Reads through
+ * RLS (agents can read their own membership row; broker/admin can read all
+ * same-office rows), so no privileged path is required.
+ */
+export async function getAgentSplitPercentForTransaction(
+  row: Pick<TransactionRow, "agent_user_id" | "office_id" | "office">,
+): Promise<number> {
+  const agentUserId = row.agent_user_id?.trim();
+  const officeId =
+    (row.office_id ?? "").trim() || (row.office ?? "").trim();
+  if (!agentUserId || !officeId) return DEFAULT_AGENT_SPLIT_PERCENT;
+  if (!supabase) return DEFAULT_AGENT_SPLIT_PERCENT;
+
+  const { data, error } = await supabase
+    .from("office_memberships")
+    .select("agent_split_percent")
+    .eq("office_id", officeId)
+    .eq("user_id", agentUserId)
+    .eq("status", "active")
+    .maybeSingle();
+
+  if (error) {
+    console.warn("[getAgentSplitPercentForTransaction]", error.message);
+    return DEFAULT_AGENT_SPLIT_PERCENT;
+  }
+
+  return resolveAgentSplitPercent(
+    (data as { agent_split_percent?: number | string | null } | null)?.agent_split_percent,
+  );
 }
 
 export async function getTransaction(id: string): Promise<TransactionRow | null> {

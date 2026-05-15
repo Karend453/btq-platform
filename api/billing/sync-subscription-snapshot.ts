@@ -2,9 +2,17 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import type Stripe from "stripe";
 import { getStripeServer } from "../../src/lib/stripeServer.js";
 import { getSupabaseServiceRole } from "../../src/lib/supabaseServer.js";
+import {
+  attachLogContext,
+  logApiError,
+  logApiStart,
+  logApiSuccess,
+} from "../../src/lib/server/observability.js";
 import { getUserIdFromAuthHeader } from "./billingAuth.js";
 import { getUserProfileRoleKeyForBilling } from "./billingOfficeContext.js";
 import { subscriptionMonthlyAmountSnapshot } from "./stripeSubscriptionAmount.js";
+
+const ROUTE = "api/billing/sync-subscription-snapshot";
 
 /**
  * Admin-only backfill / re-sync of `offices.billing_monthly_amount_cents` (+ `billing_currency`)
@@ -93,32 +101,44 @@ async function syncOneOffice(
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  const ctx = logApiStart({ route: ROUTE, method: req.method });
+
   if (req.method !== "POST") {
+    logApiSuccess(ctx, { status: 405 });
     return res.status(405).json({ error: "Method not allowed" });
   }
 
   const userId = await getUserIdFromAuthHeader(req);
   if (!userId) {
+    logApiSuccess(ctx, { status: 401 });
     return res.status(401).json({ error: "Unauthorized" });
   }
+  attachLogContext(ctx, { userId });
 
   let admin;
   try {
     admin = getSupabaseServiceRole();
   } catch (e) {
     console.error("[sync-subscription-snapshot] Supabase init", e);
+    logApiError(ctx, e, { status: 500, metadata: { stage: "supabase_init" } });
     return res.status(500).json({ error: "Server misconfiguration" });
   }
 
   const roleGate = await getUserProfileRoleKeyForBilling(admin, userId);
   if (!roleGate.ok) {
+    logApiError(ctx, "role_gate_failed", {
+      status: 500,
+      metadata: { stage: "role_gate" },
+    });
     return res.status(500).json({ error: "Could not verify account" });
   }
   if (roleGate.role !== "btq_admin") {
+    logApiSuccess(ctx, { status: 403, metadata: { reason: "not_btq_admin" } });
     return res.status(403).json({ error: "Forbidden" });
   }
 
   const { officeId } = parseJsonBody(req);
+  attachLogContext(ctx, { officeId });
 
   let stripe: Stripe;
   try {
@@ -126,6 +146,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Stripe misconfiguration";
     console.error("[sync-subscription-snapshot] Stripe init", msg);
+    logApiError(ctx, e, { status: 500, metadata: { stage: "stripe_init" } });
     return res.status(500).json({ error: "Billing is not configured on the server" });
   }
 
@@ -138,6 +159,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (error) {
     console.error("[sync-subscription-snapshot] offices select", error);
+    logApiError(ctx, error, { status: 500, metadata: { stage: "offices_select" } });
     return res.status(500).json({ error: "Could not load offices" });
   }
 
@@ -163,6 +185,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     failed: results.filter((r) => r.status === "error").length,
     results,
   };
+
+  logApiSuccess(ctx, {
+    status: 200,
+    metadata: {
+      total: summary.total,
+      updated: summary.updated,
+      skipped: summary.skipped,
+      failed: summary.failed,
+    },
+  });
 
   return res.status(200).json(summary);
 }

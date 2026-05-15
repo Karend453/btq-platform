@@ -124,14 +124,16 @@ export function AccountInfoTab() {
               </dl>
 
               <div className="pt-4 border-t border-slate-100 space-y-3">
-                <p className="font-medium text-slate-900 text-sm">Personal GCI Goal</p>
+                <p className="font-medium text-slate-900 text-sm">
+                  Personal Gross Commission Goal
+                </p>
                 <p className="text-xs text-slate-500 leading-relaxed">
                   Optional annual goal for your Client Portfolio progress. Leave blank to use the default (
                   {formatUsd0(DEFAULT_PERSONAL_GCI_GOAL)}).
                 </p>
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
                   <label className="sr-only" htmlFor="personal-gci-goal">
-                    Personal GCI Goal
+                    Personal Gross Commission Goal
                   </label>
                   <Input
                     id="personal-gci-goal"

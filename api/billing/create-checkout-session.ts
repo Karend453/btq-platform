@@ -7,7 +7,15 @@ import {
   type BillingCycle,
   type BrokerPlanKey,
 } from "../../src/lib/stripePrices.js";
+import {
+  attachLogContext,
+  logApiError,
+  logApiStart,
+  logApiSuccess,
+} from "../../src/lib/server/observability.js";
 import { resolveAppBaseUrl } from "./appBaseUrl.js";
+
+const ROUTE = "api/billing/create-checkout-session";
 
 const BROKER_PLAN_KEYS: readonly BrokerPlanKey[] = [
   "broker_core_monthly",
@@ -93,7 +101,10 @@ export default async function handler(
   req: VercelRequest,
   res: VercelResponse
 ) {
+  const ctx = logApiStart({ route: ROUTE, method: req.method });
+
   if (req.method !== "POST") {
+    logApiSuccess(ctx, { status: 405 });
     return res.status(405).json({ error: "Method not allowed" });
   }
 
@@ -127,7 +138,15 @@ export default async function handler(
       !brokerEmail.trim()
     ) {
       console.warn("[create-checkout-session] validation failed: missing required fields");
+      logApiSuccess(ctx, {
+        status: 400,
+        metadata: { reason: "missing_required_fields" },
+      });
       return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    if (typeof officeId === "string" && officeId.trim()) {
+      attachLogContext(ctx, { officeId: officeId.trim() });
     }
 
     if (!isBrokerPlanKey(plan)) {
@@ -135,6 +154,7 @@ export default async function handler(
         plan,
         expected: BROKER_PLAN_KEYS,
       });
+      logApiSuccess(ctx, { status: 400, metadata: { reason: "invalid_plan" } });
       return res.status(400).json({
         error: "Invalid plan",
         expected: BROKER_PLAN_KEYS,
@@ -145,6 +165,10 @@ export default async function handler(
       console.warn("[create-checkout-session] validation failed: invalid billing cycle", {
         billing,
         expected: BILLING_CYCLES,
+      });
+      logApiSuccess(ctx, {
+        status: 400,
+        metadata: { reason: "invalid_billing_cycle" },
       });
       return res.status(400).json({
         error: "Invalid billing cycle",
@@ -265,12 +289,21 @@ export default async function handler(
 
     if (!session.url) {
       console.error("[create-checkout-session] Stripe session missing URL on response");
+      logApiError(ctx, "stripe_session_missing_url", {
+        status: 500,
+        metadata: { plan, billing },
+      });
       return res.status(500).json({ error: "Stripe session missing URL" });
     }
 
+    logApiSuccess(ctx, {
+      status: 200,
+      metadata: { plan, billing, seatQuantity },
+    });
     return res.status(200).json({ url: session.url });
   } catch (error) {
     logCheckoutError(error, "unhandled");
+    logApiError(ctx, error, { status: 500, metadata: { stage: "unhandled" } });
     return res.status(500).json({ error: "Failed to create checkout session" });
   }
 }

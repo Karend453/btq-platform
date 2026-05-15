@@ -1,14 +1,16 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Lock } from "lucide-react";
+import { ChevronDown, ChevronUp, ChevronsUpDown, Search } from "lucide-react";
 import {
   ClientPortfolioRow,
+  getCommissionBreakdownForRow,
   listClientPortfolio,
   summarizeClientPortfolio,
 } from "../../services/clientPortfolio";
 import {
   DEFAULT_PERSONAL_GCI_GOAL,
   getCurrentUserProfileSnapshot,
+  getUserProfileRoleKey,
   resolvePersonalGciGoalAmount,
 } from "../../services/auth";
 import { useAuth } from "../contexts/AuthContext";
@@ -33,13 +35,109 @@ function currentYear() {
   return new Date().getFullYear();
 }
 
-function gciDisplayClass(row: ClientPortfolioRow) {
-  const finalized = row.portfolio_stage === "final";
-  const gci = Number(row.revenue_amount) || 0;
-  if (finalized && gci === 0) {
-    return "font-medium text-amber-900 bg-amber-50";
+/**
+ * Sort keys for the Portfolio Records table. Only fields that have an
+ * unambiguous natural order are sortable — commission/closed-price stay fixed
+ * to the default closed-first ordering so brokers don't accidentally hide
+ * realized rows behind giant pipeline numbers.
+ */
+type PortfolioSortKey = "client" | "address" | "type" | "agent" | "closeDate";
+
+type PortfolioSortState = {
+  key: PortfolioSortKey;
+  direction: "asc" | "desc";
+} | null;
+
+const PORTFOLIO_SORT_LABELS: Record<PortfolioSortKey, string> = {
+  client: "Client",
+  address: "Address",
+  type: "Type",
+  agent: "Agent",
+  closeDate: "Close Date",
+};
+
+/** Comparator value for a sortable column. Numeric for dates, lowercase strings otherwise. */
+function portfolioSortValue(
+  row: ClientPortfolioRow,
+  key: PortfolioSortKey,
+): string | number {
+  switch (key) {
+    case "client":
+      return (row.client_name ?? "").trim().toLowerCase();
+    case "address":
+      return (row.property_address_primary ?? "").trim().toLowerCase();
+    case "type":
+      return (row.transaction_type ?? "").trim().toLowerCase();
+    case "agent":
+      return (row.agent_name ?? "").trim().toLowerCase();
+    case "closeDate": {
+      const raw = row.event_date;
+      if (!raw) return 0;
+      const t = new Date(raw).getTime();
+      return Number.isFinite(t) ? t : 0;
+    }
   }
-  return "text-slate-900";
+}
+
+function comparePortfolioRows(
+  a: ClientPortfolioRow,
+  b: ClientPortfolioRow,
+  key: PortfolioSortKey,
+  direction: "asc" | "desc",
+): number {
+  const va = portfolioSortValue(a, key);
+  const vb = portfolioSortValue(b, key);
+  if (va < vb) return direction === "asc" ? -1 : 1;
+  if (va > vb) return direction === "asc" ? 1 : -1;
+  return 0;
+}
+
+/**
+ * Header cell with a 3-state sort cycle: inactive → ascending → descending →
+ * inactive (clears back to default closed-first ordering). The indicator is
+ * intentionally subtle (matches the slate-600 thead text) so it doesn't draw
+ * attention away from the numbers.
+ */
+function SortableHeader({
+  label,
+  sortKey,
+  currentSort,
+  onClick,
+}: {
+  label: string;
+  sortKey: PortfolioSortKey;
+  currentSort: PortfolioSortState;
+  onClick: (key: PortfolioSortKey) => void;
+}) {
+  const active = currentSort?.key === sortKey;
+  const direction = active ? currentSort?.direction ?? null : null;
+  const ariaSort = active
+    ? direction === "asc"
+      ? "ascending"
+      : "descending"
+    : "none";
+  return (
+    <th scope="col" className="px-5 py-3 font-medium" aria-sort={ariaSort}>
+      <button
+        type="button"
+        onClick={() => onClick(sortKey)}
+        className="inline-flex items-center gap-1 rounded-sm text-slate-600 hover:text-slate-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+      >
+        <span>{label}</span>
+        {direction === "asc" ? (
+          <ChevronUp className="h-3.5 w-3.5 text-slate-700" aria-hidden strokeWidth={2} />
+        ) : direction === "desc" ? (
+          <ChevronDown className="h-3.5 w-3.5 text-slate-700" aria-hidden strokeWidth={2} />
+        ) : (
+          <ChevronsUpDown
+            className="h-3.5 w-3.5 text-slate-300 group-hover:text-slate-400"
+            aria-hidden
+            strokeWidth={2}
+          />
+        )}
+      </button>
+    </th>
+  );
 }
 
 export function Analytics() {
@@ -54,6 +152,23 @@ export function Analytics() {
   const [selectedType, setSelectedType] = useState<string>("");
 
   const [gciGoal, setGciGoal] = useState<number>(DEFAULT_PERSONAL_GCI_GOAL);
+  /** Profile role key — drives whether broker/admin sees office net rows in addition to agent payout. */
+  const [viewerRoleKey, setViewerRoleKey] = useState<
+    "admin" | "agent" | "broker" | "btq_admin" | null
+  >(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getUserProfileRoleKey().then((key) => {
+      if (!cancelled) setViewerRoleKey(key);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /** v1 commission split: agent views emphasize their net commission; broker/admin views see office net too. */
+  const isAgentView = viewerRoleKey === "agent";
 
   useEffect(() => {
     if (!user?.id) return;
@@ -102,19 +217,74 @@ export function Analytics() {
     };
   }, [selectedYear, selectedAgentId, selectedType]);
 
+  /**
+   * Portfolio Records table — light client-side controls. The KPI cards above
+   * always reflect the full filtered dataset (`rows`); only the table itself
+   * narrows down by `searchQuery` so brokers don't lose context on their
+   * actual totals while triaging a long list.
+   */
+  const [searchQuery, setSearchQuery] = useState("");
+  const [portfolioSort, setPortfolioSort] = useState<PortfolioSortState>(null);
+
   const summary = useMemo(() => summarizeClientPortfolio(rows), [rows]);
 
+  const filteredRows = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (q === "") return rows;
+    return rows.filter((row) => {
+      const haystack = [
+        row.client_name,
+        row.property_address_primary,
+        row.transaction_type,
+        row.agent_name,
+      ];
+      return haystack.some(
+        (value) => (value ?? "").toLowerCase().includes(q),
+      );
+    });
+  }, [rows, searchQuery]);
+
+  /**
+   * Section buckets reflect the *filtered* rows so the Closed/Pipeline count
+   * pills always match the table body. Default render order (no active sort)
+   * keeps closed/finalized production at the top, with workflow-closed rows
+   * floating above pure pipeline so brokers see "almost there" deals first.
+   */
   const tableSections = useMemo(() => {
     const finalized: ClientPortfolioRow[] = [];
     const needsFinal: ClientPortfolioRow[] = [];
     const pipeline: ClientPortfolioRow[] = [];
-    for (const row of rows) {
+    for (const row of filteredRows) {
       if (row.portfolio_stage === "final") finalized.push(row);
       else if (row.workflowClosed === true) needsFinal.push(row);
       else pipeline.push(row);
     }
     return { finalized, needsFinal, pipeline };
-  }, [rows]);
+  }, [filteredRows]);
+
+  const sortedRowsForRender = useMemo(() => {
+    if (portfolioSort == null) {
+      // Default ordering = same group sequence as before any column sort: closed
+      // first, then workflow-closed-but-not-finalized, then pure pipeline.
+      return [
+        ...tableSections.finalized,
+        ...tableSections.needsFinal,
+        ...tableSections.pipeline,
+      ];
+    }
+    return [...filteredRows].sort((a, b) =>
+      comparePortfolioRows(a, b, portfolioSort.key, portfolioSort.direction),
+    );
+  }, [portfolioSort, filteredRows, tableSections]);
+
+  /** Cycle a header: inactive → asc → desc → inactive (back to default order). */
+  function handlePortfolioSortClick(key: PortfolioSortKey) {
+    setPortfolioSort((prev) => {
+      if (prev?.key !== key) return { key, direction: "asc" };
+      if (prev.direction === "asc") return { key, direction: "desc" };
+      return null;
+    });
+  }
 
   const progressPercent =
     gciGoal > 0
@@ -141,74 +311,89 @@ export function Analytics() {
     ).sort();
   }, [rows]);
 
-  function renderRealizedCell(row: ClientPortfolioRow) {
+  /**
+   * Reporting-only row action. Closed/finalized rows are read-only (analytics
+   * is settled); non-finalized workflow-closed rows expose a Finalize link so
+   * brokers can lock them into reported production without leaving this page.
+   * Pure pipeline rows have no action — they need workflow progress first.
+   */
+  function renderRowAction(row: ClientPortfolioRow) {
+    if (row.portfolio_stage === "final") return null;
+    if (row.workflowClosed !== true) return null;
     const tid = row.transaction_id?.trim();
-
-    if (row.portfolio_stage === "final") {
-      return (
-        <span
-          className="inline-flex items-center justify-center"
-          title="Realized — included in analytics"
-        >
-          <Lock
-            className="h-4 w-4 shrink-0 text-slate-400"
-            strokeWidth={1.75}
-            aria-label="Realized — included in analytics"
-          />
-        </span>
-      );
-    }
-
-    if (row.workflowClosed === true) {
-      return (
-        <button
-          type="button"
-          className="text-sm font-medium text-slate-900 underline-offset-2 hover:text-slate-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2 rounded-sm disabled:cursor-not-allowed disabled:opacity-50 disabled:no-underline"
-          title="Potential — finalize to include in analytics"
-          aria-label="Potential — finalize to include in analytics"
-          disabled={!tid}
-          onClick={() => {
-            if (!tid) return;
-            navigate(`/transactions/${encodeURIComponent(tid)}?finalize=1`);
-          }}
-        >
-          Finalize
-        </button>
-      );
-    }
-
-    return <span className="text-slate-400">—</span>;
+    if (!tid) return null;
+    return (
+      <button
+        type="button"
+        className="text-sm font-medium text-slate-900 underline-offset-2 hover:text-slate-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2 rounded-sm"
+        title="Finalize to include in closed production"
+        onClick={() =>
+          navigate(`/transactions/${encodeURIComponent(tid)}?finalize=1`)
+        }
+      >
+        Finalize
+      </button>
+    );
   }
 
-  const renderRow = (row: ClientPortfolioRow, highlight: "none" | "needs-final") => (
-    <tr
-      key={row.id}
-      className={
-        highlight === "needs-final"
-          ? "border-t bg-amber-50/80"
-          : "border-t"
-      }
-    >
-      <td className="px-5 py-4 text-slate-900">{row.client_name || "—"}</td>
-      <td className="px-5 py-4 text-slate-700">
-        {row.property_address_primary || "—"}
-      </td>
-      <td className="px-5 py-4 text-slate-700">{row.transaction_type || "—"}</td>
-      <td className="px-5 py-4 text-slate-700">{row.agent_name || "—"}</td>
-      <td className="px-5 py-4 text-slate-700">{formatDate(row.event_date)}</td>
-      <td className={`px-5 py-4 ${gciDisplayClass(row)}`}>
-        {formatCurrency(row.revenue_amount)}
-      </td>
-      <td className="px-5 py-4 text-slate-700">{renderRealizedCell(row)}</td>
-    </tr>
-  );
+  /**
+   * One row per portfolio record. Reporting-only cleanup:
+   *   - Closed rows are tinted soft amber so realized production is the visual
+   *     focus of the page; pipeline/open rows stay white and visually quieter.
+   *   - Commission cell drops the Gross line — brokers see Agent + Office, and
+   *     agents see only "You" (current product rule keeps agents focused on
+   *     their net here; transparency happens on Edit Transaction Details).
+   *   - Closed Price comes from the existing portfolio snapshot (no new math).
+   */
+  const renderRow = (row: ClientPortfolioRow) => {
+    const breakdown = getCommissionBreakdownForRow(row);
+    const isClosed = row.portfolio_stage === "final";
+    return (
+      <tr
+        key={row.id}
+        className={isClosed ? "border-t bg-amber-50/60" : "border-t"}
+      >
+        <td className="px-5 py-4 text-slate-900">{row.client_name || "—"}</td>
+        <td className="px-5 py-4 text-slate-700">
+          {row.property_address_primary || "—"}
+        </td>
+        <td className="px-5 py-4 text-slate-700">{row.transaction_type || "—"}</td>
+        <td className="px-5 py-4 text-slate-700">{row.agent_name || "—"}</td>
+        <td className="px-5 py-4 text-slate-700">{formatDate(row.event_date)}</td>
+        <td className="px-5 py-4 text-slate-900 tabular-nums">
+          {formatCurrency(row.close_price)}
+        </td>
+        <td className="px-5 py-4 text-slate-700">
+          <div className="flex flex-col gap-0.5 tabular-nums leading-tight">
+            <div>
+              <span className="text-xs text-slate-500">
+                {isAgentView ? "You: " : "Agent: "}
+              </span>
+              <span className="text-slate-700">
+                {formatCurrency(breakdown.agentNet)}
+              </span>
+            </div>
+            {!isAgentView ? (
+              <div>
+                <span className="text-xs text-slate-500">Office: </span>
+                <span className="text-slate-700">
+                  {formatCurrency(breakdown.officeNet)}
+                </span>
+              </div>
+            ) : null}
+          </div>
+        </td>
+        <td className="px-5 py-4 text-right">{renderRowAction(row)}</td>
+      </tr>
+    );
+  };
 
   return (
     <div className="p-6">
       <div>
-        <h1 className="text-3xl font-semibold text-slate-900">Client Portfolio</h1>
+        <h1 className="text-3xl font-semibold text-slate-900">Production Dashboard</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Production ledger and client portfolio for real business activity.
+          Production reporting and transaction performance across your office.
         </p>
       </div>
 
@@ -267,7 +452,7 @@ export function Analytics() {
       <div className="-mx-6 mt-8 border-b border-slate-200 bg-white px-6 py-6 md:py-7">
         <div className="flex w-full flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <div className="text-sm text-slate-500">GCI Goal</div>
+            <div className="text-sm text-slate-500">Gross Commission Goal</div>
             <div className="mt-1.5 text-4xl font-semibold tracking-tight text-slate-900 tabular-nums">
               {formatCurrency(gciGoal)}
             </div>
@@ -290,45 +475,50 @@ export function Analytics() {
         </div>
 
         <p className="mt-3 text-xs text-slate-400">
-          Actual GCI (finalized):{" "}
+          Gross Commission (closed):{" "}
           <span className="font-semibold text-slate-900 tabular-nums">
-            {formatCurrency(summary.totalGciActual)}
+            {formatCurrency(summary.grossCommissionActual)}
           </span>
         </p>
       </div>
 
-      {/* KPI row — below goal */}
+      {/*
+        Closed/finalized actuals only — labels stay short ("Closed" is implicit
+        for this row of cards). Agent views replace "Agent Payout" with "Your
+        Net Commission" and drop the office card; office numbers still appear
+        in the Pipeline Forecast section below.
+      */}
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="text-sm text-slate-500">GCI (Closed)</div>
+            <div className="text-sm text-slate-500">Gross Commission</div>
             <div className="mt-2 text-2xl font-semibold text-slate-900 tabular-nums">
-              {formatCurrency(summary.totalGciActual)}
+              {formatCurrency(summary.grossCommissionActual)}
             </div>
-            <p className="mt-1 text-xs text-slate-400">Finalized portfolio only</p>
-          </div>
-
-          <div className="rounded-2xl border border-amber-100 bg-amber-50 p-5 shadow-sm">
-            <div className="text-sm text-slate-500">GCI (Pipeline)</div>
-            <div className="mt-2 text-2xl font-semibold text-slate-900 tabular-nums">
-              {formatCurrency(summary.potentialGci)}
-            </div>
-            <p className="mt-1 text-xs text-slate-400">Non-finalized revenue</p>
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="text-sm text-slate-500">Total Volume (Actual)</div>
+            <div className="text-sm text-slate-500">
+              {isAgentView ? "Your Net Commission" : "Agent Payout"}
+            </div>
+            <div className="mt-2 text-2xl font-semibold text-slate-900 tabular-nums">
+              {formatCurrency(summary.agentPayoutActual)}
+            </div>
+          </div>
+
+          {!isAgentView ? (
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="text-sm text-slate-500">Office Net Commission</div>
+              <div className="mt-2 text-2xl font-semibold text-slate-900 tabular-nums">
+                {formatCurrency(summary.officeNetActual)}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="text-sm text-slate-500">Total Volume</div>
             <div className="mt-2 text-2xl font-semibold text-slate-900 tabular-nums">
               {formatCurrency(summary.totalVolumeActual)}
             </div>
-            <p className="mt-1 text-xs text-slate-400">Close price, finalized</p>
-          </div>
-
-          <div className="rounded-2xl border border-amber-100 bg-amber-50 p-5 shadow-sm">
-            <div className="text-sm text-slate-500">Potential Volume</div>
-            <div className="mt-2 text-2xl font-semibold text-slate-900 tabular-nums">
-              {formatCurrency(summary.potentialVolume)}
-            </div>
-            <p className="mt-1 text-xs text-slate-400">Close price, non-finalized</p>
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -336,16 +526,75 @@ export function Analytics() {
             <div className="mt-2 text-2xl font-semibold text-slate-900 tabular-nums">
               {summary.closingsCount}
             </div>
-            <p className="mt-1 text-xs text-slate-400">Finalized count</p>
           </div>
       </div>
 
+      {/*
+        Pipeline Forecast — single yellow section replacing the previous row of
+        per-metric pipeline cards. Same numbers from summarize(); no math
+        changes. Title is enough — no helper subline.
+      */}
+      <section
+        aria-label="Pipeline Forecast"
+        className="mt-4 rounded-2xl border border-amber-100 bg-amber-50 px-5 py-4 shadow-sm"
+      >
+        <h3 className="text-base font-semibold text-slate-900">Pipeline Forecast</h3>
+        <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
+          <div>
+            <div className="text-xs text-slate-500">Gross Commission</div>
+            <div className="mt-0.5 text-xl font-semibold text-slate-900 tabular-nums">
+              {formatCurrency(summary.grossCommissionPipeline)}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-slate-500">
+              {isAgentView ? "Your Net Commission" : "Agent Payout"}
+            </div>
+            <div className="mt-0.5 text-xl font-semibold text-slate-900 tabular-nums">
+              {formatCurrency(summary.agentPayoutPipeline)}
+            </div>
+          </div>
+          {!isAgentView ? (
+            <div>
+              <div className="text-xs text-slate-500">Office Net Commission</div>
+              <div className="mt-0.5 text-xl font-semibold text-slate-900 tabular-nums">
+                {formatCurrency(summary.officeNetPipeline)}
+              </div>
+            </div>
+          ) : null}
+          <div>
+            <div className="text-xs text-slate-500">Pipeline Volume</div>
+            <div className="mt-0.5 text-xl font-semibold text-slate-900 tabular-nums">
+              {formatCurrency(summary.potentialVolume)}
+            </div>
+          </div>
+        </div>
+      </section>
+
       <div className="mt-10 rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-        <div className="border-b px-5 py-4">
-          <h2 className="text-lg font-semibold text-slate-900">Portfolio Records</h2>
-          <p className="mt-1 text-sm text-slate-500">
-            Finalized production first; deals awaiting portfolio finalization are highlighted.
-          </p>
+        <div className="flex flex-col gap-3 border-b px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Portfolio Records</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Closed production is highlighted; pipeline rows stay quieter.
+            </p>
+          </div>
+          <label className="relative block w-full sm:w-72">
+            <span className="sr-only">Search portfolio records</span>
+            <Search
+              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+              aria-hidden
+              strokeWidth={1.75}
+            />
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search portfolio records…"
+              className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-900 placeholder:text-slate-400 shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-slate-400"
+              aria-label="Search portfolio records by client, address, type, or agent"
+            />
+          </label>
         </div>
 
         {loading ? (
@@ -356,21 +605,28 @@ export function Analytics() {
           <div className="p-6 text-sm text-slate-500">No records found for this filter set.</div>
         ) : (
           <>
+            {/*
+              Counts reflect the filtered dataset so the pill counts always
+              match what's rendered in the table body below. The KPI cards
+              above intentionally keep using the unfiltered totals.
+            */}
             <div
               className="flex border-b border-slate-200 bg-slate-50"
-              aria-label={`Row counts by group: ${tableSections.finalized.length} finalized, ${tableSections.needsFinal.length} needs final, ${tableSections.pipeline.length} pipeline`}
+              aria-label={`Row counts by group: ${tableSections.finalized.length} closed, ${tableSections.needsFinal.length + tableSections.pipeline.length} pipeline`}
             >
               {(
                 [
-                  ["Finalized", tableSections.finalized.length],
-                  ["Needs Final", tableSections.needsFinal.length],
-                  ["Pipeline", tableSections.pipeline.length],
+                  ["Closed", tableSections.finalized.length],
+                  [
+                    "Pipeline",
+                    tableSections.needsFinal.length + tableSections.pipeline.length,
+                  ],
                 ] as const
               ).map(([label, count], i) => (
                 <div
                   key={label}
                   className={`min-w-0 flex-1 px-3 py-2.5 text-center text-xs font-semibold uppercase tracking-wide text-slate-600 sm:px-4 ${
-                    i < 2 ? "border-r border-slate-200" : ""
+                    i < 1 ? "border-r border-slate-200" : ""
                   }`}
                 >
                   {label}{" "}
@@ -382,19 +638,60 @@ export function Analytics() {
               <table className="min-w-full text-left text-sm">
                 <thead className="bg-slate-50 text-slate-600">
                   <tr>
-                    <th className="px-5 py-3 font-medium">Client</th>
-                    <th className="px-5 py-3 font-medium">Address</th>
-                    <th className="px-5 py-3 font-medium">Type</th>
-                    <th className="px-5 py-3 font-medium">Agent</th>
-                    <th className="px-5 py-3 font-medium">Close Date</th>
-                    <th className="px-5 py-3 font-medium">GCI</th>
-                    <th className="px-5 py-3 font-medium">Realized</th>
+                    <SortableHeader
+                      label={PORTFOLIO_SORT_LABELS.client}
+                      sortKey="client"
+                      currentSort={portfolioSort}
+                      onClick={handlePortfolioSortClick}
+                    />
+                    <SortableHeader
+                      label={PORTFOLIO_SORT_LABELS.address}
+                      sortKey="address"
+                      currentSort={portfolioSort}
+                      onClick={handlePortfolioSortClick}
+                    />
+                    <SortableHeader
+                      label={PORTFOLIO_SORT_LABELS.type}
+                      sortKey="type"
+                      currentSort={portfolioSort}
+                      onClick={handlePortfolioSortClick}
+                    />
+                    <SortableHeader
+                      label={PORTFOLIO_SORT_LABELS.agent}
+                      sortKey="agent"
+                      currentSort={portfolioSort}
+                      onClick={handlePortfolioSortClick}
+                    />
+                    <SortableHeader
+                      label={PORTFOLIO_SORT_LABELS.closeDate}
+                      sortKey="closeDate"
+                      currentSort={portfolioSort}
+                      onClick={handlePortfolioSortClick}
+                    />
+                    <th scope="col" className="px-5 py-3 font-medium">
+                      Sale Price
+                    </th>
+                    <th scope="col" className="px-5 py-3 font-medium">
+                      Commission
+                    </th>
+                    <th scope="col" className="px-5 py-3 font-medium text-right">
+                      <span className="sr-only">Actions</span>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {tableSections.finalized.map((row) => renderRow(row, "none"))}
-                  {tableSections.needsFinal.map((row) => renderRow(row, "needs-final"))}
-                  {tableSections.pipeline.map((row) => renderRow(row, "none"))}
+                  {sortedRowsForRender.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={8}
+                        className="px-5 py-8 text-center text-sm text-slate-500"
+                      >
+                        No records match “{searchQuery.trim()}”.
+                      </td>
+                    </tr>
+                  ) : (
+                    sortedRowsForRender.map((row) => renderRow(row))
+                  )}
                 </tbody>
               </table>
             </div>

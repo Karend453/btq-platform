@@ -9,6 +9,8 @@ import {
   TooltipTrigger,
 } from "../../components/ui/tooltip";
 import {
+  computeCommissionBreakdown,
+  DEFAULT_AGENT_SPLIT_PERCENT,
   formatUnifiedCommissionPercentDisplay,
   type TransactionRow,
 } from "../../../services/transactions";
@@ -324,16 +326,36 @@ export default function TransactionOverviewSection({
         <SummaryField label="Checklist Type" value={row.checklisttype || "—"} />
         <SummaryField label="Office" value={officeValue} />
         <SummaryField
-          label="Commission"
+          label="Commission %"
           value={formatUnifiedCommissionPercentDisplay(row)}
         />
+        {/*
+          Transaction-level "Commission" surfaces the agent payout (net) — not
+          gross — because this page is the operational "my deal" view. Showing
+          gross here was misleading the agent's mental model of their take-home.
+          Brokers/admins still see gross + office numbers in Analytics and the
+          read-only Commission Split block on Edit Transaction Details.
+
+          Source of truth, in order:
+            1. portfolio snapshot agent_net_commission_amount (finalized or
+               estimated rows already include the membership split snapshot)
+            2. live compute from row.gci + row.referral_fee_amount +
+               portfolio snapshot agent_split_percent → DEFAULT fallback
+        */}
         <SummaryField
-          label="GCI"
-          value={
-            isFinalized
-              ? formatCurrency(portfolioSnapshot?.revenue_amount)
-              : formatCurrency(row.gci)
-          }
+          label="Commission"
+          value={(() => {
+            const snapshotNet = portfolioSnapshot?.agent_net_commission_amount;
+            if (snapshotNet != null) return formatCurrency(snapshotNet);
+            const breakdown = computeCommissionBreakdown({
+              grossCommission: row.gci,
+              referralFee: row.referral_fee_amount,
+              agentSplitPercent:
+                portfolioSnapshot?.agent_split_percent ??
+                DEFAULT_AGENT_SPLIT_PERCENT,
+            });
+            return formatCurrency(breakdown.agentNetCommission);
+          })()}
         />
         <SummaryField
           label="Sale Price"

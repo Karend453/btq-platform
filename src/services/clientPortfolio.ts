@@ -1,5 +1,9 @@
 import { supabase, supabaseInitError } from "../lib/supabaseClient";
 import { resolveOfficeScopedDataAccess } from "./auth";
+import {
+  computeCommissionBreakdown,
+  DEFAULT_AGENT_SPLIT_PERCENT,
+} from "./transactions";
 
 export async function syncClientPortfolioFromTransaction(
   transactionId: string,
@@ -26,6 +30,9 @@ export async function syncClientPortfolioFromTransaction(
       closing_date,
       saleprice,
       gci,
+      referral_fee_amount,
+      listcommissionpercent,
+      buyercommissionpercent,
       lead_source
     `)
     .eq("id", transactionId)
@@ -66,6 +73,51 @@ if (existing?.portfolio_stage === "final") {
 
   const portfolioStage = hasFinancials ? "estimated" : "seeded";
 
+  // v1 commission split: snapshot best-effort breakdown for non-final rows so
+  // pipeline analytics aren't blank. Looks up the assigned agent's office
+  // membership split; falls back to 40% (DEFAULT_AGENT_SPLIT_PERCENT) when the
+  // membership row is missing or has no configured split yet.
+  let agentSplitPercent: number = DEFAULT_AGENT_SPLIT_PERCENT;
+  const agentUserId = tx.agent_user_id ? String(tx.agent_user_id).trim() : "";
+  const officeIdStr = tx.office_id ? String(tx.office_id).trim() : "";
+  if (agentUserId && officeIdStr) {
+    const { data: mem, error: memError } = await supabase
+      .from("office_memberships")
+      .select("agent_split_percent")
+      .eq("office_id", officeIdStr)
+      .eq("user_id", agentUserId)
+      .eq("status", "active")
+      .maybeSingle();
+    if (memError) {
+      console.warn(
+        "[syncClientPortfolioFromTransaction] split lookup failed:",
+        memError.message,
+      );
+    } else {
+      const raw = (mem as { agent_split_percent?: number | string | null } | null)
+        ?.agent_split_percent;
+      const n = raw == null || raw === "" ? null : Number(raw);
+      if (n != null && Number.isFinite(n) && n >= 0 && n <= 100) {
+        agentSplitPercent = n;
+      }
+    }
+  }
+
+  const commissionPercentRaw =
+    (typeof tx.listcommissionpercent === "string" && tx.listcommissionpercent.trim()) ||
+    (typeof tx.buyercommissionpercent === "string" && tx.buyercommissionpercent.trim()) ||
+    null;
+
+  const breakdown = computeCommissionBreakdown({
+    salePrice: tx.saleprice ?? null,
+    commissionPercent: commissionPercentRaw,
+    grossCommission: tx.gci ?? null,
+    referralFee: tx.referral_fee_amount ?? null,
+    agentSplitPercent,
+  });
+
+  const grossForPayload = breakdown.grossCommission > 0 ? breakdown.grossCommission : (tx.gci ?? null);
+
   const payload = {
     transaction_id: tx.id,
 
@@ -87,12 +139,22 @@ if (existing?.portfolio_stage === "final") {
       tx.propertyaddress ?? tx.identifier ?? null,
     property_address_secondary: null,
 
-    // Financials
-    revenue_amount: tx.gci ?? null,
+    // Financials (legacy revenue_amount kept = gross commission for compatibility)
+    revenue_amount: grossForPayload,
     close_price: tx.saleprice
       ? Number(String(tx.saleprice).replace(/[^0-9.-]/g, ""))
       : null,
     list_price: null,
+
+    // v1 commission split snapshot (estimated stage). Finalize RPC re-snapshots
+    // these from the locked numbers + membership lookup so finalized analytics
+    // never drift even if the agent's membership split changes later.
+    gross_commission_amount: grossForPayload,
+    referral_fee_amount: breakdown.referralFee,
+    adjusted_gross_commission_amount: breakdown.adjustedGrossCommission,
+    agent_net_commission_amount: breakdown.agentNetCommission,
+    office_net_commission_amount: breakdown.officeNetCommission,
+    agent_split_percent: breakdown.agentSplitPercent,
 
     // Dates
     event_date: tx.closing_date ?? null,
@@ -135,6 +197,18 @@ export type ClientPortfolioRow = {
   source: string | null;
   tags: string[] | null;
   portfolio_stage: "seeded" | "estimated" | "final";
+  /**
+   * v1 commission split snapshot — written by `syncClientPortfolioFromTransaction`
+   * (estimated) and `finalize_transaction_closing` / apply_document_to_portfolio
+   * 'final' branch (final). Null on legacy rows that pre-date the migration; UI
+   * falls back to computing from `revenue_amount` + 40% default in that case.
+   */
+  gross_commission_amount?: number | null;
+  referral_fee_amount?: number | null;
+  adjusted_gross_commission_amount?: number | null;
+  agent_net_commission_amount?: number | null;
+  office_net_commission_amount?: number | null;
+  agent_split_percent?: number | null;
   /** Set when portfolio first reaches `final` (finalize closing). */
   finalized_at?: string | null;
   export_created_at?: string | null;
@@ -176,6 +250,12 @@ export type ClientPortfolioForTransactionSnapshot = Pick<
   | "close_price"
   | "event_date"
   | "revenue_amount"
+  | "gross_commission_amount"
+  | "referral_fee_amount"
+  | "adjusted_gross_commission_amount"
+  | "agent_net_commission_amount"
+  | "office_net_commission_amount"
+  | "agent_split_percent"
   | "finalized_at"
   | "export_created_at"
   | "export_created_by"
@@ -205,7 +285,7 @@ export async function getClientPortfolioForTransaction(
   const { data, error } = await supabase
     .from("client_portfolio")
     .select(
-      "id, portfolio_stage, close_price, event_date, revenue_amount, finalized_at, export_created_at, export_created_by, export_created_by_email, export_status, export_file_name, export_storage_path, retention_delete_at"
+      "id, portfolio_stage, close_price, event_date, revenue_amount, gross_commission_amount, referral_fee_amount, adjusted_gross_commission_amount, agent_net_commission_amount, office_net_commission_amount, agent_split_percent, finalized_at, export_created_at, export_created_by, export_created_by_email, export_status, export_file_name, export_storage_path, retention_delete_at"
     )
     .eq("transaction_id", transactionId)
     .maybeSingle();
@@ -375,23 +455,74 @@ export async function listClientPortfolio(
   });
 }
 
+/**
+ * Per-row v1 commission breakdown for analytics. Prefers stored snapshot
+ * columns (written at finalize / sync time); for legacy rows missing the
+ * snapshot we recompute from `revenue_amount` treating it as the gross and
+ * applying {@link DEFAULT_AGENT_SPLIT_PERCENT}. This keeps finalized totals
+ * stable while still surfacing useful numbers for old rows.
+ */
+export function getCommissionBreakdownForRow(row: ClientPortfolioRow): {
+  gross: number;
+  agentNet: number;
+  officeNet: number;
+} {
+  const storedGross = Number(row.gross_commission_amount);
+  const storedAgent = Number(row.agent_net_commission_amount);
+  const storedOffice = Number(row.office_net_commission_amount);
+  const hasStoredSnapshot =
+    Number.isFinite(storedGross) &&
+    (row.gross_commission_amount != null ||
+      row.agent_net_commission_amount != null ||
+      row.office_net_commission_amount != null);
+
+  if (hasStoredSnapshot) {
+    return {
+      gross: Number.isFinite(storedGross) ? storedGross : 0,
+      agentNet: Number.isFinite(storedAgent) ? storedAgent : 0,
+      officeNet: Number.isFinite(storedOffice) ? storedOffice : 0,
+    };
+  }
+
+  const fallback = computeCommissionBreakdown({
+    grossCommission: row.revenue_amount,
+    referralFee: row.referral_fee_amount ?? 0,
+    agentSplitPercent: row.agent_split_percent ?? DEFAULT_AGENT_SPLIT_PERCENT,
+  });
+  return {
+    gross: fallback.grossCommission,
+    agentNet: fallback.agentNetCommission,
+    officeNet: fallback.officeNetCommission,
+  };
+}
+
 /** Analytics KPIs: finalized vs non-finalized are never mixed in the same field. */
 export function summarizeClientPortfolio(rows: ClientPortfolioRow[]) {
   const finalized = rows.filter((row) => row.portfolio_stage === "final");
   const nonFinal = rows.filter((row) => row.portfolio_stage !== "final");
 
-  const totalGciActual = finalized.reduce(
-    (sum, row) => sum + (Number(row.revenue_amount) || 0),
-    0,
-  );
+  let grossCommissionActual = 0;
+  let agentPayoutActual = 0;
+  let officeNetActual = 0;
+  for (const row of finalized) {
+    const b = getCommissionBreakdownForRow(row);
+    grossCommissionActual += b.gross;
+    agentPayoutActual += b.agentNet;
+    officeNetActual += b.officeNet;
+  }
+
+  let grossCommissionPipeline = 0;
+  let agentPayoutPipeline = 0;
+  let officeNetPipeline = 0;
+  for (const row of nonFinal) {
+    const b = getCommissionBreakdownForRow(row);
+    grossCommissionPipeline += b.gross;
+    agentPayoutPipeline += b.agentNet;
+    officeNetPipeline += b.officeNet;
+  }
 
   const totalVolumeActual = finalized.reduce(
     (sum, row) => sum + (Number(row.close_price) || 0),
-    0,
-  );
-
-  const potentialGci = nonFinal.reduce(
-    (sum, row) => sum + (Number(row.revenue_amount) || 0),
     0,
   );
 
@@ -403,9 +534,25 @@ export function summarizeClientPortfolio(rows: ClientPortfolioRow[]) {
   const closingsCount = finalized.length;
 
   return {
-    totalGciActual,
+    /**
+     * Legacy field: equals gross commission actual. Kept so existing call sites
+     * (analytics goal progress) keep working without churn during the v1
+     * rename. New UI should prefer `grossCommissionActual`.
+     */
+    totalGciActual: grossCommissionActual,
+    /** Same as totalGciActual; matches the new "Gross Commission" terminology. */
+    grossCommissionActual,
+    agentPayoutActual,
+    officeNetActual,
+
     totalVolumeActual,
-    potentialGci,
+
+    /** Legacy field; equals `grossCommissionPipeline`. */
+    potentialGci: grossCommissionPipeline,
+    grossCommissionPipeline,
+    agentPayoutPipeline,
+    officeNetPipeline,
+
     potentialVolume,
     closingsCount,
   };

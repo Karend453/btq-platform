@@ -3,7 +3,15 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import type Stripe from "stripe";
 import { getStripeServer } from "../../src/lib/stripeServer.js";
 import { getSupabaseServiceRole } from "../../src/lib/supabaseServer.js";
+import {
+  attachLogContext,
+  logApiError,
+  logApiStart,
+  logApiSuccess,
+} from "../../src/lib/server/observability.js";
 import { subscriptionMonthlyAmountSnapshot } from "./stripeSubscriptionAmount.js";
+
+const ROUTE = "api/billing/webhook";
 
 /** Stripe v21 typings omit fields still present on subscription/invoice objects from the API. */
 type StripeSubscriptionWithLegacyPeriod = Stripe.Subscription & { current_period_end?: number };
@@ -547,7 +555,10 @@ async function handleInvoicePaymentSucceeded(
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  const ctx = logApiStart({ route: ROUTE, method: req.method });
+
   if (req.method !== "POST") {
+    logApiSuccess(ctx, { status: 405 });
     res.status(405).setHeader("Allow", "POST").end("Method Not Allowed");
     return;
   }
@@ -555,12 +566,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
   if (!webhookSecret) {
     console.error("[billing/webhook] STRIPE_WEBHOOK_SECRET is not set");
+    logApiError(ctx, "missing_webhook_secret", {
+      status: 500,
+      metadata: { stage: "config" },
+    });
     res.status(500).json({ error: "Webhook misconfigured" });
     return;
   }
 
   const sig = stripeSignatureHeader(req);
   if (!sig) {
+    logApiSuccess(ctx, { status: 400, metadata: { reason: "missing_signature" } });
     res.status(400).json({ error: "Missing Stripe-Signature header" });
     return;
   }
@@ -572,6 +588,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.error("[billing/webhook] failed to read request body", {
       message: e instanceof Error ? e.message : String(e),
     });
+    logApiError(ctx, e, { status: 400, metadata: { stage: "read_body" } });
     res.status(400).json({ error: "Invalid body" });
     return;
   }
@@ -586,6 +603,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.error("[billing/webhook] signature verification failed", {
       message: e instanceof Error ? e.message : String(e),
     });
+    logApiError(ctx, e, { status: 400, metadata: { stage: "verify_signature" } });
     res.status(400).json({ error: "Invalid signature" });
     return;
   }
@@ -611,10 +629,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (insertErr) {
     if (insertErr.code === "23505") {
       console.log("[billing/webhook] duplicate skipped", { stripeEventId: event.id });
+      logApiSuccess(ctx, {
+        status: 200,
+        metadata: {
+          eventType: event.type,
+          duplicate: true,
+        },
+      });
       res.status(200).json({ received: true, duplicate: true });
       return;
     }
     console.error("[billing/webhook] stripe_event_log insert failed", insertErr);
+    logApiError(ctx, insertErr, {
+      status: 500,
+      metadata: { stage: "event_log_insert", eventType: event.type },
+    });
     res.status(500).json({ error: "Event log failed" });
     return;
   }
@@ -623,6 +652,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     await updateEventLog(supabase, event.id, {
       processing_status: "ignored_unhandled_type",
       processed_at: new Date().toISOString(),
+    });
+    logApiSuccess(ctx, {
+      status: 200,
+      metadata: { eventType: event.type, handled: false },
     });
     res.status(200).json({ received: true });
     return;
@@ -680,6 +713,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       processed_at: new Date().toISOString(),
     });
 
+    attachLogContext(ctx, { officeId: resolvedOfficeId });
+    logApiSuccess(ctx, {
+      status: 200,
+      metadata: { eventType: event.type, handled: true },
+    });
     res.status(200).json({ received: true });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
@@ -696,6 +734,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       processed_at: new Date().toISOString(),
     });
 
+    logApiError(ctx, e, {
+      status: 500,
+      metadata: { stage: "process_event", eventType: event.type },
+    });
     res.status(500).json({ error: "Webhook processing failed" });
   }
 }

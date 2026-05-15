@@ -7,10 +7,17 @@ import {
 } from "../billing/billingAuth.js";
 import { getSupabaseServiceRole } from "../../src/lib/supabaseServer.js";
 import {
+  attachLogContext,
+  logApiError,
+  logApiStart,
+  logApiSuccess,
+} from "../../src/lib/server/observability.js";
+import {
   buildTransactionExportZip,
 } from "../../src/lib/transactionExportProcessorCore.js";
 
 const BUCKET = "transaction-documents";
+const ROUTE = "api/exports/process";
 
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
@@ -45,7 +52,10 @@ export const config = {
 };
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  const ctx = logApiStart({ route: ROUTE, method: req.method });
+
   if (req.method !== "POST") {
+    logApiSuccess(ctx, { status: 405 });
     res.status(405).json({ ok: false, error: "Method not allowed" });
     return;
   }
@@ -53,13 +63,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const authedUserId = await getUserIdFromAuthHeader(req);
     if (!authedUserId) {
+      logApiSuccess(ctx, { status: 401 });
       res.status(401).json({ ok: false, error: "Unauthorized" });
       return;
     }
+    attachLogContext(ctx, { userId: authedUserId });
 
     const body = parseJsonBody(req);
     const exportId = (body?.exportId ?? "").trim();
     if (!isUuid(exportId)) {
+      logApiSuccess(ctx, { status: 400, metadata: { reason: "invalid_export_id" } });
       res.status(400).json({ ok: false, error: "Invalid exportId" });
       return;
     }
@@ -68,6 +81,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const token =
       typeof raw === "string" && raw.startsWith("Bearer ") ? raw.slice(7).trim() : null;
     if (!token) {
+      logApiSuccess(ctx, { status: 401, metadata: { reason: "missing_bearer" } });
       res.status(401).json({ ok: false, error: "Missing bearer token" });
       return;
     }
@@ -87,11 +101,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (exportReadErr) {
       console.error("[exports/process] read export", exportReadErr);
+      logApiError(ctx, exportReadErr, {
+        status: 403,
+        metadata: { stage: "read_export" },
+      });
       res.status(403).json({ ok: false, error: "Forbidden or export not found" });
       return;
     }
 
     if (!exportRow) {
+      logApiSuccess(ctx, { status: 404, metadata: { reason: "export_not_found" } });
       res.status(404).json({ ok: false, error: "Export not found" });
       return;
     }
@@ -99,18 +118,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const transactionId = String(exportRow.transaction_id ?? "").trim();
 
     if (exportRow.status === "ready") {
+      logApiSuccess(ctx, { status: 200, metadata: { skipped: "already_ready" } });
       res.status(200).json({ ok: true, skipped: "already_ready" });
       return;
     }
     if (exportRow.status === "processing") {
+      logApiSuccess(ctx, { status: 200, metadata: { skipped: "already_processing" } });
       res.status(200).json({ ok: true, skipped: "already_processing" });
       return;
     }
     if (exportRow.status === "failed") {
+      logApiSuccess(ctx, { status: 200, metadata: { skipped: "failed" } });
       res.status(200).json({ ok: false, skipped: "failed" });
       return;
     }
     if (exportRow.status !== "queued") {
+      logApiSuccess(ctx, {
+        status: 400,
+        metadata: { reason: "unexpected_status" },
+      });
       res.status(400).json({ ok: false, error: "Unexpected export status" });
       return;
     }
@@ -122,6 +148,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .maybeSingle();
 
     if (txnErr || !txn) {
+      logApiSuccess(ctx, {
+        status: 400,
+        metadata: { reason: "transaction_not_found_or_inaccessible" },
+      });
       res.status(400).json({ ok: false, error: "Transaction not found or inaccessible" });
       return;
     }
@@ -143,6 +173,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (claimErr) {
       console.error("[exports/process] claim", claimErr);
+      logApiError(ctx, claimErr, {
+        status: 500,
+        metadata: { stage: "claim_export" },
+      });
       res.status(500).json({ ok: false, error: "Could not claim export" });
       return;
     }
@@ -155,13 +189,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .maybeSingle();
       const st = (cur?.status as string | undefined) ?? "";
       if (st === "ready") {
+        logApiSuccess(ctx, {
+          status: 200,
+          metadata: { skipped: "already_ready_after_claim" },
+        });
         res.status(200).json({ ok: true, skipped: "already_ready" });
         return;
       }
       if (st === "processing") {
+        logApiSuccess(ctx, {
+          status: 200,
+          metadata: { skipped: "already_processing_after_claim" },
+        });
         res.status(200).json({ ok: true, skipped: "already_processing" });
         return;
       }
+      logApiSuccess(ctx, { status: 409, metadata: { reason: "claim_lost" } });
       res.status(409).json({ ok: false, error: "Export could not be claimed" });
       return;
     }
@@ -220,6 +263,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         throw new Error(`Failed to finalize export row: ${finErr.message}`);
       }
 
+      logApiSuccess(ctx, {
+        status: 200,
+        metadata: {
+          result: "ready",
+          documentCount: built.manifest.document_count,
+          byteSize: built.byteSize,
+        },
+      });
       res.status(200).json({
         ok: true,
         result: "ready",
@@ -252,6 +303,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       console.error("[exports/process] work failed", workErr);
+      logApiError(ctx, workErr, {
+        status: 200,
+        metadata: { stage: "build_export", result: "failed" },
+      });
       res.status(200).json({
         ok: true,
         result: "failed",
@@ -261,6 +316,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[exports/process]", e);
+    logApiError(ctx, e, { status: 500, metadata: { stage: "unhandled" } });
     res.status(500).json({ ok: false, error: msg });
   }
 }
