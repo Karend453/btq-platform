@@ -496,15 +496,41 @@ export function getCommissionBreakdownForRow(row: ClientPortfolioRow): {
   };
 }
 
-/** Analytics KPIs: finalized vs non-finalized are never mixed in the same field. */
+/**
+ * Production Dashboard "closed production" predicate (reporting-only).
+ *
+ * A row counts as closed production for analytics totals, table grouping, and
+ * row highlighting when EITHER:
+ *   - portfolio stage is finalized (`final` is the persisted enum value; we
+ *     also accept the synonym `finalized` defensively for any legacy seed /
+ *     external write paths), OR
+ *   - the linked transaction workflow status is `closed` (carried on the row
+ *     as `workflowClosed`, batched by `listClientPortfolio`).
+ *
+ * This intentionally widens the closed bucket beyond just `portfolio_stage = "final"`
+ * because brokers can mark a deal Closed in the transaction workflow before
+ * the portfolio row is finalized — but the money is still realized production
+ * from the office's perspective. Does NOT change finalization, locking, or
+ * export logic; it only affects how the dashboard groups + highlights rows.
+ */
+export function isClosedProduction(row: ClientPortfolioRow): boolean {
+  const stage = (row.portfolio_stage as string | null | undefined) ?? "";
+  const stageNormalized = stage.trim().toLowerCase();
+  if (stageNormalized === "final" || stageNormalized === "finalized") {
+    return true;
+  }
+  return row.workflowClosed === true;
+}
+
+/** Analytics KPIs: closed production (finalized OR workflow-closed) vs pipeline. */
 export function summarizeClientPortfolio(rows: ClientPortfolioRow[]) {
-  const finalized = rows.filter((row) => row.portfolio_stage === "final");
-  const nonFinal = rows.filter((row) => row.portfolio_stage !== "final");
+  const closed = rows.filter(isClosedProduction);
+  const pipeline = rows.filter((row) => !isClosedProduction(row));
 
   let grossCommissionActual = 0;
   let agentPayoutActual = 0;
   let officeNetActual = 0;
-  for (const row of finalized) {
+  for (const row of closed) {
     const b = getCommissionBreakdownForRow(row);
     grossCommissionActual += b.gross;
     agentPayoutActual += b.agentNet;
@@ -514,24 +540,24 @@ export function summarizeClientPortfolio(rows: ClientPortfolioRow[]) {
   let grossCommissionPipeline = 0;
   let agentPayoutPipeline = 0;
   let officeNetPipeline = 0;
-  for (const row of nonFinal) {
+  for (const row of pipeline) {
     const b = getCommissionBreakdownForRow(row);
     grossCommissionPipeline += b.gross;
     agentPayoutPipeline += b.agentNet;
     officeNetPipeline += b.officeNet;
   }
 
-  const totalVolumeActual = finalized.reduce(
+  const totalVolumeActual = closed.reduce(
     (sum, row) => sum + (Number(row.close_price) || 0),
     0,
   );
 
-  const potentialVolume = nonFinal.reduce(
+  const potentialVolume = pipeline.reduce(
     (sum, row) => sum + (Number(row.close_price) || 0),
     0,
   );
 
-  const closingsCount = finalized.length;
+  const closingsCount = closed.length;
 
   return {
     /**

@@ -4,6 +4,7 @@ import { ChevronDown, ChevronUp, ChevronsUpDown, Search } from "lucide-react";
 import {
   ClientPortfolioRow,
   getCommissionBreakdownForRow,
+  isClosedProduction,
   listClientPortfolio,
   summarizeClientPortfolio,
 } from "../../services/clientPortfolio";
@@ -246,29 +247,38 @@ export function Analytics() {
 
   /**
    * Section buckets reflect the *filtered* rows so the Closed/Pipeline count
-   * pills always match the table body. Default render order (no active sort)
-   * keeps closed/finalized production at the top, with workflow-closed rows
-   * floating above pure pipeline so brokers see "almost there" deals first.
+   * pills always match the table body. "Closed" here means closed production
+   * per `isClosedProduction` — finalized OR workflow-closed — so brokers see
+   * realized production in the Closed group even before the portfolio row is
+   * finalized. Within Closed we float not-yet-finalized rows to the top so the
+   * Finalize action stays easy to spot.
    */
   const tableSections = useMemo(() => {
-    const finalized: ClientPortfolioRow[] = [];
-    const needsFinal: ClientPortfolioRow[] = [];
+    const closedFinalized: ClientPortfolioRow[] = [];
+    const closedAwaitingFinalize: ClientPortfolioRow[] = [];
     const pipeline: ClientPortfolioRow[] = [];
     for (const row of filteredRows) {
-      if (row.portfolio_stage === "final") finalized.push(row);
-      else if (row.workflowClosed === true) needsFinal.push(row);
-      else pipeline.push(row);
+      if (!isClosedProduction(row)) {
+        pipeline.push(row);
+        continue;
+      }
+      const stage = (row.portfolio_stage as string | null | undefined) ?? "";
+      const stageNormalized = stage.trim().toLowerCase();
+      const isFinalized =
+        stageNormalized === "final" || stageNormalized === "finalized";
+      if (isFinalized) closedFinalized.push(row);
+      else closedAwaitingFinalize.push(row);
     }
-    return { finalized, needsFinal, pipeline };
+    return { closedFinalized, closedAwaitingFinalize, pipeline };
   }, [filteredRows]);
 
   const sortedRowsForRender = useMemo(() => {
     if (portfolioSort == null) {
-      // Default ordering = same group sequence as before any column sort: closed
-      // first, then workflow-closed-but-not-finalized, then pure pipeline.
+      // Default ordering: closed-but-not-finalized first (Finalize action
+      // visible), then closed-and-finalized (locked production), then pipeline.
       return [
-        ...tableSections.finalized,
-        ...tableSections.needsFinal,
+        ...tableSections.closedAwaitingFinalize,
+        ...tableSections.closedFinalized,
         ...tableSections.pipeline,
       ];
     }
@@ -312,13 +322,17 @@ export function Analytics() {
   }, [rows]);
 
   /**
-   * Reporting-only row action. Closed/finalized rows are read-only (analytics
-   * is settled); non-finalized workflow-closed rows expose a Finalize link so
-   * brokers can lock them into reported production without leaving this page.
-   * Pure pipeline rows have no action — they need workflow progress first.
+   * Reporting-only row action. Already-finalized rows are read-only (the
+   * portfolio snapshot is locked). Closed-but-not-yet-finalized rows still
+   * expose a Finalize link so brokers can lock them in without leaving this
+   * page. Pure pipeline rows have no action — workflow progress first.
    */
   function renderRowAction(row: ClientPortfolioRow) {
-    if (row.portfolio_stage === "final") return null;
+    const stage = (row.portfolio_stage as string | null | undefined) ?? "";
+    const stageNormalized = stage.trim().toLowerCase();
+    const isFinalized =
+      stageNormalized === "final" || stageNormalized === "finalized";
+    if (isFinalized) return null;
     if (row.workflowClosed !== true) return null;
     const tid = row.transaction_id?.trim();
     if (!tid) return null;
@@ -326,7 +340,7 @@ export function Analytics() {
       <button
         type="button"
         className="text-sm font-medium text-slate-900 underline-offset-2 hover:text-slate-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2 rounded-sm"
-        title="Finalize to include in closed production"
+        title="Finalize to lock the portfolio snapshot"
         onClick={() =>
           navigate(`/transactions/${encodeURIComponent(tid)}?finalize=1`)
         }
@@ -338,16 +352,17 @@ export function Analytics() {
 
   /**
    * One row per portfolio record. Reporting-only cleanup:
-   *   - Closed rows are tinted soft amber so realized production is the visual
-   *     focus of the page; pipeline/open rows stay white and visually quieter.
+   *   - Closed production (finalized OR workflow-closed) is tinted soft amber
+   *     so realized production is the visual focus of the page; pipeline/open
+   *     rows stay white and visually quieter.
    *   - Commission cell drops the Gross line — brokers see Agent + Office, and
    *     agents see only "You" (current product rule keeps agents focused on
    *     their net here; transparency happens on Edit Transaction Details).
-   *   - Closed Price comes from the existing portfolio snapshot (no new math).
+   *   - Sale Price comes from the existing portfolio snapshot (no new math).
    */
   const renderRow = (row: ClientPortfolioRow) => {
     const breakdown = getCommissionBreakdownForRow(row);
-    const isClosed = row.portfolio_stage === "final";
+    const isClosed = isClosedProduction(row);
     return (
       <tr
         key={row.id}
@@ -612,15 +627,16 @@ export function Analytics() {
             */}
             <div
               className="flex border-b border-slate-200 bg-slate-50"
-              aria-label={`Row counts by group: ${tableSections.finalized.length} closed, ${tableSections.needsFinal.length + tableSections.pipeline.length} pipeline`}
+              aria-label={`Row counts by group: ${tableSections.closedFinalized.length + tableSections.closedAwaitingFinalize.length} closed, ${tableSections.pipeline.length} pipeline`}
             >
               {(
                 [
-                  ["Closed", tableSections.finalized.length],
                   [
-                    "Pipeline",
-                    tableSections.needsFinal.length + tableSections.pipeline.length,
+                    "Closed",
+                    tableSections.closedFinalized.length +
+                      tableSections.closedAwaitingFinalize.length,
                   ],
+                  ["Pipeline", tableSections.pipeline.length],
                 ] as const
               ).map(([label, count], i) => (
                 <div
